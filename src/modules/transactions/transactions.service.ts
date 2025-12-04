@@ -79,7 +79,7 @@ export class TransactionsService {
   // ============================================================
   async findAll(
     userId: number,
-    filters?: { walletId?: number; dateFrom?: string; dateTo?: string; type?: string },
+    filters?: { walletId?: number; dateFrom?: string; dateTo?: string; type?: string, subcategoryId?: number } ,
   ) {
     try {
       const where: any = { userId, active: true };
@@ -87,6 +87,12 @@ export class TransactionsService {
       if (filters?.walletId && isNaN(Number(filters.walletId))) {
         throw new BadRequestException(
           'El parámetro walletId debe ser un número válido.',
+        );
+      }
+
+      if (filters?.subcategoryId && isNaN(Number(filters.subcategoryId))) {
+        throw new BadRequestException(
+          'El parámetro subcategoryId debe ser un número válido.',
         );
       }
   
@@ -110,6 +116,10 @@ export class TransactionsService {
   
       if (filters?.walletId) {
         where.walletId = filters.walletId;
+      }
+
+      if (filters?.subcategoryId) {
+        where.subcategoryId = filters.subcategoryId;
       }
   
       if (filters?.type) {

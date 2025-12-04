@@ -23,6 +23,7 @@ export class TransactionsController {
       dateFrom: query.dateFrom || undefined,
       dateTo: query.dateTo || undefined,
       type: query.type || undefined,
+      subcategoryId: query.subcategoryId ? Number(query.subcategoryId) : undefined,
     };
   
     return this.transactionsService.findAll(userId, filters);
