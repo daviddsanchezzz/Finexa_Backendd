@@ -8,8 +8,33 @@ export class CategoriesService {
   constructor(private prisma: PrismaService) {}
 
   async create(userId: number, dto: CreateCategoryDto) {
+    // 1) Normalizar color (por si viene en minúsculas/mayúsculas)
+    const color = dto.color?.trim();
+    if (!color) {
+      throw new BadRequestException("El color es obligatorio");
+    }
+
+    // 2) Comprobar si ya hay una categoría de ese usuario con ese color
+    const existing = await this.prisma.category.findFirst({
+      where: {
+        userId,
+        color: color,
+      },
+    });
+
+    if (existing) {
+      throw new BadRequestException(
+        "Ya tienes una categoría con ese color. Escoge otro distinto."
+      );
+    }
+
+    // 3) Crear si no existe duplicado
     return this.prisma.category.create({
-      data: { ...dto, userId },
+      data: {
+        ...dto,
+        color, // usamos el normalizado
+        userId,
+      },
     });
   }
 
@@ -53,8 +78,6 @@ export class CategoriesService {
 
   async reorder(userId: number, dto: ReorderCategoriesDto) {
     const { order, type } = dto;
-    console.log('dto', dto);
-    console.log('order', order);
     if (!order || order.length === 0) {
       throw new BadRequestException('order no puede estar vacío');
     }
