@@ -1,0 +1,326 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//////////////////////////////////////////////////////////////
+// ENUMS
+//////////////////////////////////////////////////////////////
+
+enum BudgetPeriod {
+  daily
+  weekly
+  monthly
+  yearly
+}
+
+enum DebtType {
+  loan
+  personal
+}
+
+enum DebtDirection {
+  i_ow
+  they_owe
+}
+
+enum DebtStatus {
+  active   // deuda en curso
+  paid     // totalmente pagada (pero no cerrada)
+  closed   // cerrada manualmente por el usuario
+}
+
+//////////////////////////////////////////////////////////////
+// MODELOS PRINCIPALES
+//////////////////////////////////////////////////////////////
+
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  password      String
+  language      String?        @default("es")
+  currency      String?        @default("EUR")
+  theme         String?        @default("light")
+
+  wallets       Wallet[]       @relation("UserWallets")
+  walletShares  WalletShare[]
+  budgets       Budget[]
+  notifications Notification[]
+  categories    Category[]
+  transactions  Transaction[]
+  debts         Debt[]         // 👈 RELACIÓN INVERSA A Debt.user
+
+  refreshToken  String?
+
+  manualMonthData ManualMonthData[]
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  createdBy     Int?
+  active        Boolean        @default(true)
+}
+
+//////////////////////////////////////////////////////////////
+// CARTERAS
+//////////////////////////////////////////////////////////////
+
+model Wallet {
+  id           Int           @id @default(autoincrement())
+  name         String
+  description  String?
+  emoji        String
+  balance      Float         @default(0)
+  currency     String        @default("EUR")
+
+  sharedWith   WalletShare[]
+  budgets      Budget[]
+
+  userId       Int
+  user         User          @relation("UserWallets", fields: [userId], references: [id])
+
+  transactions        Transaction[] @relation("TransactionWallet")       // income/expense
+  transactionsFrom    Transaction[] @relation("TransactionFromWallet")   // transfer origen
+  transactionsTo      Transaction[] @relation("TransactionToWallet")     // transfer destino
+
+  position     Int           @default(0)
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  createdBy    Int?
+  active       Boolean       @default(true)
+
+  @@index([userId, position])
+}
+
+model WalletShare {
+  id        Int      @id @default(autoincrement())
+  walletId  Int
+  userId    Int
+  role      String   @default("viewer")
+
+  wallet    Wallet   @relation(fields: [walletId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
+}
+
+//////////////////////////////////////////////////////////////
+// CATEGORÍAS Y SUBCATEGORÍAS
+//////////////////////////////////////////////////////////////
+
+model Category {
+  id            Int           @id @default(autoincrement())
+  name          String
+  type          String        // "income" o "expense"
+  emoji         String?
+  color         String?
+
+  subcategories Subcategory[]
+  userId        Int?
+  user          User?         @relation(fields: [userId], references: [id])
+  transactions  Transaction[]
+  budgets       Budget[]
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  createdBy     Int?
+  active        Boolean       @default(true)
+  position      Int           @default(0)
+
+  @@index([userId, type, position])
+}
+
+model Subcategory {
+  id           Int           @id @default(autoincrement())
+  name         String
+  emoji        String?
+  color        String?
+
+  categoryId   Int
+  category     Category      @relation(fields: [categoryId], references: [id])
+
+  transactions Transaction[]
+  debts        Debt[]        // 👈 RELACIÓN INVERSA A Debt.subcategory
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  createdBy    Int?
+  active       Boolean       @default(true)
+  position     Int           @default(0)
+
+  @@index([categoryId, position])
+}
+
+//////////////////////////////////////////////////////////////
+// DEUDAS
+//////////////////////////////////////////////////////////////
+
+model Debt {
+  id               Int            @id @default(autoincrement())
+
+  userId           Int
+  user             User           @relation(fields: [userId], references: [id])
+
+  type             DebtType       @default(loan)
+  direction        DebtDirection  @default(i_ow)
+  status           DebtStatus     @default(active)
+
+  name             String
+  entity           String
+  emoji            String?
+  color            String?
+
+  totalAmount      Float
+  payed            Float?         @default(0)
+  remainingAmount  Float
+
+  interestRate     Float?
+  monthlyPayment   Float?
+  startDate        DateTime?
+  nextDueDate      DateTime?
+  installmentsPaid Int?           @default(0)
+
+  subcategoryId    Int?
+  subcategory      Subcategory?   @relation(fields: [subcategoryId], references: [id])
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  createdBy        Int?
+  active           Boolean        @default(true)
+
+  @@index([userId])
+  @@index([subcategoryId])
+}
+
+//////////////////////////////////////////////////////////////
+// TRANSACCIONES
+//////////////////////////////////////////////////////////////
+
+model Transaction {
+  id            Int          @id @default(autoincrement())
+  type          String       // income, expense, transfer
+  amount        Float
+  description   String?
+  date          DateTime     @default(now())
+  isRecurring   Boolean      @default(false)
+  isScheduled   Boolean      @default(false)
+  status        String       @default("pending")
+  recurrence    String?
+
+  categoryId    Int?
+  category      Category?    @relation(fields: [categoryId], references: [id])
+
+  subcategoryId Int?
+  subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id])
+
+  fromWalletId  Int?
+  fromWallet    Wallet?      @relation("TransactionFromWallet", fields: [fromWalletId], references: [id])
+
+  toWalletId    Int?
+  toWallet      Wallet?      @relation("TransactionToWallet", fields: [toWalletId], references: [id])
+
+  walletId      Int?
+  wallet        Wallet?      @relation("TransactionWallet", fields: [walletId], references: [id])
+
+  userId        Int
+  user          User         @relation(fields: [userId], references: [id])
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  createdBy     Int?
+  active        Boolean      @default(true)
+
+  @@index([subcategoryId])
+}
+
+//////////////////////////////////////////////////////////////
+// PRESUPUESTOS
+//////////////////////////////////////////////////////////////
+
+model Budget {
+  id         Int          @id @default(autoincrement())
+  name       String?
+  period     BudgetPeriod @default(monthly)
+  limit      Float
+  startDate  DateTime
+
+  categoryId Int?
+  category   Category?    @relation(fields: [categoryId], references: [id])
+
+  walletId   Int?
+  wallet     Wallet?      @relation(fields: [walletId], references: [id])
+
+  userId     Int
+  user       User         @relation(fields: [userId], references: [id])
+
+  active     Boolean      @default(true)
+  createdBy  Int?
+
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  histories  BudgetPeriodHistory[]
+}
+
+model BudgetPeriodHistory {
+  id        Int      @id @default(autoincrement())
+  budgetId  Int
+  from      DateTime
+  to        DateTime
+  spent     Float    @default(0)
+  createdAt DateTime @default(now())
+
+  budget    Budget   @relation(fields: [budgetId], references: [id])
+}
+
+//////////////////////////////////////////////////////////////
+// NOTIFICACIONES
+//////////////////////////////////////////////////////////////
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  title     String
+  message   String
+  type      String?
+  read      Boolean  @default(false)
+
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
+}
+
+//////////////////////////////////////////////////////////////
+// RESÚMENES MANUALES
+//////////////////////////////////////////////////////////////
+
+model ManualMonthData {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id])
+
+  year         Int      // 2021
+  month        Int      // 0–11 (0 = enero)
+
+  income       Float?   @default(0)
+  expense      Float?   @default(0)
+  finalBalance Float?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    Int?
+  active       Boolean  @default(true)
+
+  @@unique([userId, year, month])
+}

@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "ManualMonthData" ALTER COLUMN "income" DROP NOT NULL,
+ALTER COLUMN "expense" DROP NOT NULL,
+ALTER COLUMN "finalBalance" DROP NOT NULL;
