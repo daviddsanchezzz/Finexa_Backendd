@@ -11,9 +11,10 @@ import { SubcategoriesModule } from './modules/categories/subcategories/subcateg
 import { MonthDataModule } from './modules/monthData/month-data.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DebtsModule } from './modules/debts/debts.module';
+import { TripsModule } from './modules/trips/trips.module';
 
 @Module({
-  imports: [PrismaModule, UserModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
+  imports: [PrismaModule, UserModule, TripsModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
     DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
     ScheduleModule.forRoot()],
 })

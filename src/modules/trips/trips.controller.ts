@@ -1,0 +1,94 @@
+// trips/trips.controller.ts
+import { Controller, Get, Post, Patch, Delete, Param, Body } from "@nestjs/common";
+import { User } from "src/common/decorators/user.decorator";
+import { TripsService } from "./trips.service";
+import { CreateTripDto, UpdateTripDto } from "./dto/create-trip.dto";
+import { CreateTripPlanItemDto } from "./dto/create-trip-plan-item.dto";
+import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
+// asume que tienes un decorador @GetUser() que te da el userId
+
+@Controller("trips")
+export class TripsController {
+  constructor(private readonly tripsService: TripsService) {}
+
+  @Post()
+  createTrip(@User('userId') userId: number, @Body() dto: CreateTripDto) {
+    return this.tripsService.createTrip(userId, dto);
+  }
+
+  @Get()
+  getTrips(@User('userId') userId: number) {
+    return this.tripsService.getTrips(userId);
+  }
+
+  @Get(":id")
+  getTripDetail(@User('userId') userId: number, @Param("id") id: string) {
+    return this.tripsService.getTripDetail(userId, +id);
+  }
+
+  @Patch(":id")
+  updateTrip(
+    @User('userId') userId: number,
+    @Param("id") id: string,
+    @Body() dto: UpdateTripDto
+  ) {
+    console.log("Controller received updateTrip request:", { userId, id, dto });
+    return this.tripsService.updateTrip(userId, +id, dto);
+  }
+
+  @Delete(":id")
+  deleteTrip(@User('userId') userId: number, @Param("id") id: string) {
+    return this.tripsService.deleteTrip(userId, +id);
+  }
+
+  @Post(":id/plan-items")
+  addPlanItem(
+    @User('userId') userId: number,
+    @Param("id") id: string,
+    @Body() dto: CreateTripPlanItemDto
+  ) {
+    return this.tripsService.addPlanItem(userId, +id, dto);
+  }
+
+@Patch(":tripId/plan-items/:planItemId")
+  updatePlanItem(
+    @User('userId') userId: number,
+    @Param("tripId") tripId: number,
+    @Param("planItemId") planItemId: number,
+    @Body() dto: CreateTripPlanItemDto
+  ) {
+  return this.tripsService.updatePlanItem(userId, tripId, planItemId, dto);
+  }
+
+  @Delete(':tripId/plan-items/:planItemId')
+deletePlanItem(
+    @User('userId') userId: number,
+  @Param('tripId') tripId: string,
+  @Param('planItemId') planItemId: string,
+) {
+  return this.tripsService.deletePlanItem(
+    userId,
+    Number(tripId),
+    Number(planItemId),
+  );
+}
+
+
+  @Patch(":id/attach-transactions")
+  attachTransactions(
+    @User('userId') userId: number,
+    @Param("id") id: string,
+    @Body() dto: AttachTransactionsDto
+  ) {
+    return this.tripsService.attachTransactions(userId, +id, dto);
+  }
+
+  @Patch(":id/detach-transactions")
+  detachTransactions(
+    @User('userId') userId: number,
+    @Param("id") id: string,
+    @Body() dto: AttachTransactionsDto
+  ) {
+    return this.tripsService.detachTransactions(userId, +id, dto);
+  }
+}

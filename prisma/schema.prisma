@@ -55,6 +55,8 @@ model User {
   transactions  Transaction[]
   debts         Debt[]         // 👈 RELACIÓN INVERSA A Debt.user
 
+  trips         Trip[]
+
   refreshToken  String?
 
   manualMonthData ManualMonthData[]
@@ -203,10 +205,9 @@ model Debt {
 //////////////////////////////////////////////////////////////
 // TRANSACCIONES
 //////////////////////////////////////////////////////////////
-
 model Transaction {
   id            Int          @id @default(autoincrement())
-  type          String       // income, expense, transfer
+  type          String
   amount        Float
   description   String?
   date          DateTime     @default(now())
@@ -233,6 +234,12 @@ model Transaction {
   userId        Int
   user          User         @relation(fields: [userId], references: [id])
 
+  tripId        Int?
+  trip          Trip?        @relation(fields: [tripId], references: [id])
+
+  // 👇 NUEVO: relación inversa con TripPlanItem
+  planItems     TripPlanItem[]
+
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   createdBy     Int?
@@ -240,6 +247,7 @@ model Transaction {
 
   @@index([subcategoryId])
 }
+
 
 //////////////////////////////////////////////////////////////
 // PRESUPUESTOS
@@ -323,4 +331,93 @@ model ManualMonthData {
   active       Boolean  @default(true)
 
   @@unique([userId, year, month])
+}
+
+// Trips
+
+model Trip {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+
+  name        String
+  destination String?
+  startDate   DateTime
+  endDate     DateTime
+  companions  String[]  // ["Juan", "María"]
+
+  emoji       String?
+  cost        Float @default(0)
+  budget      Float?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user        User      @relation(fields: [userId], references: [id])
+
+  // Relación con transacciones del viaje
+  transactions Transaction[]
+
+  // Relación con planning del viaje
+  planItems   TripPlanItem[]
+}
+
+// TripPlanIten
+
+model TripPlanItem {
+  id            Int               @id @default(autoincrement())
+  tripId        Int
+
+  type          TripPlanItemType 
+
+  title         String            // "Vuelo WRO-DUB", "Free tour centro", "Hotel Ibis"
+  date          DateTime?         // día principal
+  startTime     DateTime?         // opcional
+  endTime       DateTime?         // opcional
+
+  location      String?           // "Aeropuerto de Wroclaw", "Centro", "Hostal tal"
+  notes         String?           // código de booking, punto de encuentro...
+
+  // Opcional: enlazar planning con un gasto (transacción)
+  transactionId Int?
+  transaction   Transaction?      @relation(fields: [transactionId], references: [id])
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  cost          Float?
+
+  trip          Trip              @relation(fields: [tripId], references: [id])
+}
+
+enum TripPlanItemType {
+  // Logistics
+  flight
+  accommodation
+  transport
+  taxi
+
+  // Old generic activity (temporal, para migrar datos)
+  activity
+
+  // Culture & tourism
+  museum
+  monument
+  viewpoint
+
+  // Leisure / entertainment
+  free_tour
+  concert
+  bar_party
+
+  // Nature
+  beach
+
+  // Gastronomy
+  restaurant
+
+  // Shopping
+  shopping
+
+  // Generic
+  other
 }
