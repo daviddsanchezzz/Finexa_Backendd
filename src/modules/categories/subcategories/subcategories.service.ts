@@ -17,7 +17,6 @@ export class SubcategoriesService {
   }
 
   async findAll(categoryId: number) {
-    console.log(categoryId)
     return this.prisma.subcategory.findMany({
       where: { categoryId, active: true },
       orderBy: [

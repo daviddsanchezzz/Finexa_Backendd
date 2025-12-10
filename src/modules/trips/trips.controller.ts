@@ -1,5 +1,5 @@
 // trips/trips.controller.ts
-import { Controller, Get, Post, Patch, Delete, Param, Body } from "@nestjs/common";
+import { Controller, Get, Post, Patch, Delete, Param, Body, ParseIntPipe } from "@nestjs/common";
 import { User } from "src/common/decorators/user.decorator";
 import { TripsService } from "./trips.service";
 import { CreateTripDto, UpdateTripDto } from "./dto/create-trip.dto";
@@ -91,4 +91,23 @@ deletePlanItem(
   ) {
     return this.tripsService.detachTransactions(userId, +id, dto);
   }
+
+  @Post(":id/export")
+  async exportTrip(
+    @Param("id", ParseIntPipe) id: number,
+    @Body() body: { includeExpenses: boolean },
+  ) {
+    const { includeExpenses } = body;
+
+    const { base64, fileName } = await this.tripsService.exportTripToPdf(
+      id,
+      includeExpenses,
+    );
+
+    return {
+      base64,
+      fileName,
+    };
+  }
+
 }

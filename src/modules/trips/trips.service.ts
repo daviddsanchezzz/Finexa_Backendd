@@ -4,6 +4,7 @@ import { PrismaService } from "src/common/prisma/prisma.service";
 import { CreateTripDto, UpdateTripDto } from "./dto/create-trip.dto";
 import { CreateTripPlanItemDto } from "./dto/create-trip-plan-item.dto";
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
+import PDFDocument = require("pdfkit");
 
 @Injectable()
 export class TripsService {
@@ -213,5 +214,112 @@ async updatePlanItem(
     });
 
     return { success: true };
+  }
+
+  async exportTripToPdf(tripId: number, includeExpenses: boolean) {
+    const trip = await this.prisma.trip.findUnique({
+      where: { id: tripId },
+      include: {
+        planItems: true,
+        transactions: includeExpenses
+          ? {
+              include: {
+                category: true,
+                subcategory: true,
+                wallet: true,
+              },
+            }
+          : false,
+      },
+    });
+
+    if (!trip) {
+      throw new NotFoundException("Viaje no encontrado");
+    }
+
+    const pdfBuffer = await this.generateTripPdfMinimal(trip, includeExpenses);
+
+    return {
+      base64: pdfBuffer.toString("base64"),
+      fileName: `viaje-${trip.id}.pdf`,
+    };
+  }
+
+  private async generateTripPdfMinimal(trip: any, includeExpenses: boolean): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ size: "A4", margin: 40 });
+
+        const buffers: Buffer[] = [];
+        doc.on("data", (chunk) => buffers.push(chunk as Buffer));
+        doc.on("end", () => {
+          const result = Buffer.concat(buffers);
+          resolve(result);
+        });
+        doc.on("error", (err) => {
+          console.error("❌ Error dentro de PDFDocument:", err);
+          reject(err);
+        });
+
+        // HEADER MUY SIMPLE
+        doc.fontSize(20).text(trip.name || "Viaje", { underline: true });
+        doc.moveDown();
+
+        if (trip.destination) {
+          doc.fontSize(12).text(`Destino: ${trip.destination}`);
+        }
+
+        doc.moveDown();
+
+        // Fechas (sin toLocaleDateString para evitar líos de ICU)
+        doc.fontSize(10).text(`Inicio: ${trip.startDate}`);
+        doc.fontSize(10).text(`Fin: ${trip.endDate}`);
+
+        if (trip.cost != null) {
+          doc.moveDown();
+          doc.fontSize(12).text(`Total gastado: ${trip.cost} €`);
+        }
+
+        // Planning mínimo
+        doc.addPage();
+        doc.fontSize(16).text("Planning", { underline: true });
+        doc.moveDown();
+
+        const planItems = Array.isArray(trip.planItems) ? trip.planItems : [];
+        if (!planItems.length) {
+          doc.fontSize(10).text("No hay elementos en el planning.");
+        } else {
+          planItems.forEach((item: any) => {
+            doc.fontSize(12).text(item.title || "(Sin título)");
+            if (item.date) doc.fontSize(10).text(`Fecha: ${item.date}`);
+            if (item.location)
+              doc.fontSize(10).text(`Ubicación: ${item.location}`);
+            doc.moveDown(0.5);
+          });
+        }
+
+        // Gastos mínimos
+        if (includeExpenses && Array.isArray(trip.transactions) && trip.transactions.length) {
+          doc.addPage();
+          doc.fontSize(16).text("Gastos", { underline: true });
+          doc.moveDown();
+
+          trip.transactions.forEach((tx: any) => {
+            doc
+              .fontSize(11)
+              .text(
+                `${tx.date} - ${tx.amount} € - ${
+                  tx.description || "Sin descripción"
+                }`,
+              );
+          });
+        }
+
+        doc.end();
+      } catch (e) {
+        console.error("❌ Error en generateTripPdfMinimal:", e);
+        reject(e);
+      }
+    });
   }
 }
