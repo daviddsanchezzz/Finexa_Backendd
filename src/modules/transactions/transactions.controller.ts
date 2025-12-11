@@ -26,6 +26,7 @@ export class TransactionsController {
       dateTo: query.dateTo || undefined,
       type: query.type || undefined,
       subcategoryId: query.subcategoryId ? Number(query.subcategoryId) : undefined,
+      isRecurring: query.isRecurring ? query.isRecurring === 'true' : undefined,
     };
   
     return this.transactionsService.findAll(userId, filters);

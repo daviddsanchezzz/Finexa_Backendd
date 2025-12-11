@@ -137,7 +137,7 @@ async create(userId: number, dto: CreateTransactionDto) {
       dateTo?: string;
       type?: string;
       subcategoryId?: number;
-      isRecurrent?: boolean;
+      isRecurring?: boolean;
     },
   ) {
     try {
@@ -159,8 +159,8 @@ async create(userId: number, dto: CreateTransactionDto) {
         throw new BadRequestException('El parámetro type no es válido.');
       }
 
-      if (filters?.isRecurrent !== undefined && typeof filters.isRecurrent !== 'boolean') {
-        throw new BadRequestException('El parámetro isRecurrent debe ser un booleano.');
+      if (filters?.isRecurring !== undefined && typeof filters.isRecurring !== 'boolean') {
+        throw new BadRequestException('El parámetro isRecurring debe ser un booleano.');
       }
 
       if (filters?.dateFrom && isNaN(Date.parse(filters.dateFrom))) {
@@ -179,8 +179,8 @@ async create(userId: number, dto: CreateTransactionDto) {
         where.walletId = filters.walletId;
       }
 
-      if (filters?.isRecurrent !== undefined) {
-        where.isRecurrent = filters.isRecurrent;
+      if (filters?.isRecurring !== undefined) {
+        where.isRecurring = filters.isRecurring;
       }
 
       if (filters?.subcategoryId) {
