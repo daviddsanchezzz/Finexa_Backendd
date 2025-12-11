@@ -212,9 +212,11 @@ model Transaction {
   description   String?
   date          DateTime     @default(now())
   isRecurring   Boolean      @default(false)
-  isScheduled   Boolean      @default(false)
-  status        String       @default("pending")
   recurrence    String?
+  parentId   Int?
+  parent     Transaction?   @relation("RecurringParent", fields: [parentId], references: [id])
+  children   Transaction[]  @relation("RecurringParent")
+ 
 
   categoryId    Int?
   category      Category?    @relation(fields: [categoryId], references: [id])

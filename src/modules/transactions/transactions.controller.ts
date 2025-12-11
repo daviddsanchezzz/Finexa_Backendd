@@ -4,6 +4,8 @@ import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import { User } from '../../common/decorators/user.decorator';
 
+type UpdateDeleteScope = 'single' | 'series' | 'future';
+
 @Controller('transactions')
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
@@ -40,12 +42,17 @@ export class TransactionsController {
     @User('userId') userId: number,
     @Param('id') id: string,
     @Body() dto: UpdateTransactionDto,
+    @Query('scope') scope: UpdateDeleteScope = 'single',
   ) {
-    return this.transactionsService.update(userId, +id, dto);
+    return this.transactionsService.updateWithScope(userId, +id, dto, scope);
   }
 
   @Delete(':id')
-  remove(@User('userId') userId: number, @Param('id') id: string) {
-    return this.transactionsService.remove(userId, +id);
+  remove(
+    @User('userId') userId: number,
+    @Param('id') id: string,
+    @Query('scope') scope: UpdateDeleteScope = 'single',
+  ) {
+    return this.transactionsService.removeWithScope(userId, +id, scope);
   }
 }

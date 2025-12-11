@@ -1,8 +1,9 @@
-import { IsString, IsNumber, IsOptional, IsBoolean } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsBoolean, IsIn, IsInt } from 'class-validator';
 
 export class CreateTransactionDto {
   @IsString()
-  type: string; // income, expense, transfer
+  @IsIn(['income', 'expense', 'transfer'])
+  type: string;
 
   @IsNumber()
   amount: number;
@@ -13,28 +14,43 @@ export class CreateTransactionDto {
 
   @IsOptional()
   @IsString()
-  date?: string;
+  date?: string; // ISO string
 
   @IsOptional()
   @IsBoolean()
   isRecurring?: boolean;
 
   @IsOptional()
-  @IsString()
-  recurrence?: string;
+  @IsIn(['daily', 'weekly', 'monthly', 'yearly'], {
+    message: 'recurrence must be daily, weekly, monthly or yearly',
+  })
+  recurrence?: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
 
   @IsOptional()
+  @IsInt()
   walletId?: number;
 
   @IsOptional()
+  @IsInt()
   fromWalletId?: number;
 
   @IsOptional()
+  @IsInt()
   toWalletId?: number;
 
   @IsOptional()
+  @IsInt()
   categoryId?: number;
 
   @IsOptional()
+  @IsInt()
   subcategoryId?: number;
+
+  @IsOptional()
+  @IsInt()
+  tripId?: number;
+
+  @IsOptional()
+  @IsInt()
+  parentId?: number;
 }
