@@ -12,9 +12,10 @@ import { MonthDataModule } from './modules/monthData/month-data.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DebtsModule } from './modules/debts/debts.module';
 import { TripsModule } from './modules/trips/trips.module';
+import { InvestmentsModule } from './modules/investments/investments.module';
 
 @Module({
-  imports: [PrismaModule, UserModule, TripsModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
+  imports: [PrismaModule, UserModule, TripsModule, InvestmentsModule  ,DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
     DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
     ScheduleModule.forRoot()],
 })

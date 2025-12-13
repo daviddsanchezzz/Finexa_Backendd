@@ -27,6 +27,10 @@ export class CreateTransactionDto {
   recurrence?: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
 
   @IsOptional()
+  @IsBoolean()
+  excludeFromStats?: boolean;
+
+  @IsOptional()
   @IsInt()
   walletId?: number;
 

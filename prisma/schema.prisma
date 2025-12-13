@@ -34,6 +34,20 @@ enum DebtStatus {
   closed   // cerrada manualmente por el usuario
 }
 
+enum WalletKind {
+  cash
+  investment
+}
+
+enum InvestmentAssetType {
+  crypto
+  etf
+  stock
+  fund
+  custom
+}
+
+
 //////////////////////////////////////////////////////////////
 // MODELOS PRINCIPALES
 //////////////////////////////////////////////////////////////
@@ -61,6 +75,10 @@ model User {
 
   manualMonthData ManualMonthData[]
 
+  investmentAssets     InvestmentAsset[]
+  investmentValuations InvestmentValuationSnapshot[]
+
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   createdBy     Int?
@@ -84,6 +102,8 @@ model Wallet {
 
   userId       Int
   user         User          @relation("UserWallets", fields: [userId], references: [id])
+
+  kind         WalletKind @default(cash)
 
   transactions        Transaction[] @relation("TransactionWallet")       // income/expense
   transactionsFrom    Transaction[] @relation("TransactionFromWallet")   // transfer origen
@@ -238,6 +258,11 @@ model Transaction {
 
   tripId        Int?
   trip          Trip?        @relation(fields: [tripId], references: [id])
+
+  investmentAssetId Int?
+  investmentAsset   InvestmentAsset? @relation(fields: [investmentAssetId], references: [id])
+
+  excludeFromStats Boolean @default(false)
 
   // 👇 NUEVO: relación inversa con TripPlanItem
   planItems     TripPlanItem[]
@@ -424,3 +449,47 @@ enum TripPlanItemType {
   // Generic
   other
 }
+
+
+model InvestmentAsset {
+  id        Int                 @id @default(autoincrement())
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id])
+
+  name      String              // "Bitcoin", "Crypto genérico"
+  symbol    String?             // "BTC", opcional
+  type      InvestmentAssetType @default(custom)
+  currency  String              @default("EUR")
+
+  initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
+
+  transactions Transaction[]   // transferencias que apuntan a este asset
+  valuations   InvestmentValuationSnapshot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  active    Boolean  @default(true)
+
+  @@unique([userId, name])
+}
+
+model InvestmentValuationSnapshot {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+
+  assetId   Int
+  asset     InvestmentAsset @relation(fields: [assetId], references: [id])
+
+  date      DateTime   // fin de mes
+  value     Float
+  currency  String     @default("EUR")
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  active    Boolean    @default(true)
+
+  @@unique([userId, assetId, date])
+  @@index([userId, date])
+}
+
