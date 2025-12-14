@@ -13,118 +13,146 @@ import { PrismaDateTransformer } from 'src/common/prisma/prisma.transformer';
 export class TransactionsService {
   constructor(private prisma: PrismaService) {}
 
-// ============================================================
-// CREATE
-// ============================================================
-async create(userId: number, dto: CreateTransactionDto) {
-  const rawDate = dto.date ? new Date(dto.date) : new Date();
+  // ============================================================
+  // CREATE
+  // ============================================================
+  async create(userId: number, dto: CreateTransactionDto) {
+    const rawDate = dto.date ? new Date(dto.date) : new Date();
+
     console.log('🔵 CREATE TX called', {
-    userId,
-    amount: dto.amount,
-    isRecurring: dto.isRecurring,
-    recurrence: dto.recurrence,
-  });
-
-  if (isNaN(rawDate.getTime())) {
-    throw new BadRequestException('Fecha inválida');
-  }
-
-  // Extraer info de recurrencia del DTO
-  const { isRecurring, recurrence, parentId, ...rest } = dto;
-
-  // 1) Crear SIEMPRE la transacción "real" (la que afecta al saldo)
-  const transaction = await this.prisma.transaction.create({
-    data: {
-      ...rest,
       userId,
-      date: rawDate,
-      // la ocurrencia inicial NO es recurrente en sí misma
-      isRecurring: false,
-      recurrence: null,
-      parentId: null,        // luego, si quieres, la enlazamos
-    },
-  });
+      amount: dto.amount,
+      isRecurring: dto.isRecurring,
+      recurrence: dto.recurrence,
+      parentId: (dto as any).parentId ?? null,
+      investmentAssetId: (dto as any).investmentAssetId ?? null,
+    });
+
+    if (isNaN(rawDate.getTime())) {
+      throw new BadRequestException('Fecha inválida');
+    }
+
+    // Extraer info de recurrencia del DTO
+    const { isRecurring, recurrence, parentId, ...rest } = dto as any;
+
+    // 1) Crear SIEMPRE la transacción "real" (la que afecta al saldo)
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        ...rest,
+        userId,
+        date: rawDate,
+        // la ocurrencia inicial NO es recurrente en sí misma
+        isRecurring: false,
+        recurrence: null,
+        // ✅ IMPORTANTE: respetar parentId cuando lo manda el cron
+        parentId: parentId ?? null,
+      },
+    });
+
     console.log('✅ REAL TX created', transaction.id);
 
-  // 2) Actualizar balances en función del tipo
-  if (transaction.type === 'transfer') {
-    const { fromWalletId, toWalletId, amount } = transaction;
+    // 2) Actualizar balances en función del tipo + validación inversión
+    if (transaction.type === 'transfer') {
+      const { fromWalletId, toWalletId, amount } = transaction;
 
-    if (!fromWalletId || !toWalletId) {
-      throw new BadRequestException('Transferencia inválida');
+      if (!fromWalletId || !toWalletId) {
+        throw new BadRequestException('Transferencia inválida');
+      }
+
+      const toWallet = await this.prisma.wallet.findUnique({
+        where: { id: toWalletId },
+      });
+
+      if (!toWallet) {
+        throw new NotFoundException('Wallet destino no existe');
+      }
+
+      // ✅ si destino es wallet inversión, exige investmentAssetId
+      if (toWallet.kind === 'investment' && !(transaction as any).investmentAssetId) {
+        throw new BadRequestException(
+          'investmentAssetId es obligatorio cuando el destino es una wallet de inversión',
+        );
+      }
+
+      await this.prisma.wallet.update({
+        where: { id: fromWalletId },
+        data: { balance: { decrement: amount } },
+      });
+
+      await this.prisma.wallet.update({
+        where: { id: toWalletId },
+        data: { balance: { increment: amount } },
+      });
+    } else if (transaction.walletId) {
+      const wallet = await this.prisma.wallet.findUnique({
+        where: { id: transaction.walletId },
+      });
+
+      if (!wallet) {
+        throw new NotFoundException(
+          `Wallet with ID ${transaction.walletId} not found`,
+        );
+      }
+
+      const newBalance =
+        transaction.type === 'income'
+          ? wallet.balance + transaction.amount
+          : wallet.balance - transaction.amount;
+
+      await this.prisma.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: newBalance },
+      });
     }
 
-    await this.prisma.wallet.update({
-      where: { id: fromWalletId },
-      data: { balance: { decrement: amount } },
-    });
-
-    await this.prisma.wallet.update({
-      where: { id: toWalletId },
-      data: { balance: { increment: amount } },
-    });
-  } else if (transaction.walletId) {
-    const wallet = await this.prisma.wallet.findUnique({
-      where: { id: transaction.walletId },
-    });
-
-    if (!wallet) {
-      throw new NotFoundException(
-        `Wallet with ID ${transaction.walletId} not found`,
-      );
+    // 3) Si NO es recurrente, terminamos aquí
+    if (!isRecurring || !recurrence) {
+      return PrismaDateTransformer.toPlain(transaction);
     }
 
-    const newBalance =
-      transaction.type === 'income'
-        ? wallet.balance + transaction.amount
-        : wallet.balance - transaction.amount;
+    // 4) Crear la PLANTILLA recurrente para futuras ejecuciones
+    const nextDate = this.getNextDate(rawDate, recurrence);
 
-    await this.prisma.wallet.update({
-      where: { id: wallet.id },
-      data: { balance: newBalance },
+    const template = await this.prisma.transaction.create({
+      data: {
+        type: transaction.type,
+        amount: transaction.amount,
+        description: transaction.description,
+        date: nextDate, // fecha de la PRÓXIMA ejecución
+        isRecurring: true,
+        recurrence: recurrence, // "daily" | "weekly" | ...
+
+        walletId: transaction.walletId,
+        fromWalletId: transaction.fromWalletId,
+        toWalletId: transaction.toWalletId,
+
+        // ✅ CLAVE: copiar investmentAssetId para aportaciones recurrentes a inversión
+        investmentAssetId: (transaction as any).investmentAssetId ?? null,
+
+        categoryId: transaction.categoryId,
+        subcategoryId: transaction.subcategoryId,
+        tripId: transaction.tripId,
+
+        userId: transaction.userId,
+        active: true,
+        parentId: null, // la plantilla es raíz de la serie
+      },
     });
-  }
 
-  // 3) Si NO es recurrente, terminamos aquí
-  if (!isRecurring || !recurrence) {
-    return PrismaDateTransformer.toPlain(transaction);
-  }
-
-  // 4) Crear la PLANTILLA recurrente para futuras ejecuciones
-  const nextDate = this.getNextDate(rawDate, recurrence);
-
-  const template = await this.prisma.transaction.create({
-    data: {
-      type: transaction.type,
-      amount: transaction.amount,
-      description: transaction.description,
-      date: nextDate,           // fecha de la PRÓXIMA ejecución
-      isRecurring: true,
-      recurrence: recurrence,   // "daily" | "weekly" | ...
-
-      walletId: transaction.walletId,
-      fromWalletId: transaction.fromWalletId,
-      toWalletId: transaction.toWalletId,
-      categoryId: transaction.categoryId,
-      subcategoryId: transaction.subcategoryId,
-      tripId: transaction.tripId,
-
-      userId: transaction.userId,
-      active: true,
-      parentId: null,          // la plantilla es raíz de la serie
-    },
-  });
     console.log('📌 TEMPLATE created', template.id);
 
-  // 5) (Opcional pero recomendable) enlazar la primera ocurrencia con la plantilla
-  await this.prisma.transaction.update({
-    where: { id: transaction.id },
-    data: { parentId: template.id },
-  });
+    // 5) (Opcional pero recomendable) enlazar la primera ocurrencia con la plantilla
+    // ✅ SOLO si la ocurrencia no venía ya enlazada (cron)
+    if (!transaction.parentId) {
+      await this.prisma.transaction.update({
+        where: { id: transaction.id },
+        data: { parentId: template.id },
+      });
+    }
 
-  // 6) Devolvemos la transacción real (la que ve el usuario)
-  return PrismaDateTransformer.toPlain(transaction);
-}
+    // 6) Devolvemos la transacción real (la que ve el usuario)
+    return PrismaDateTransformer.toPlain(transaction);
+  }
 
   // ============================================================
   // FIND ALL
@@ -155,12 +183,20 @@ async create(userId: number, dto: CreateTransactionDto) {
         );
       }
 
-      if (filters?.type && !['income', 'expense', 'transfer'].includes(filters.type)) {
+      if (
+        filters?.type &&
+        !['income', 'expense', 'transfer'].includes(filters.type)
+      ) {
         throw new BadRequestException('El parámetro type no es válido.');
       }
 
-      if (filters?.isRecurring !== undefined && typeof filters.isRecurring !== 'boolean') {
-        throw new BadRequestException('El parámetro isRecurring debe ser un booleano.');
+      if (
+        filters?.isRecurring !== undefined &&
+        typeof filters.isRecurring !== 'boolean'
+      ) {
+        throw new BadRequestException(
+          'El parámetro isRecurring debe ser un booleano.',
+        );
       }
 
       if (filters?.dateFrom && isNaN(Date.parse(filters.dateFrom))) {
@@ -205,7 +241,6 @@ async create(userId: number, dto: CreateTransactionDto) {
           wallet: true,
           fromWallet: true,
           toWallet: true,
-
         },
         orderBy: { date: 'desc' },
       });
@@ -273,7 +308,7 @@ async create(userId: number, dto: CreateTransactionDto) {
     // 2️⃣ ACTUALIZAR TRANSACCIÓN
     const updated = await this.prisma.transaction.update({
       where: { id },
-      data: dto,
+      data: dto as any,
     });
 
     // 3️⃣ APLICAR EFECTO NUEVO
@@ -292,6 +327,18 @@ async create(userId: number, dto: CreateTransactionDto) {
     }
 
     if (updated.type === 'transfer') {
+      // ✅ validación inversión también en update (por si cambian toWalletId)
+      if (updated.toWalletId) {
+        const toWallet = await this.prisma.wallet.findUnique({
+          where: { id: updated.toWalletId },
+        });
+        if (toWallet?.kind === 'investment' && !(updated as any).investmentAssetId) {
+          throw new BadRequestException(
+            'investmentAssetId es obligatorio cuando el destino es una wallet de inversión',
+          );
+        }
+      }
+
       if (updated.fromWalletId) {
         await this.prisma.wallet.update({
           where: { id: updated.fromWalletId },
@@ -382,6 +429,10 @@ async create(userId: number, dto: CreateTransactionDto) {
         walletId: t.walletId ?? undefined,
         fromWalletId: t.fromWalletId ?? undefined,
         toWalletId: t.toWalletId ?? undefined,
+
+        // ✅ clave para aportaciones recurrentes a inversión
+        investmentAssetId: (t as any).investmentAssetId ?? undefined,
+
         categoryId: t.categoryId ?? undefined,
         subcategoryId: t.subcategoryId ?? undefined,
         tripId: t.tripId ?? undefined,
@@ -390,7 +441,7 @@ async create(userId: number, dto: CreateTransactionDto) {
         recurrence: null,
         // enlazamos con la plantilla
         parentId: t.id,
-      };
+      } as any;
 
       // 2) crear la transacción pasando por la lógica normal (balances, validaciones, etc.)
       await this.create(t.userId, dto);
@@ -438,82 +489,80 @@ async create(userId: number, dto: CreateTransactionDto) {
     const baseTx = await this.prisma.transaction.findFirst({
       where: { id, userId, active: true },
     });
-  
+
     if (!baseTx) {
       throw new NotFoundException('Transaction not found');
     }
-  
+
     const isInSeries = baseTx.isRecurring || !!baseTx.parentId;
-  
+
     // ✅ Caso 1: no pertenece a serie o el usuario ha elegido "solo esta"
-    // Equivalente a "Aquest esdeveniment"
     if (!isInSeries || scope === 'single') {
-      return this.update(userId, id, dto); // usa tu lógica actual de update (recalcula saldos)
-    }
-  
-    // 2) Identificar plantilla de la serie
-    const templateId = baseTx.isRecurring ? baseTx.id : baseTx.parentId;
-  
-    if (!templateId) {
-      // Fallback defensivo
       return this.update(userId, id, dto);
     }
-  
+
+    // 2) Identificar plantilla de la serie
+    const templateId = baseTx.isRecurring ? baseTx.id : baseTx.parentId;
+
+    if (!templateId) {
+      return this.update(userId, id, dto);
+    }
+
     // 3) Actualizar la plantilla (no toca balances)
-    //    Usamos baseTx como base para campos por defecto
     const templateUpdateData: any = {
       type: dto.type ?? baseTx.type,
       amount: dto.amount ?? baseTx.amount,
       description: dto.description ?? baseTx.description,
       categoryId:
-        typeof dto.categoryId !== 'undefined'
-          ? dto.categoryId
+        typeof (dto as any).categoryId !== 'undefined'
+          ? (dto as any).categoryId
           : baseTx.categoryId,
       subcategoryId:
-        typeof dto.subcategoryId !== 'undefined'
-          ? dto.subcategoryId
+        typeof (dto as any).subcategoryId !== 'undefined'
+          ? (dto as any).subcategoryId
           : baseTx.subcategoryId,
       walletId:
-        typeof dto.walletId !== 'undefined' ? dto.walletId : baseTx.walletId,
+        typeof (dto as any).walletId !== 'undefined'
+          ? (dto as any).walletId
+          : baseTx.walletId,
       fromWalletId:
-        typeof dto.fromWalletId !== 'undefined'
-          ? dto.fromWalletId
+        typeof (dto as any).fromWalletId !== 'undefined'
+          ? (dto as any).fromWalletId
           : baseTx.fromWalletId,
       toWalletId:
-        typeof dto.toWalletId !== 'undefined'
-          ? dto.toWalletId
+        typeof (dto as any).toWalletId !== 'undefined'
+          ? (dto as any).toWalletId
           : baseTx.toWalletId,
+
+      // ✅ clave: propagar investmentAssetId en series
+      investmentAssetId:
+        typeof (dto as any).investmentAssetId !== 'undefined'
+          ? (dto as any).investmentAssetId
+          : (baseTx as any).investmentAssetId,
     };
-  
+
     // isRecurring + recurrence para la plantilla
-    if (typeof dto.recurrence !== 'undefined') {
-      if (dto.recurrence) {
+    if (typeof (dto as any).recurrence !== 'undefined') {
+      if ((dto as any).recurrence) {
         templateUpdateData.isRecurring = true;
-        templateUpdateData.recurrence = dto.recurrence;
+        templateUpdateData.recurrence = (dto as any).recurrence;
       } else {
         templateUpdateData.isRecurring = false;
         templateUpdateData.recurrence = null;
       }
     }
-  
+
     await this.prisma.transaction.update({
       where: { id: templateId },
       data: templateUpdateData,
     });
-  
-    // ✅ Caso 2: "Aquest esdeveniment i els següents"
-    // → actualizar esta ocurrencia + todas las futuras de la serie
+
+    // ✅ Caso 2: actualizar esta + futuras
     if (scope === 'future') {
-      // 2.1. Actualizar SIEMPRE la transacción actual con tu lógica normal
-      //      (recalcula balances en función del cambio)
       if (baseTx.parentId) {
         await this.update(userId, baseTx.id, dto);
-      } else {
-        // Si por alguna razón baseTx fuera la plantilla (raro en tu UI),
-        // simplemente no llamamos a update (la plantilla ya se ha actualizado arriba).
       }
-  
-      // 2.2. Actualizar todas las ocurrencias FUTURAS (fecha estrictamente mayor)
+
       const futureChildren = await this.prisma.transaction.findMany({
         where: {
           userId,
@@ -522,21 +571,19 @@ async create(userId: number, dto: CreateTransactionDto) {
           date: { gt: baseTx.date },
         },
       });
-  
+
       for (const child of futureChildren) {
         const dtoForChild: UpdateTransactionDto = {
-          ...dto,
-          // Si el DTO no trae date, respetamos la fecha original de esa ocurrencia
-          date: dto.date ?? child.date.toISOString(),
+          ...(dto as any),
+          date: (dto as any).date ?? child.date.toISOString(),
         };
         await this.update(userId, child.id, dtoForChild);
       }
-  
+
       return this.findOne(userId, id);
     }
-  
-    // ✅ Caso 3: "Tots els esdeveniments"
-    // → actualizar toda la serie (todas las ocurrencias)
+
+    // ✅ Caso 3: actualizar toda la serie
     if (scope === 'series') {
       const allChildren = await this.prisma.transaction.findMany({
         where: {
@@ -545,26 +592,20 @@ async create(userId: number, dto: CreateTransactionDto) {
           parentId: templateId,
         },
       });
-  
+
       for (const child of allChildren) {
         const dtoForChild: UpdateTransactionDto = {
-          ...dto,
-          date: dto.date ?? child.date.toISOString(),
+          ...(dto as any),
+          date: (dto as any).date ?? child.date.toISOString(),
         };
         await this.update(userId, child.id, dtoForChild);
       }
-  
-      // Si baseTx es una ocurrencia, ya estará incluida en allChildren.
-      // Si baseTx es la plantilla, ya la hemos actualizado arriba con templateUpdateData.
-  
+
       return this.findOne(userId, id);
     }
-  
-    // Fallback defensivo
+
     return this.update(userId, id, dto);
   }
-
-
 
   async removeWithScope(
     userId: number,
@@ -574,39 +615,31 @@ async create(userId: number, dto: CreateTransactionDto) {
     const baseTx = await this.prisma.transaction.findFirst({
       where: { id, userId, active: true },
     });
-  
+
     if (!baseTx) {
       throw new NotFoundException('Transaction not found');
     }
-  
+
     const isInSeries = baseTx.isRecurring || !!baseTx.parentId;
-  
-    // ✅ Caso 1: no pertenece a serie o el usuario quiere "solo esta"
-    // Equivalente a: "Aquest esdeveniment"
+
     if (!isInSeries || scope === 'single') {
-      return this.remove(userId, id); // usa tu lógica actual (revertir saldos + active=false)
-    }
-  
-    // A partir de aquí sabemos que hay serie detrás y scope es 'future' o 'series'
-    const templateId = baseTx.isRecurring ? baseTx.id : baseTx.parentId;
-  
-    if (!templateId) {
-      // Por seguridad, si algo está raro, caemos a borrado simple
       return this.remove(userId, id);
     }
-  
+
+    const templateId = baseTx.isRecurring ? baseTx.id : baseTx.parentId;
+
+    if (!templateId) {
+      return this.remove(userId, id);
+    }
+
     let deletedCount = 0;
-  
-    // ✅ Caso 2: "Aquest esdeveniment i els següents"
-    // → esta + todas las futuras
+
     if (scope === 'future') {
-      // 2.1. Borrar SIEMPRE la actual si es una ocurrencia de la serie
       if (baseTx.parentId) {
         await this.remove(userId, baseTx.id);
         deletedCount++;
       }
-  
-      // 2.2. Borrar todas las ocurrencias FUTURAS (fecha estrictamente mayor)
+
       const futureChildren = await this.prisma.transaction.findMany({
         where: {
           userId,
@@ -615,25 +648,21 @@ async create(userId: number, dto: CreateTransactionDto) {
           date: { gt: baseTx.date },
         },
       });
-  
+
       for (const child of futureChildren) {
         await this.remove(userId, child.id);
         deletedCount++;
       }
-  
-      // 2.3. Desactivar la plantilla para no generar más con el cron
+
       await this.prisma.transaction.update({
         where: { id: templateId },
         data: { active: false },
       });
-  
+
       return { scope, deletedCount };
     }
-  
-    // ✅ Caso 3: "Tots els esdeveniments"
-    // → toda la serie (todas las ocurrencias pasadas y futuras)
+
     if (scope === 'series') {
-      // 3.1. Todas las ocurrencias hijas de esa plantilla
       const allChildren = await this.prisma.transaction.findMany({
         where: {
           userId,
@@ -641,24 +670,20 @@ async create(userId: number, dto: CreateTransactionDto) {
           parentId: templateId,
         },
       });
-  
+
       for (const child of allChildren) {
         await this.remove(userId, child.id);
         deletedCount++;
       }
-  
-      // 3.2. Si por alguna razón baseTx es la propia plantilla, NO usamos this.remove
-      //     sobre la plantilla (no afecta a saldo); solo la marcamos inactiva.
+
       await this.prisma.transaction.update({
         where: { id: templateId },
         data: { active: false },
       });
-  
+
       return { scope, deletedCount };
     }
-  
-    // Fallback defensivo
+
     return this.remove(userId, id);
   }
-  
 }

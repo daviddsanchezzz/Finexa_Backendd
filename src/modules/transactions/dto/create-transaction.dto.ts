@@ -52,6 +52,10 @@ export class CreateTransactionDto {
 
   @IsOptional()
   @IsInt()
+  investmentAssetId?: number | null;
+
+  @IsOptional()
+  @IsInt()
   tripId?: number;
 
   @IsOptional()
