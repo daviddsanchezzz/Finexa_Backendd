@@ -166,6 +166,7 @@ export class TransactionsService {
       type?: string;
       subcategoryId?: number;
       isRecurring?: boolean;
+      investmentAssetId?: number;
     },
   ) {
     try {
@@ -209,6 +210,16 @@ export class TransactionsService {
         throw new BadRequestException(
           'El parámetro dateTo no tiene un formato de fecha válido.',
         );
+      }
+
+      if (filters?.investmentAssetId && isNaN(Number(filters.investmentAssetId))) {
+        throw new BadRequestException(
+          'El parámetro investmentAssetId debe ser un número válido.',
+        );
+      }
+
+      if (filters?.investmentAssetId) {
+        where.investmentAssetId = filters.investmentAssetId;
       }
 
       if (filters?.walletId) {
