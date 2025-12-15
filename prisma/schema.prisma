@@ -493,3 +493,15 @@ model InvestmentValuationSnapshot {
   @@index([userId, date])
 }
 
+model MonthlyReport {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  month     String   // "YYYY-MM"
+  filePath  String   // ruta local o key S3
+  createdAt DateTime @default(now())
+
+  @@unique([userId, month])
+  @@index([userId, month])
+}
+
+
