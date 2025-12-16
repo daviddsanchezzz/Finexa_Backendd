@@ -1,35 +1,27 @@
-import {
-  IsString,
-  IsNumber,
-  IsOptional,
-  IsDateString,
-  IsEnum,
-} from 'class-validator';
-
-export enum BudgetPeriod {
-  daily = 'daily',
-  weekly = 'weekly',
-  monthly = 'monthly',
-  yearly = 'yearly',
-}
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsPositive, IsString } from "class-validator";
+import { BudgetPeriod } from "@prisma/client";
 
 export class CreateBudgetDto {
   @IsOptional()
   @IsString()
-  name?: string;
+  name?: string | null;
 
+  @IsOptional()
   @IsEnum(BudgetPeriod)
-  period: BudgetPeriod;
+  period?: BudgetPeriod;
 
   @IsNumber()
-  limit: number;
+  @IsPositive()
+  limit!: number;
 
   @IsDateString()
-  startDate: string;
+  startDate!: string;
 
   @IsOptional()
-  categoryId?: number;
+  @IsNumber()
+  categoryId?: number | null;
 
   @IsOptional()
-  walletId?: number;
+  @IsNumber()
+  walletId?: number | null;
 }

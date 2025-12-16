@@ -1,61 +1,45 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { BudgetsService } from './budgets.service';
-import { CreateBudgetDto } from './dto/create-budget.dto';
-import { UpdateBudgetDto } from './dto/update-budget.dto';
-import { User } from '../../common/decorators/user.decorator';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { BudgetsService } from "./budgets.service";
+import { CreateBudgetDto } from "./dto/create-budget.dto";
+import { UpdateBudgetDto } from "./dto/update-budget.dto";
+import { BudgetsOverviewQueryDto } from "./dto/budgets-overview.query.dto";
+import { User } from "src/common/decorators/user.decorator"; // asumo que tienes @User('userId')
 
-@Controller('budgets')
+@Controller("budgets")
 export class BudgetsController {
   constructor(private readonly budgetsService: BudgetsService) {}
 
-  @Post()
-  create(@User('userId') userId: number, @Body() dto: CreateBudgetDto) {
-    return this.budgetsService.create(userId, dto);
+  @Get("overview")
+  overview(@User("userId") userId: number, @Query() query: BudgetsOverviewQueryDto) {
+    return this.budgetsService.overview(userId, query);
   }
 
   @Get()
-  findAll(@User('userId') userId: number) {
+  findAll(@User("userId") userId: number) {
     return this.budgetsService.findAll(userId);
   }
 
-  @Get(':id')
-  findOne(@User('userId') userId: number, @Param('id') id: string) {
-    return this.budgetsService.findOne(userId, +id);
+  @Get(":id")
+  findOne(@User("userId") userId: number, @Param("id") id: string) {
+    return this.budgetsService.findOne(userId, Number(id));
   }
 
-  @Get(':id/progress')
-  getProgress(@User('userId') userId: number, @Param('id') id: string) {
-    return this.budgetsService.getProgress(userId, +id);
+  @Post()
+  create(@User("userId") userId: number, @Body() dto: CreateBudgetDto) {
+    return this.budgetsService.create(userId, dto);
   }
 
-  @Patch(':id')
+  @Patch(":id")
   update(
-    @User('userId') userId: number,
-    @Param('id') id: string,
-    @Body() dto: UpdateBudgetDto,
+    @User("userId") userId: number,
+    @Param("id") id: string,
+    @Body() dto: UpdateBudgetDto
   ) {
-    return this.budgetsService.update(userId, +id, dto);
+    return this.budgetsService.update(userId, Number(id), dto);
   }
 
-  @Delete(':id')
-  remove(@User('userId') userId: number, @Param('id') id: string) {
-    return this.budgetsService.remove(userId, +id);
+  @Delete(":id")
+  remove(@User("userId") userId: number, @Param("id") id: string) {
+    return this.budgetsService.remove(userId, Number(id));
   }
-
-  @Get(':id/history')
-getHistory(
-  @User('userId') userId: number,
-  @Param('id') id: string
-) {
-  return this.budgetsService.getHistory(userId, +id);
-}
-
-@Post(':id/close-period')
-forceClose(
-  @User('userId') userId: number,
-  @Param('id') id: string
-) {
-  return this.budgetsService.closeCurrentPeriod(userId, +id, true);
-}
-
 }

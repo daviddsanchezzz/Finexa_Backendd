@@ -301,19 +301,6 @@ model Budget {
 
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
-
-  histories  BudgetPeriodHistory[]
-}
-
-model BudgetPeriodHistory {
-  id        Int      @id @default(autoincrement())
-  budgetId  Int
-  from      DateTime
-  to        DateTime
-  spent     Float    @default(0)
-  createdAt DateTime @default(now())
-
-  budget    Budget   @relation(fields: [budgetId], references: [id])
 }
 
 //////////////////////////////////////////////////////////////
