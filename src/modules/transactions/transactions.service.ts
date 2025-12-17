@@ -19,15 +19,6 @@ export class TransactionsService {
   async create(userId: number, dto: CreateTransactionDto) {
     const rawDate = dto.date ? new Date(dto.date) : new Date();
 
-    console.log('🔵 CREATE TX called', {
-      userId,
-      amount: dto.amount,
-      isRecurring: dto.isRecurring,
-      recurrence: dto.recurrence,
-      parentId: (dto as any).parentId ?? null,
-      investmentAssetId: (dto as any).investmentAssetId ?? null,
-    });
-
     if (isNaN(rawDate.getTime())) {
       throw new BadRequestException('Fecha inválida');
     }
@@ -41,15 +32,11 @@ export class TransactionsService {
         ...rest,
         userId,
         date: rawDate,
-        // la ocurrencia inicial NO es recurrente en sí misma
         isRecurring: false,
         recurrence: null,
-        // ✅ IMPORTANTE: respetar parentId cuando lo manda el cron
         parentId: parentId ?? null,
       },
     });
-
-    console.log('✅ REAL TX created', transaction.id);
 
     // 2) Actualizar balances en función del tipo + validación inversión
     if (transaction.type === 'transfer') {
