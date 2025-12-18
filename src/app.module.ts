@@ -14,9 +14,10 @@ import { DebtsModule } from './modules/debts/debts.module';
 import { TripsModule } from './modules/trips/trips.module';
 import { InvestmentsModule } from './modules/investments/investments.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { AllocationPlanModule } from './modules/monthly-allocations/monthly-allocations.module';
 
 @Module({
-  imports: [PrismaModule, UserModule, ReportsModule, TripsModule, InvestmentsModule  ,DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
+  imports: [PrismaModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule  ,DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
     DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
     ScheduleModule.forRoot()],
 })

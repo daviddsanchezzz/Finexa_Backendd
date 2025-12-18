@@ -491,4 +491,38 @@ model MonthlyReport {
   @@index([userId, month])
 }
 
+enum AllocationCategory {
+  expense
+  investment
+  savings
+}
 
+model AllocationPlan {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  income    Decimal  @db.Decimal(14, 2)
+  currency  String   @default("EUR")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items     AllocationItem[]
+
+  @@index([userId])
+}
+
+model AllocationItem {
+  id        Int      @id @default(autoincrement())
+  planId    Int
+  category  AllocationCategory
+  name      String
+  amount    Decimal  @db.Decimal(14, 2)
+  order     Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plan      AllocationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, category])
+}
