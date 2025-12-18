@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/common/prisma/prisma.service';
 import { CreateAllocationItemDto } from './dto/create-item.dto';
 import { UpdateAllocationItemDto } from './dto/update-item.dto';
+import { UpdateAllocationPlanDto } from './dto/upsert-plan.dto';
 
 const pct = (part: number, total: number) => (total > 0 ? (part / total) * 100 : 0);
 
