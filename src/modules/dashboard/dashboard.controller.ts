@@ -12,6 +12,11 @@ export class DashboardController {
     return this.dashboardService.getSummary(userId, filters);
   }
 
+  @Get('summary2')
+  getSummary2(@User('userId') userId: number, @Query() filters: FilterDashboardDto) {
+    return this.dashboardService.getSummary2(userId, filters);
+  }
+
   @Get('by-category')
   getByCategory(@User('userId') userId: number, @Query() filters: FilterDashboardDto) {
     return this.dashboardService.getByCategory(userId, filters);

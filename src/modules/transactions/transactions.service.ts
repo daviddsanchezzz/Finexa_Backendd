@@ -684,4 +684,71 @@ export class TransactionsService {
 
     return this.remove(userId, id);
   }
+
+  // dentro de TransactionsService
+
+async findLastSalary(userId: number) {
+  try {
+    // 1) Buscar categoría "Salario" del usuario (category o subcategory, según tu modelo)
+    // Ajusta el where si tu categoría de salario vive en subcategory en vez de category.
+    const salaryCategory = await this.prisma.category.findFirst({
+      where: {
+        userId,
+        active: true,
+        name: { equals: 'Salario', mode: 'insensitive' },
+      },
+      select: { id: true, name: true },
+    });
+
+    // Si no existe categoría salario, no tiene sentido seguir
+    if (!salaryCategory) {
+      throw new NotFoundException('No existe la categoría "Salario"');
+    }
+
+    // 2) Obtener última transacción income en esa categoría
+    // Importante: ignoramos recurrent templates (isRecurring=true) y soft-deleted (active=false)
+    const tx = await this.prisma.transaction.findFirst({
+      where: {
+        userId,
+        active: true,
+        isRecurring: false,
+        type: 'income',
+        categoryId: salaryCategory.id,
+      },
+      orderBy: { date: 'desc' },
+      select: {
+        id: true,
+        amount: true,
+        date: true,
+        description: true,
+        walletId: true,
+        category: { select: { id: true, name: true } },
+        subcategory: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!tx) {
+      throw new NotFoundException('No hay transacciones de salario');
+    }
+
+    // 3) Respuesta pequeña y directa (ideal para tu modal)
+    return PrismaDateTransformer.toPlain({
+      id: tx.id,
+      amount: Number(tx.amount),
+      date: tx.date,
+      description: tx.description,
+      walletId: tx.walletId,
+      category: tx.category,
+      subcategory: tx.subcategory,
+    });
+  } catch (error) {
+    if (error instanceof NotFoundException) throw error;
+    if (error instanceof BadRequestException) throw error;
+
+    throw new InternalServerErrorException(
+      'Ocurrió un error al obtener el último salario. Inténtalo de nuevo más tarde.',
+    );
+  }
+}
+
 }

@@ -38,6 +38,90 @@ export class DashboardService {
     };
   }
 
+async getSummary2(userId: number, filters: FilterDashboardDto) {
+  const { startDate, endDate, walletId } = filters;
+
+  const baseWhere: any = {
+    userId,
+    active: { not: false },
+    isRecurring: false,
+    excludeFromStats: { not: true },
+    ...(startDate && endDate
+      ? { date: { gte: new Date(startDate), lte: new Date(endDate) } }
+      : {}),
+  };
+
+  // Income/Expense: se filtran por walletId (si existe)
+  const incomeExpenseWhere = {
+    ...baseWhere,
+    ...(walletId ? { walletId } : {}),
+  };
+
+  // Inversión: transfers hacia wallet investment
+  // Recomendado: si hay walletId, filtra por ORIGEN (fromWalletId)
+  const investmentWhere = {
+    ...baseWhere,
+    type: "transfer",
+    toWallet: { is: { kind: "investment", active: { not: false } } },
+    investmentAssetId: { not: null },
+    ...(walletId ? { fromWalletId: walletId } : {}),
+  };
+
+  const [incomeAgg, expenseAgg, investmentTransfers] = await Promise.all([
+    this.prisma.transaction.aggregate({
+      where: { ...incomeExpenseWhere, type: "income" },
+      _sum: { amount: true },
+    }),
+    this.prisma.transaction.aggregate({
+      where: { ...incomeExpenseWhere, type: "expense" },
+      _sum: { amount: true },
+    }),
+    this.prisma.transaction.findMany({
+      where: investmentWhere,
+      select: {
+        amount: true,
+        investmentAsset: { select: { id: true, name: true } },
+      },
+    }),
+  ]);
+
+  const totalIncome = Math.abs(Number(incomeAgg._sum.amount ?? 0));
+  const totalExpenses = Math.abs(Number(expenseAgg._sum.amount ?? 0));
+
+  const totalInvestment = investmentTransfers.reduce(
+    (sum, t) => sum + Math.abs(Number(t.amount ?? 0)),
+    0
+  );
+
+  const byAssetMap = new Map<number, { assetId: number; name: string; amount: number }>();
+
+  for (const t of investmentTransfers) {
+    const asset = t.investmentAsset;
+    if (!asset) continue;
+
+    const amt = Math.abs(Number(t.amount ?? 0));
+    const prev = byAssetMap.get(asset.id);
+
+    if (!prev) byAssetMap.set(asset.id, { assetId: asset.id, name: asset.name, amount: amt });
+    else prev.amount += amt;
+  }
+
+  const investmentByAsset = Array.from(byAssetMap.values()).sort((a, b) => b.amount - a.amount);
+
+  const balance = totalIncome - totalExpenses - totalInvestment;
+  const savingsRate = totalIncome > 0 ? (balance / totalIncome) * 100 : 0;
+
+  return {
+    totalIncome,
+    totalExpenses,
+    totalInvestment,
+    investmentByAsset,
+    balance,
+    savingsRate,
+  };
+}
+
+
   async getByCategory(userId: number, filters: FilterDashboardDto) {
     const { startDate, endDate, walletId } = filters;
 

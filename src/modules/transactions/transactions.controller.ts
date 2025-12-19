@@ -15,6 +15,11 @@ export class TransactionsController {
     return this.transactionsService.create(userId, dto);
   }
 
+  @Get('last-salary')
+  findLastSalary(@User('userId') userId: number) {
+    return this.transactionsService.findLastSalary(userId);
+  }
+
   @Get()
   findAll(
     @User('userId') userId: number,
@@ -38,6 +43,8 @@ export class TransactionsController {
   findOne(@User('userId') userId: number, @Param('id') id: string) {
     return this.transactionsService.findOne(userId, +id);
   }
+
+
 
   @Patch(':id')
   update(
