@@ -7,36 +7,39 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 export class CategoriesService {
   constructor(private prisma: PrismaService) {}
 
-  async create(userId: number, dto: CreateCategoryDto) {
-    // 1) Normalizar color (por si viene en minúsculas/mayúsculas)
-    const color = dto.color?.trim();
-    if (!color) {
-      throw new BadRequestException("El color es obligatorio");
-    }
+async create(userId: number, dto: CreateCategoryDto) {
+  const color = dto.color?.trim();
+  if (!color) throw new BadRequestException("El color es obligatorio");
 
-    // 2) Comprobar si ya hay una categoría de ese usuario con ese color
-    const existing = await this.prisma.category.findFirst({
-      where: {
-        userId,
-        color: color,
-      },
-    });
-
-    if (existing) {
-      throw new BadRequestException(
-        "Ya tienes una categoría con ese color. Escoge otro distinto."
-      );
-    }
-
-    // 3) Crear si no existe duplicado
-    return this.prisma.category.create({
-      data: {
-        ...dto,
-        color, // usamos el normalizado
-        userId,
-      },
-    });
+  const existing = await this.prisma.category.findFirst({
+    where: { userId, color },
+  });
+  if (existing) {
+    throw new BadRequestException(
+      "Ya tienes una categoría con ese color. Escoge otro distinto."
+    );
   }
+
+  // Si position no viene, la ponemos al final dentro de su "type"
+  let position = dto.position;
+  if (position === undefined || position === null) {
+    const last = await this.prisma.category.findFirst({
+      where: { userId, active: true, type: dto.type },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
+    position = (last?.position ?? -1) + 1;
+  }
+
+  return this.prisma.category.create({
+    data: {
+      ...dto,
+      color,
+      position,
+      userId,
+    },
+  });
+}
 
   async findAll(userId: number) {
     return this.prisma.category.findMany({

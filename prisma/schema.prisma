@@ -170,7 +170,9 @@ model Subcategory {
   category     Category      @relation(fields: [categoryId], references: [id])
 
   transactions Transaction[]
-  debts        Debt[]        // 👈 RELACIÓN INVERSA A Debt.subcategory
+
+  debtExpenseLinks Debt[] @relation("DebtExpenseSubcategory")
+  debtIncomeLinks  Debt[] @relation("DebtIncomeSubcategory")
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -210,8 +212,11 @@ model Debt {
   nextDueDate      DateTime?
   installmentsPaid Int?           @default(0)
 
-  subcategoryId    Int?
-  subcategory      Subcategory?   @relation(fields: [subcategoryId], references: [id])
+  expenseSubcategoryId Int?
+  expenseSubcategory   Subcategory? @relation("DebtExpenseSubcategory", fields: [expenseSubcategoryId], references: [id])
+
+  incomeSubcategoryId  Int?
+  incomeSubcategory    Subcategory? @relation("DebtIncomeSubcategory", fields: [incomeSubcategoryId], references: [id])
 
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
@@ -219,7 +224,6 @@ model Debt {
   active           Boolean        @default(true)
 
   @@index([userId])
-  @@index([subcategoryId])
 }
 
 //////////////////////////////////////////////////////////////

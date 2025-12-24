@@ -16,6 +16,7 @@ export class CreateCategoryDto {
   @IsString()
   color?: string;
 
+  @IsOptional()
   @IsNumber()
   position: number;
 }

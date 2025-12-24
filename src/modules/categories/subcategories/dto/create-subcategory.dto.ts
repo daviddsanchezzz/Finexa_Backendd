@@ -15,6 +15,7 @@ export class CreateSubcategoryDto {
   @IsString()
   color?: string;
 
+  @IsOptional()
   @IsNumber()
   position: number;
 }
