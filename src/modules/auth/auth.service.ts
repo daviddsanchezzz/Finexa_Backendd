@@ -34,16 +34,29 @@ async register(data: { email: string; password: string; name: string }): Promise
         },
       });
   
-      // 2️⃣ Crear wallet principal
-      await tx.wallet.create({
-        data: {
-          name: "Principal",
-          emoji: "💰",
-          balance: 0,
-          userId: user.id,
-          currency: "EUR", // puedes cambiarlo si quieres
-        },
+
+      await tx.wallet.createMany({
+        data: [
+          {
+            userId: user.id,
+            name: "Principal",
+            emoji: "💰",
+            balance: 0,
+            currency: "EUR",
+            kind: "cash",
+          },
+          {
+            userId: user.id,
+            name: "Inversión",
+            emoji: "📈",
+            balance: 0,
+            currency: "EUR",
+            kind: "investment",
+          },
+        ],
+        skipDuplicates: true,
       });
+
   
        // 3️⃣ Crear categorías por defecto
       const defaultCategories = [
@@ -52,8 +65,8 @@ async register(data: { email: string; password: string; name: string }): Promise
         { name: "Transporte", emoji: "🚗", color: "#4FC3F7", type: "expense" },
         { name: "Hogar", emoji: "🏠", color: "#A1887F", type: "expense" },
         { name: "Servicios", emoji: "💡", color: "#FFD54F", type: "expense" },
-        { name: "Salud", emoji: "⚕️", color: "#81C784", type: "expense" },
-        { name: "Ocio", emoji: "🎮", color: "#BA68C8", type: "expense" },
+        { name: "Salud", emoji: "💊", color: "#81C784", type: "expense" },
+        { name: "Ocio", emoji: "🍺", color: "#BA68C8", type: "expense" },
         { name: "Compras", emoji: "🛍️", color: "#F48FB1", type: "expense" },
         { name: "Regalos", emoji: "🎁", color: "#F06292", type: "expense" },
         { name: "Viajes", emoji: "✈️", color: "#4DD0E1", type: "expense" },
