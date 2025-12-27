@@ -39,6 +39,14 @@ enum WalletKind {
   investment
 }
 
+enum CategoryKind {
+  travel
+  debts
+  application
+  personal
+  investment
+}
+
 enum InvestmentAssetType {
   crypto
   etf
@@ -151,6 +159,7 @@ model Category {
   transactions  Transaction[]
   budgets       Budget[]
 
+  kind          CategoryKind @default(personal)  
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   createdBy     Int?
@@ -173,6 +182,9 @@ model Subcategory {
 
   debtExpenseLinks Debt[] @relation("DebtExpenseSubcategory")
   debtIncomeLinks  Debt[] @relation("DebtIncomeSubcategory")
+
+  subcategoryId Debt [] @relation("DebtSubcategory")
+
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -211,6 +223,9 @@ model Debt {
   startDate        DateTime?
   nextDueDate      DateTime?
   installmentsPaid Int?           @default(0)
+
+  subcategoryId Int?
+  subcategory   Subcategory? @relation("DebtSubcategory", fields: [subcategoryId], references: [id])
 
   expenseSubcategoryId Int?
   expenseSubcategory   Subcategory? @relation("DebtExpenseSubcategory", fields: [expenseSubcategoryId], references: [id])
