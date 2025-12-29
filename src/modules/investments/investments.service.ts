@@ -24,122 +24,123 @@ export class InvestmentsService {
 
   /**
    * Recalcula el balance de la wallet de inversión (única) del usuario:
-   * balance = suma del último snapshot de cada asset (fallback: initialInvested)
+   * balance = suma del último snapshot de cada asset (fallback: invested)
    *
    * Se ejecuta tras crear/editar/borrar valuations.
    */
-private async recalcInvestmentWalletBalance(userId: number) {
-  // 1) wallets de inversión (en summary usas findMany, así soportas 1 o varias)
-  const investmentWallets = await this.prisma.wallet.findMany({
-    where: { userId, active: true, kind: 'investment' as any },
-    select: { id: true },
-  });
+  private async recalcInvestmentWalletBalance(userId: number) {
+    // 1) wallets de inversión (en summary usas findMany, así soportas 1 o varias)
+    const investmentWallets = await this.prisma.wallet.findMany({
+      where: { userId, active: true, kind: 'investment' as any },
+      select: { id: true },
+    });
 
-  if (investmentWallets.length === 0) return;
+    if (investmentWallets.length === 0) return;
 
-  // Si tu modelo es "solo 1 wallet de inversión", actualizamos la primera (como antes)
-  const investmentWalletId = investmentWallets[0].id;
-  const investmentWalletIds = investmentWallets.map(w => w.id);
+    // Si tu modelo es "solo 1 wallet de inversión", actualizamos la primera (como antes)
+    const investmentWalletId = investmentWallets[0].id;
+    const investmentWalletIds = investmentWallets.map(w => w.id);
 
-  // 2) assets activos
-  const assets = await this.prisma.investmentAsset.findMany({
-    where: { userId, active: true },
-    select: { id: true, initialInvested: true },
-  });
+    // 2) assets activos
+    const assets = await this.prisma.investmentAsset.findMany({
+      where: { userId, active: true },
+      select: { id: true, initialInvested: true },
+    });
 
-  if (assets.length === 0) {
+    if (assets.length === 0) {
+      await this.prisma.wallet.update({
+        where: { id: investmentWalletId },
+        data: { balance: 0 },
+      });
+      return;
+    }
+
+    const assetIds = assets.map(a => a.id);
+
+    // 3) transfers entrantes a wallet(s) de inversión por asset (MISMA LOGICA QUE getSummary)
+    const investedByAsset = await this.prisma.transaction.groupBy({
+      by: ['investmentAssetId'],
+      where: {
+        userId,
+        active: true,
+        type: 'transfer',
+        investmentAssetId: { in: assetIds },
+        toWalletId: { in: investmentWalletIds },
+      },
+      _sum: { amount: true },
+    });
+
+    const investedTransfersMap = new Map<number, number>();
+    for (const row of investedByAsset) {
+      const id = row.investmentAssetId!;
+      investedTransfersMap.set(id, row._sum.amount ?? 0);
+    }
+
+    // 4) últimas valuations por asset (MISMA IDEA QUE getSummary)
+    const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
+      by: ['assetId'],
+      where: { userId, active: true, assetId: { in: assetIds } },
+      _max: { date: true },
+    });
+
+    const latestPairs = latestDates
+      .filter(r => r._max.date)
+      .map(r => ({ assetId: r.assetId, date: r._max.date! }));
+
+    const latestSnapshots = latestPairs.length
+      ? await this.prisma.investmentValuationSnapshot.findMany({
+          where: { userId, active: true, OR: latestPairs },
+          select: { assetId: true, value: true, date: true },
+        })
+      : [];
+
+    // Si por cualquier motivo vienen varias filas por el mismo assetId, nos quedamos con la más reciente
+    const snapshotMap = new Map<number, { value: number; date: Date }>();
+    for (const s of latestSnapshots) {
+      const prev = snapshotMap.get(s.assetId);
+      if (!prev || s.date > prev.date) snapshotMap.set(s.assetId, { value: s.value, date: s.date });
+    }
+
+    // 5) suma de currentValue con fallback = invested (MISMA LOGICA QUE getSummary)
+    let totalCurrentValue = 0;
+
+    for (const a of assets) {
+      const transfers = investedTransfersMap.get(a.id) ?? 0;
+      const invested = (a.initialInvested ?? 0) + transfers;
+
+      const snap = snapshotMap.get(a.id);
+      const currentValue = snap?.value ?? invested;
+
+      totalCurrentValue += currentValue;
+    }
+
+    // 6) actualizar balance de la wallet de inversión
     await this.prisma.wallet.update({
       where: { id: investmentWalletId },
-      data: { balance: 0 },
+      data: { balance: totalCurrentValue },
     });
-    return;
   }
-
-  const assetIds = assets.map(a => a.id);
-
-  // 3) transfers entrantes a wallet(s) de inversión por asset (MISMA LOGICA QUE getSummary)
-  const investedByAsset = await this.prisma.transaction.groupBy({
-    by: ['investmentAssetId'],
-    where: {
-      userId,
-      active: true,
-      type: 'transfer',
-      investmentAssetId: { in: assetIds },
-      toWalletId: { in: investmentWalletIds },
-    },
-    _sum: { amount: true },
-  });
-
-  const investedTransfersMap = new Map<number, number>();
-  for (const row of investedByAsset) {
-    const id = row.investmentAssetId!;
-    investedTransfersMap.set(id, row._sum.amount ?? 0);
-  }
-
-  // 4) últimas valuations por asset (MISMA IDEA QUE getSummary)
-  const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
-    by: ['assetId'],
-    where: { userId, active: true, assetId: { in: assetIds } },
-    _max: { date: true },
-  });
-
-  const latestPairs = latestDates
-    .filter(r => r._max.date)
-    .map(r => ({ assetId: r.assetId, date: r._max.date! }));
-
-  const latestSnapshots = latestPairs.length
-    ? await this.prisma.investmentValuationSnapshot.findMany({
-        where: { userId, active: true, OR: latestPairs },
-        select: { assetId: true, value: true, date: true },
-      })
-    : [];
-
-  // Si por cualquier motivo vienen varias filas por el mismo assetId, nos quedamos con la más reciente
-  const snapshotMap = new Map<number, { value: number; date: Date }>();
-  for (const s of latestSnapshots) {
-    const prev = snapshotMap.get(s.assetId);
-    if (!prev || s.date > prev.date) snapshotMap.set(s.assetId, { value: s.value, date: s.date });
-  }
-
-  // 5) suma de currentValue con fallback = invested (MISMA LOGICA QUE getSummary)
-  let totalCurrentValue = 0;
-
-  for (const a of assets) {
-    const transfers = investedTransfersMap.get(a.id) ?? 0;
-    const invested = (a.initialInvested ?? 0) + transfers;
-
-    const snap = snapshotMap.get(a.id);
-    const currentValue = snap?.value ?? invested;
-
-    totalCurrentValue += currentValue;
-  }
-
-  // 6) actualizar balance de la wallet de inversión
-  await this.prisma.wallet.update({
-    where: { id: investmentWalletId },
-    data: { balance: totalCurrentValue },
-  });
-}
 
   // -----------------------------
   // Assets
   // -----------------------------
   async createAsset(userId: number, dto: CreateInvestmentAssetDto) {
-    const currency = dto.currency ?? 'EUR';
+    const name = (dto.name ?? '').trim();
+    if (!name) throw new BadRequestException('Name is required');
+
+    const currency = (dto.currency ?? 'EUR').trim().toUpperCase();
 
     const created = await this.prisma.investmentAsset.create({
       data: {
         userId,
-        name: dto.name.trim(),
-        symbol: dto.symbol?.trim(),
+        name,
+        description: dto.description?.trim() || null, // ✅ NUEVO
         type: dto.type ?? 'custom',
+        riskType: (dto as any).riskType, // ✅ si ya lo añadiste al DTO/modelo
         currency,
         initialInvested: dto.initialInvested ?? 0, // aportado previo
       },
     });
-
-    // Opcional: si quieres que al crear un asset sin valuations se refleje en wallet
-    // await this.recalcInvestmentWalletBalance(userId);
 
     return created;
   }
@@ -162,20 +163,31 @@ private async recalcInvestmentWalletBalance(userId: number) {
   async updateAsset(userId: number, id: number, dto: UpdateInvestmentAssetDto) {
     await this.getAsset(userId, id);
 
+    const data: any = {
+      name: dto.name?.trim(),
+      type: dto.type,
+      riskType: (dto as any).riskType, // ✅ si ya lo añadiste al DTO/modelo
+      currency: dto.currency?.trim()?.toUpperCase(),
+      // ✅ IMPORTANT: no resetees a 0 si no viene
+      initialInvested: dto.initialInvested,
+    };
+
+    // ✅ description: permite borrar enviando "" o null
+    if ('description' in (dto as any)) {
+      const raw = (dto as any).description;
+      data.description = raw && String(raw).trim() ? String(raw).trim() : null;
+    }
+
+    // Limpieza: Prisma ignora undefined, pero evitamos setear name a "" si viene vacío
+    if (data.name === '') throw new BadRequestException('Name cannot be empty');
+    if (data.currency === '') data.currency = undefined;
+
     const updated = await this.prisma.investmentAsset.update({
       where: { id },
-      data: {
-        name: dto.name?.trim(),
-        symbol: dto.symbol?.trim(),
-        type: dto.type,
-        currency: dto.currency,
-        // ✅ IMPORTANT: no resetees a 0 si no viene
-        initialInvested: dto.initialInvested,
-      },
+      data,
     });
 
     // Si initialInvested cambia y no hay valuations, afectará al fallback.
-    // Puedes recalcular para mantener wallet alineada.
     await this.recalcInvestmentWalletBalance(userId);
 
     return updated;
@@ -203,7 +215,7 @@ private async recalcInvestmentWalletBalance(userId: number) {
     const date = new Date(dto.date);
     if (isNaN(date.getTime())) throw new BadRequestException('Invalid date');
 
-    const currency = dto.currency ?? 'EUR';
+    const currency = (dto.currency ?? 'EUR').trim().toUpperCase();
 
     const valuation = await this.prisma.investmentValuationSnapshot.upsert({
       where: {
@@ -227,7 +239,6 @@ private async recalcInvestmentWalletBalance(userId: number) {
       },
     });
 
-    // ✅ clave: al crear una valuation, recalcular el balance de la wallet de inversión
     await this.recalcInvestmentWalletBalance(userId);
 
     return valuation;
@@ -246,11 +257,7 @@ private async recalcInvestmentWalletBalance(userId: number) {
     });
   }
 
-  async updateValuation(
-    userId: number,
-    id: number,
-    dto: UpdateInvestmentValuationDto,
-  ) {
+  async updateValuation(userId: number, id: number, dto: UpdateInvestmentValuationDto) {
     const existing = await this.prisma.investmentValuationSnapshot.findFirst({
       where: { id, userId, active: true },
     });
@@ -264,11 +271,10 @@ private async recalcInvestmentWalletBalance(userId: number) {
         assetId: dto.assetId,
         date: dto.date ? new Date(dto.date) : undefined,
         value: dto.value,
-        currency: dto.currency,
+        currency: dto.currency?.trim()?.toUpperCase(),
       },
     });
 
-    // ✅ recalcular wallet inversión
     await this.recalcInvestmentWalletBalance(userId);
 
     return updated;
@@ -285,7 +291,6 @@ private async recalcInvestmentWalletBalance(userId: number) {
       data: { active: false },
     });
 
-    // ✅ recalcular wallet inversión
     await this.recalcInvestmentWalletBalance(userId);
 
     return deleted;
@@ -304,8 +309,9 @@ private async recalcInvestmentWalletBalance(userId: number) {
       select: {
         id: true,
         name: true,
-        symbol: true,
+        description: true, // ✅ NUEVO
         type: true,
+        riskType: true, // ✅ NUEVO (si existe en tu modelo)
         currency: true,
         initialInvested: true,
       },
@@ -383,8 +389,9 @@ private async recalcInvestmentWalletBalance(userId: number) {
       return {
         id: a.id,
         name: a.name,
-        symbol: a.symbol,
+        description: a.description, // ✅ NUEVO
         type: a.type,
+        riskType: (a as any).riskType, // ✅ NUEVO
         currency: a.currency,
         invested,
         currentValue,

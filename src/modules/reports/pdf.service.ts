@@ -9,10 +9,10 @@ export class PdfService implements OnModuleDestroy {
   private async getBrowser() {
     if (this.browser) return this.browser;
 
-this.browser = await puppeteer.launch({
-  headless: true,
-  args: ['--no-sandbox', '--disable-setuid-sandbox'],
-});
+    this.browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
     return this.browser;
   }
 

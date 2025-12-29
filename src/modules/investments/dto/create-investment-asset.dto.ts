@@ -8,15 +8,19 @@ export enum InvestmentAssetType {
   custom = 'custom',
 }
 
+export enum InvestmentRiskType {
+fixed_income =   'fixed_income',
+  variable_income = 'variable_income',
+}
+
 export class CreateInvestmentAssetDto {
   @IsString()
   @MaxLength(80)
   name: string;
 
-  @IsOptional()
   @IsString()
-  @MaxLength(20)
-  symbol?: string;
+  @MaxLength(120)
+  description: string;
 
   @IsOptional()
   @IsNumber()
@@ -27,6 +31,11 @@ export class CreateInvestmentAssetDto {
   @IsOptional()
   @IsEnum(InvestmentAssetType)
   type?: InvestmentAssetType;
+
+  @IsOptional()
+  @IsEnum(InvestmentRiskType)
+  riskType?: InvestmentRiskType;
+
 
   @IsOptional()
   @IsString()

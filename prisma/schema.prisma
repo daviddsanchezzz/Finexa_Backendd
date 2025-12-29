@@ -55,6 +55,11 @@ enum InvestmentAssetType {
   custom
 }
 
+enum InvestmentRiskType {
+  fixed_income
+  variable_income
+}
+
 
 //////////////////////////////////////////////////////////////
 // MODELOS PRINCIPALES
@@ -463,8 +468,9 @@ model InvestmentAsset {
   user      User                @relation(fields: [userId], references: [id])
 
   name      String              // "Bitcoin", "Crypto genérico"
-  symbol    String?             // "BTC", opcional
+  description    String?             // "BTC", opcional
   type      InvestmentAssetType @default(custom)
+  riskType  InvestmentRiskType?
   currency  String              @default("EUR")
 
   initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
