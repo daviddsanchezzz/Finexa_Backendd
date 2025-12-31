@@ -126,7 +126,6 @@ export class TransactionsService {
       },
     });
 
-    console.log('📌 TEMPLATE created', template.id);
 
     // 5) (Opcional pero recomendable) enlazar la primera ocurrencia con la plantilla
     // ✅ SOLO si la ocurrencia no venía ya enlazada (cron)
@@ -225,11 +224,23 @@ export class TransactionsService {
         where.type = filters.type;
       }
 
-      if (filters?.dateFrom || filters?.dateTo) {
-        where.date = {};
-        if (filters.dateFrom) where.date.gte = new Date(filters.dateFrom);
-        if (filters.dateTo) where.date.lte = new Date(filters.dateTo);
-      }
+if (filters?.dateFrom || filters?.dateTo) {
+  where.date = {};
+
+  if (filters.dateFrom) {
+    where.date.gte = new Date(filters.dateFrom);
+  }
+
+  if (filters.dateTo) {
+    const toExclusive = new Date(filters.dateTo);
+
+    // sumamos 1 día y usamos lt (exclusivo) para incluir TODO el día dateTo
+    toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+
+    where.date.lt = toExclusive;
+  }
+}
+
 
       const transactions = await this.prisma.transaction.findMany({
         where,

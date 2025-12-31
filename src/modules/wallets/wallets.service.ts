@@ -36,7 +36,6 @@ async create(userId: number, dto: CreateWalletDto) {
       ],
     
     });
-    console.log(  wallets)
     return wallets;
   }
 

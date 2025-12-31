@@ -46,10 +46,23 @@ async getSummary2(userId: number, filters: FilterDashboardDto) {
     active: { not: false },
     isRecurring: false,
     excludeFromStats: { not: true },
-    ...(startDate && endDate
-      ? { date: { gte: new Date(startDate), lte: new Date(endDate) } }
-      : {}),
   };
+
+  // ✅ Rango de fechas (incluye TODO el día endDate)
+  if (startDate || endDate) {
+    baseWhere.date = {};
+
+    if (startDate) {
+      baseWhere.date.gte = new Date(startDate);
+    }
+
+    if (endDate) {
+      const toExclusive = new Date(endDate);
+      // sumamos 1 día en UTC y usamos lt (exclusivo)
+      toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+      baseWhere.date.lt = toExclusive;
+    }
+  }
 
   // Income/Expense: se filtran por walletId (si existe)
   const incomeExpenseWhere = {

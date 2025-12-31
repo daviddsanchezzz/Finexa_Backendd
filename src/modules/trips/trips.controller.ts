@@ -32,7 +32,6 @@ export class TripsController {
     @Param("id") id: string,
     @Body() dto: UpdateTripDto
   ) {
-    console.log("Controller received updateTrip request:", { userId, id, dto });
     return this.tripsService.updateTrip(userId, +id, dto);
   }
 
