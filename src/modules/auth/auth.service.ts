@@ -119,26 +119,32 @@ async register(data: { email: string; password: string; name: string }): Promise
   }
 
   // 🔁 Refrescar tokens
-  async refreshToken(refresh_token: string) {
-    try {
-      const decoded = this.jwtService.verify(refresh_token);
-      const access_token = this.generateAccessToken(decoded.sub, decoded.email);
+async refreshToken(refresh_token: string) {
+  try {
+    const decoded = this.jwtService.verify(refresh_token);
+    const userId = decoded.sub;
 
-      // Buscamos el usuario para devolverlo también
-      const user = await this.prisma.user.findUnique({ where: { id: decoded.sub } });
-      if (!user) throw new UnauthorizedException('User not found');
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException("User not found");
 
-      const { password: _, ...userWithoutPassword } = user;
-
-      return {
-        access_token,
-        refresh_token, // opcional, puedes devolver el mismo o uno nuevo
-        user: userWithoutPassword,
-      };
-    } catch {
-      throw new UnauthorizedException('Invalid refresh token');
+    // ✅ clave: comprobar que es el mismo que tienes guardado
+    if (!user.refreshToken || user.refreshToken !== refresh_token) {
+      throw new UnauthorizedException("Refresh token mismatch");
     }
+
+    const access_token = this.generateAccessToken(user.id, user.email);
+
+    const { password: _, ...userWithoutPassword } = user;
+
+    return {
+      access_token,
+      refresh_token, // puedes devolver el mismo
+      user: userWithoutPassword,
+    };
+  } catch (e) {
+    throw new UnauthorizedException("Invalid refresh token");
   }
+}
 
   // 🧠 Emitir tokens y guardar refresh token en BD
   private async issueTokens(userId: number, email: string): Promise<Tokens> {
