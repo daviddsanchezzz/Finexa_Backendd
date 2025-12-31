@@ -95,4 +95,10 @@ export class InvestmentsController {
   assetSeries(@User('userId') userId: number, @Param('id', ParseIntPipe) id: number) {
     return this.investmentsService.getAssetSeries(userId, id);
   }
+
+  @Get('timeline')
+  async timeline(@User('userId') userId: number, @Query('days') days?: string) {
+    return this.investmentsService.getPortfolioTimeline(userId, Number(days) || 90);
+  }
+
 }

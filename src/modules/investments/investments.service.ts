@@ -424,4 +424,141 @@ export class InvestmentsService {
       select: { date: true, value: true, currency: true },
     });
   }
+
+    // -----------------------------
+  // Serie temporal del TOTAL del portfolio (last-known por asset)
+  // points diarios: totalCurrentValue en cada día
+  // -----------------------------
+  private toDayKeyUTC(d: Date) {
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`; // YYYY-MM-DD
+  }
+
+  private startOfUtcDay(d: Date) {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  }
+
+  private addUtcDays(d: Date, days: number) {
+    const x = new Date(d);
+    x.setUTCDate(x.getUTCDate() + days);
+    return x;
+  }
+
+  async getPortfolioTimeline(userId: number, days = 90) {
+    // Normalizamos días
+    const n = Math.max(7, Math.min(365, Number(days) || 90));
+
+    const now = new Date();
+    const toExclusive = this.addUtcDays(this.startOfUtcDay(now), 1); // mañana 00:00 UTC
+    const from = this.addUtcDays(this.startOfUtcDay(now), -n + 1);   // hace n-1 días 00:00 UTC
+
+    // Assets activos
+    const assets = await this.prisma.investmentAsset.findMany({
+      where: { userId, active: true },
+      select: { id: true, initialInvested: true },
+    });
+
+    const assetIds = assets.map(a => a.id);
+    if (assetIds.length === 0) return { points: [] };
+
+    // Wallets inversión (para fallback invested)
+    const investmentWallets = await this.prisma.wallet.findMany({
+      where: { userId, active: true, kind: 'investment' as any },
+      select: { id: true },
+    });
+    const investmentWalletIds = investmentWallets.map(w => w.id);
+
+    // Transfers hacia wallets inversión por asset (fallback invested)
+    const investedByAsset = await this.prisma.transaction.groupBy({
+      by: ['investmentAssetId'],
+      where: {
+        userId,
+        active: true,
+        type: 'transfer',
+        investmentAssetId: { in: assetIds },
+        toWalletId: { in: investmentWalletIds },
+      },
+      _sum: { amount: true },
+    });
+
+    const investedTransfersMap = new Map<number, number>();
+    for (const row of investedByAsset) {
+      investedTransfersMap.set(row.investmentAssetId!, row._sum.amount ?? 0);
+    }
+
+    // Invested fallback por asset (constante en el rango)
+    const investedFallback = new Map<number, number>();
+    for (const a of assets) {
+      const transfers = investedTransfersMap.get(a.id) ?? 0;
+      investedFallback.set(a.id, (a.initialInvested ?? 0) + transfers);
+    }
+
+    // 1) Seed: última valoración <= from por asset (para empezar el rango con last-known correcto)
+    // Nota: 1 query por asset. Si tienes muchísimos assets, lo optimizamos.
+    const seed = new Map<number, number>();
+    await Promise.all(
+      assetIds.map(async (assetId) => {
+        const last = await this.prisma.investmentValuationSnapshot.findFirst({
+          where: { userId, assetId, active: true, date: { lte: from } },
+          orderBy: { date: 'desc' },
+          select: { value: true },
+        });
+        if (last) seed.set(assetId, last.value ?? 0);
+      }),
+    );
+
+    // 2) Valoraciones dentro del rango [from, toExclusive)
+    const valuations = await this.prisma.investmentValuationSnapshot.findMany({
+      where: {
+        userId,
+        active: true,
+        assetId: { in: assetIds },
+        date: { gte: from, lt: toExclusive },
+      },
+      orderBy: { date: 'asc' },
+      select: { assetId: true, date: true, value: true },
+    });
+
+    // 3) dayKey -> (assetId -> lastValueThatDay)
+    const byDay = new Map<string, Map<number, number>>();
+    for (const v of valuations) {
+      const dayKey = this.toDayKeyUTC(v.date);
+      if (!byDay.has(dayKey)) byDay.set(dayKey, new Map());
+      // como viene asc, al sobrescribir nos quedamos con el último del día
+      byDay.get(dayKey)!.set(v.assetId, v.value ?? 0);
+    }
+
+    // 4) construir serie diaria con last-known + fallback invested
+    const lastKnown = new Map<number, number>();
+    // inicial: seed si existe, si no, fallback invested (para que el total nunca quede a 0 si no hay snapshots)
+    for (const assetId of assetIds) {
+      lastKnown.set(assetId, seed.get(assetId) ?? (investedFallback.get(assetId) ?? 0));
+    }
+
+    const points: { date: string; totalCurrentValue: number }[] = [];
+    let cursor = new Date(from);
+
+    while (cursor < toExclusive) {
+      const dayKey = this.toDayKeyUTC(cursor);
+
+      const updates = byDay.get(dayKey);
+      if (updates) {
+        for (const [assetId, val] of updates.entries()) {
+          lastKnown.set(assetId, val);
+        }
+      }
+
+      let total = 0;
+      for (const assetId of assetIds) total += lastKnown.get(assetId) ?? 0;
+
+      points.push({ date: dayKey, totalCurrentValue: total });
+
+      cursor = this.addUtcDays(cursor, 1);
+    }
+
+    return { points };
+  }
+
 }
