@@ -53,12 +53,22 @@ enum InvestmentAssetType {
   stock
   fund
   custom
+  cash
 }
 
 enum InvestmentRiskType {
   fixed_income
   variable_income
 }
+
+enum InvestmentOperationType {
+  buy
+  sell
+  swap
+withdraw
+deposit
+}
+
 
 
 //////////////////////////////////////////////////////////////
@@ -90,6 +100,7 @@ model User {
 
   investmentAssets     InvestmentAsset[]
   investmentValuations InvestmentValuationSnapshot[]
+  investmentOperations InvestmentOperation[]
 
 
   createdAt     DateTime       @default(now())
@@ -285,6 +296,8 @@ model Transaction {
 
   investmentAssetId Int?
   investmentAsset   InvestmentAsset? @relation(fields: [investmentAssetId], references: [id])
+  investmentOperation InvestmentOperation?
+  source    String   @default("user") // "user" | "investment"
 
   excludeFromStats Boolean @default(false)
 
@@ -474,6 +487,7 @@ model InvestmentAsset {
   currency  String              @default("EUR")
 
   initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
+  operations InvestmentOperation[]
 
   transactions Transaction[]   // transferencias que apuntan a este asset
   valuations   InvestmentValuationSnapshot[]
@@ -504,6 +518,34 @@ model InvestmentValuationSnapshot {
   @@unique([userId, assetId, date])
   @@index([userId, date])
 }
+
+model InvestmentOperation {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+
+  assetId   Int
+  asset     InvestmentAsset @relation(fields: [assetId], references: [id])
+
+  type      InvestmentOperationType
+  date      DateTime @default(now())
+
+  amount    Float
+  fee       Float?   @default(0)
+
+  // Link opcional a Transaction (para ventas/aportes con movimiento de wallet)
+  transactionId Int?   @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+
+  swapGroupId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  active    Boolean  @default(true)
+
+  @@index([userId, assetId, date])
+}
+
 
 model MonthlyReport {
   id        Int      @id @default(autoincrement())
