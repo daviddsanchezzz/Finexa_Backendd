@@ -2,10 +2,14 @@ import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { ValidationPipe } from '@nestjs/common';
+import { PrismaService } from './common/prisma/prisma.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const reflector = app.get(Reflector);
+
+  const prisma = app.get(PrismaService);
+  await prisma.enableShutdownHooks(app);
 
   // ✅ Habilitar CORS
   app.enableCors({
