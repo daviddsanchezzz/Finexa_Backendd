@@ -100,6 +100,14 @@ listValuations(@User('userId') userId: number, @Query('assetId') assetId?: strin
   return this.investmentsService.listValuations(userId);
 }
 
+  @Get("valuations/:id")
+  getValuation(
+    @User("userId") userId: number,
+    @Param("id", ParseIntPipe) id: number
+  ) {
+    return this.investmentsService.getValuationById(userId, id);
+  }
+
 
   @Post('valuations')
   createValuation(@User('userId') userId: number, @Body() dto: CreateInvestmentValuationDto) {

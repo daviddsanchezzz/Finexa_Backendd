@@ -355,6 +355,16 @@ export class InvestmentsService {
     });
   }
 
+  async getValuationById(userId: number, id: number) {
+  const v = await this.prisma.investmentValuationSnapshot.findFirst({
+    where: { id, userId, active: true },
+  });
+
+  if (!v) throw new NotFoundException("Valoración no encontrada");
+  return v;
+}
+
+
   async updateValuation(userId: number, id: number, dto: UpdateInvestmentValuationDto) {
     if (!Number.isInteger(id)) throw new BadRequestException('Invalid valuation id');
 
