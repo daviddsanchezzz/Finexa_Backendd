@@ -2,43 +2,47 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
-  ForbiddenException,
-} from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../../common/prisma/prisma.service';
-import { Tokens } from '../../common/types/tocken.type';
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import * as bcrypt from "bcrypt";
+import { PrismaService } from "../../common/prisma/prisma.service";
+import { Tokens } from "../../common/types/tocken.type";
+
+type SafeUser = {
+  id: number;
+  email: string;
+  name: string;
+  avatar?: string | null;
+};
 
 @Injectable()
 export class AuthService {
   constructor(private prisma: PrismaService, private jwtService: JwtService) {}
 
-  // 🧱 Registro de usuario
-async register(data: { email: string; password: string; name: string }): Promise<Tokens> {
-  const existingUser = await this.prisma.user.findUnique({
-    where: { email: data.email },
-  });
+  // ============================
+  // REGISTER
+  // ============================
+  async register(data: { email: string; password: string; name: string }): Promise<Tokens> {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: data.email },
+    });
+    if (existingUser) throw new ConflictException("Email already registered");
 
-  if (existingUser) throw new ConflictException("Email already registered");
+    const hashedPassword = await bcrypt.hash(data.password, 10);
 
-  const hashedPassword = await bcrypt.hash(data.password, 10);
-
-    // 🔹 Transacción: crea usuario + wallet + categorías
-    const result = await this.prisma.$transaction(async (tx) => {
-      // 1️⃣ Crear usuario
-      const user = await tx.user.create({
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
         data: {
           email: data.email,
           password: hashedPassword,
           name: data.name,
         },
       });
-  
 
       await tx.wallet.createMany({
         data: [
           {
-            userId: user.id,
+            userId: created.id,
             name: "Principal",
             emoji: "💰",
             balance: 0,
@@ -46,7 +50,7 @@ async register(data: { email: string; password: string; name: string }): Promise
             kind: "cash",
           },
           {
-            userId: user.id,
+            userId: created.id,
             name: "Inversión",
             emoji: "📈",
             balance: 0,
@@ -57,10 +61,7 @@ async register(data: { email: string; password: string; name: string }): Promise
         skipDuplicates: true,
       });
 
-  
-       // 3️⃣ Crear categorías por defecto
       const defaultCategories = [
-        // 🧾 GASTOS
         { name: "Alimentación", emoji: "🍔", color: "#FFB74D", type: "expense" },
         { name: "Transporte", emoji: "🚗", color: "#4FC3F7", type: "expense" },
         { name: "Hogar", emoji: "🏠", color: "#A1887F", type: "expense" },
@@ -70,90 +71,124 @@ async register(data: { email: string; password: string; name: string }): Promise
         { name: "Compras", emoji: "🛍️", color: "#F48FB1", type: "expense" },
         { name: "Regalos", emoji: "🎁", color: "#F06292", type: "expense" },
         { name: "Viajes", emoji: "✈️", color: "#4DD0E1", type: "expense" },
-  
-        // 💰 INGRESOS
+
         { name: "Salario", emoji: "💼", color: "#81C784", type: "income" },
         { name: "Inversiones", emoji: "📈", color: "#9575CD", type: "income" },
         { name: "Regalos", emoji: "🎁", color: "#F48FB1", type: "income" },
       ];
-  
+
       await tx.category.createMany({
         data: defaultCategories.map((cat) => ({
           ...cat,
-          userId: user.id,
+          userId: created.id,
         })),
       });
-  
-      return user; // retornamos el usuario para usarlo luego
+
+      return created;
     });
-  
-    // 4️⃣ Emitir tokens JWT
-    return this.issueTokens(result.id, result.email);
+
+    // Emite tokens + guarda refresh hasheado
+    return this.issueTokens(user.id, user.email);
   }
 
-
-  // 🔑 Login
+  // ============================
+  // LOGIN
+  // ============================
   async login(email: string, password: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (!user) throw new UnauthorizedException("Invalid credentials");
 
     const passwordValid = await bcrypt.compare(password, user.password);
-    if (!passwordValid) throw new UnauthorizedException('Invalid credentials');
+    if (!passwordValid) throw new UnauthorizedException("Invalid credentials");
 
     const access_token = this.generateAccessToken(user.id, user.email);
+
+    // Refresh token 30d + guardado hasheado en DB
     const refresh_token = this.generateRefreshToken(user.id, user.email);
+    const refreshHash = await bcrypt.hash(refresh_token, 10);
 
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { refreshToken: refresh_token },
+      data: { refreshToken: refreshHash },
     });
 
-    // Devolvemos también los datos del usuario (sin la contraseña)
-    const { password: _, ...userWithoutPassword } = user;
-
-    return {
-      access_token,
-      refresh_token,
-      user: userWithoutPassword,
+    const userWithoutPassword: SafeUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatar: (user as any).avatar ?? null,
     };
+
+    return { access_token, refresh_token, user: userWithoutPassword };
   }
 
-  // 🔁 Refrescar tokens
-async refreshToken(refresh_token: string) {
-  try {
-    const decoded = this.jwtService.verify(refresh_token);
-    const userId = decoded.sub;
+  // ============================
+  // REFRESH (rotación recomendada)
+  // ============================
+  async refreshToken(refresh_token: string) {
+    try {
+      const decoded = this.jwtService.verify(refresh_token);
+      const userId = decoded.sub as number;
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new UnauthorizedException("User not found");
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) throw new UnauthorizedException("User not found");
+      if (!user.refreshToken) throw new UnauthorizedException("No refresh token stored");
 
-    // ✅ clave: comprobar que es el mismo que tienes guardado
-    if (!user.refreshToken || user.refreshToken !== refresh_token) {
-      throw new UnauthorizedException("Refresh token mismatch");
+      // Comparar contra hash guardado (no plano)
+      const match = await bcrypt.compare(refresh_token, user.refreshToken);
+      if (!match) throw new UnauthorizedException("Refresh token mismatch");
+
+      // Nuevo access
+      const access_token = this.generateAccessToken(user.id, user.email);
+
+      // ROTACIÓN: emitir refresh nuevo y sustituir hash en DB
+      const new_refresh_token = this.generateRefreshToken(user.id, user.email);
+      const newRefreshHash = await bcrypt.hash(new_refresh_token, 10);
+
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken: newRefreshHash },
+      });
+
+      const userWithoutPassword: SafeUser = {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatar: (user as any).avatar ?? null,
+      };
+
+      return {
+        access_token,
+        refresh_token: new_refresh_token,
+        user: userWithoutPassword,
+      };
+    } catch {
+      throw new UnauthorizedException("Invalid refresh token");
     }
-
-    const access_token = this.generateAccessToken(user.id, user.email);
-
-    const { password: _, ...userWithoutPassword } = user;
-
-    return {
-      access_token,
-      refresh_token, // puedes devolver el mismo
-      user: userWithoutPassword,
-    };
-  } catch (e) {
-    throw new UnauthorizedException("Invalid refresh token");
   }
-}
 
-  // 🧠 Emitir tokens y guardar refresh token en BD
+  // ============================
+  // (Opcional) LOGOUT: invalida refresh
+  // ============================
+  async logout(userId: number) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { refreshToken: null },
+    });
+    return { ok: true };
+  }
+
+  // ============================
+  // Helpers
+  // ============================
   private async issueTokens(userId: number, email: string): Promise<Tokens> {
     const access_token = this.generateAccessToken(userId, email);
     const refresh_token = this.generateRefreshToken(userId, email);
 
+    const refreshHash = await bcrypt.hash(refresh_token, 10);
     await this.prisma.user.update({
       where: { id: userId },
-      data: { refreshToken: refresh_token },
+      data: { refreshToken: refreshHash },
     });
 
     return { access_token, refresh_token };
@@ -161,11 +196,11 @@ async refreshToken(refresh_token: string) {
 
   private generateAccessToken(userId: number, email: string): string {
     const payload = { sub: userId, email };
-    return this.jwtService.sign(payload, { expiresIn: '15m' });
+    return this.jwtService.sign(payload, { expiresIn: "15m" });
   }
 
   private generateRefreshToken(userId: number, email: string): string {
     const payload = { sub: userId, email };
-    return this.jwtService.sign(payload, { expiresIn: '30d' });
+    return this.jwtService.sign(payload, { expiresIn: "30d" });
   }
 }

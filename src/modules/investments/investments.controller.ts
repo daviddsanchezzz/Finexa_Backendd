@@ -204,4 +204,24 @@ timeline(
   deleteSwap(@User('userId') userId: number, @Param('swapGroupId') swapGroupId: string) {
     return this.investmentsService.deleteSwap(userId, swapGroupId);
   }
+
+  @Get('portfolio/performance')
+performance(
+  @User('userId') userId: number,
+  @Query('from') from: string, // "YYYY-MM"
+  @Query('to') to: string,     // "YYYY-MM"
+) {
+  return this.investmentsService.getMonthlyPerformance(userId, from, to);
+}
+
+
+  @Patch('portfolio/snapshots/:id')
+editPortfolioSnapshot(
+  @User('userId') userId: number,
+  @Param('id', ParseIntPipe) id: number,
+  @Body() dto: { editedValue: number; note?: string },
+) {
+  return this.investmentsService.editPortfolioSnapshot(userId, id, dto);
+}
+
 }

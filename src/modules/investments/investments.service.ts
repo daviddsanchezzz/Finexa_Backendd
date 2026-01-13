@@ -10,13 +10,32 @@ import { UpdateInvestmentAssetDto } from './dto/update-investment-asset.dto';
 import { CreateInvestmentValuationDto } from './dto/create-valuation.dto';
 import { UpdateInvestmentValuationDto } from './dto/update-valuation.dto';
 
+/**
+ * IMPORTANT (schema alignment)
+ * --------------------------------
+ * This service assumes InvestmentOperation.type can store:
+ *  - transfer_in, transfer_out, buy, sell, swap_in, swap_out
+ *
+ * Update your Prisma enum InvestmentOperationType accordingly, and remove any legacy values:
+ *   enum InvestmentOperationType {
+ *     transfer_in
+ *     transfer_out
+ *     buy
+ *     sell
+ *     swap_in
+ *     swap_out
+ *   }
+ *
+ * If you keep a different enum, you must map values consistently (do NOT rely on `as any` long-term).
+ */
+
 @Injectable()
 export class InvestmentsService {
   constructor(private prisma: PrismaService) {}
 
-  // -----------------------------
+  // =============================
   // Helpers (validation & parsing)
-  // -----------------------------
+  // =============================
   private requireInt(x: any, label: string) {
     const n = Number(x);
     if (!Number.isInteger(n)) throw new BadRequestException(`Invalid ${label}`);
@@ -41,8 +60,13 @@ export class InvestmentsService {
 
   private parseDate(x: any) {
     const d = x ? new Date(x) : new Date();
-    if (isNaN(d.getTime())) throw new BadRequestException('Invalid date');
+    if (Number.isNaN(d.getTime())) throw new BadRequestException('Invalid date');
     return d;
+  }
+
+  // Normalize "date-only" in UTC (00:00:00Z) to avoid duplicated snapshots by time component
+  private startOfUtcDay(d: Date) {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }
 
   private normalizeCurrency(x: any, fallback = 'EUR') {
@@ -84,10 +108,7 @@ export class InvestmentsService {
   }
 
   /**
-   * HARD RULE: solo existe 1 wallet de inversión.
-   * - Se usa siempre la primera por position.
-   * - Si hay 0 -> error.
-   * - Si hay >1 -> error (para evitar inconsistencias silenciosas).
+   * HARD RULE: exactly 1 investment wallet.
    */
   private async getSingleInvestmentWallet(userId: number) {
     const wallets = await this.prisma.wallet.findMany({
@@ -107,10 +128,115 @@ export class InvestmentsService {
   }
 
   /**
-   * Recalcula el balance de la ÚNICA wallet de inversión:
-   * balance = suma( lastSnapshot(asset) ) con fallback netContributed
-   *
-   * netContributed = initialInvested + (transfer_in + buy + swap_in) - (transfer_out + sell + swap_out)
+   * Atomic cash decrement to avoid race conditions:
+   * update balance only if balance >= amount.
+   */
+  private async atomicDecrementCashWallet(
+    tx: any,
+    userId: number,
+    cashWalletId: number,
+    amount: number,
+  ) {
+    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('Invalid amount');
+
+    const updated = await tx.wallet.updateMany({
+      where: {
+        id: cashWalletId,
+        userId,
+        active: true,
+        kind: 'cash' as any,
+        balance: { gte: amount },
+      },
+      data: { balance: { decrement: amount } },
+    });
+
+    if (updated.count !== 1) {
+      throw new BadRequestException('Insufficient funds');
+    }
+  }
+
+  // =============================
+  // Portfolio Value (for snapshots)
+  // =============================
+
+  /**
+   * Portfolio mark-to-model at a target date:
+   * - For each asset: last valuation <= target (if exists), else fallback to "book value"
+   * - Book value is computed from initialInvested + cash in/out + swaps in/out
+   *   (swaps are included here to keep per-asset allocation coherent when user swaps)
+   */
+  private async getPortfolioValueAt(userId: number, target: Date): Promise<number> {
+    const assets = await this.prisma.investmentAsset.findMany({
+      where: { userId, active: true },
+      select: { id: true, initialInvested: true },
+    });
+
+    const assetIds = assets.map((a) => a.id);
+    if (assetIds.length === 0) return 0;
+
+    const ops = await this.prisma.investmentOperation.findMany({
+      where: {
+        userId,
+        active: true,
+        assetId: { in: assetIds },
+        date: { lte: target },
+        type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell', 'swap_in', 'swap_out'] as any },
+      },
+      select: { assetId: true, type: true, amount: true },
+    });
+
+    // Book value allocation (includes swaps)
+    const inflow = new Set(['transfer_in', 'buy', 'swap_in']);
+    const outflow = new Set(['transfer_out', 'sell', 'swap_out']);
+
+    const bookByAsset = new Map<number, number>();
+    for (const a of assets) bookByAsset.set(a.id, Number(a.initialInvested ?? 0));
+
+    for (const o of ops) {
+      const t = String(o.type);
+      const amt = Number(o.amount ?? 0);
+      const delta = inflow.has(t) ? amt : outflow.has(t) ? -amt : 0;
+      if (delta) bookByAsset.set(o.assetId, (bookByAsset.get(o.assetId) ?? 0) + delta);
+    }
+
+    const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
+      by: ['assetId'],
+      where: { userId, active: true, assetId: { in: assetIds }, date: { lte: target } },
+      _max: { date: true },
+    });
+
+    const pairs = latestDates
+      .filter((r) => r._max.date)
+      .map((r) => ({ assetId: r.assetId, date: r._max.date! }));
+
+    const snaps = pairs.length
+      ? await this.prisma.investmentValuationSnapshot.findMany({
+          where: { userId, active: true, OR: pairs },
+          select: { assetId: true, date: true, value: true },
+        })
+      : [];
+
+    const snapMap = new Map<number, { date: Date; value: number }>();
+    for (const s of snaps) {
+      const prev = snapMap.get(s.assetId);
+      if (!prev || s.date > prev.date) snapMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
+    }
+
+    let total = 0;
+    for (const assetId of assetIds) {
+      const v = snapMap.get(assetId)?.value;
+      total += v ?? (bookByAsset.get(assetId) ?? 0);
+    }
+    return total;
+  }
+
+  // =============================
+  // Investment wallet balance recalculation
+  // =============================
+
+  /**
+   * Recalculates investment wallet balance = sum(last valuation per asset), fallback to "book value".
+   * Book value includes swaps to preserve allocation after swaps.
    */
   private async recalcInvestmentWalletBalance(userId: number) {
     const investmentWalletId = await this.getSingleInvestmentWallet(userId);
@@ -121,10 +247,7 @@ export class InvestmentsService {
     });
 
     if (assets.length === 0) {
-      await this.prisma.wallet.update({
-        where: { id: investmentWalletId },
-        data: { balance: 0 },
-      });
+      await this.prisma.wallet.update({ where: { id: investmentWalletId }, data: { balance: 0 } });
       return;
     }
 
@@ -135,6 +258,7 @@ export class InvestmentsService {
       select: { assetId: true, type: true, amount: true },
     });
 
+    // Book value allocation (includes swaps)
     const inflowTypes = new Set(['transfer_in', 'buy', 'swap_in']);
     const outflowTypes = new Set(['transfer_out', 'sell', 'swap_out']);
 
@@ -170,7 +294,7 @@ export class InvestmentsService {
     const snapshotMap = new Map<number, { value: number; date: Date }>();
     for (const s of latestSnapshots) {
       const prev = snapshotMap.get(s.assetId);
-      if (!prev || s.date > prev.date) snapshotMap.set(s.assetId, { value: s.value, date: s.date });
+      if (!prev || s.date > prev.date) snapshotMap.set(s.assetId, { value: Number(s.value ?? 0), date: s.date });
     }
 
     let totalCurrentValue = 0;
@@ -179,12 +303,10 @@ export class InvestmentsService {
       const agg = aggMap.get(a.id) ?? { inflow: 0, outflow: 0 };
 
       const initial = Number(a.initialInvested ?? 0);
-      const totalContributed = initial + agg.inflow;
-      const totalWithdrawn = agg.outflow;
-      const netContributed = totalContributed - totalWithdrawn;
+      const bookValue = initial + agg.inflow - agg.outflow;
 
       const snap = snapshotMap.get(a.id);
-      const currentValue = snap?.value ?? netContributed;
+      const currentValue = snap?.value ?? bookValue;
 
       totalCurrentValue += Number(currentValue ?? 0);
     }
@@ -195,22 +317,9 @@ export class InvestmentsService {
     });
   }
 
-  private async assertCashSufficient(tx: any, userId: number, cashWalletId: number, amount: number) {
-    const w = await tx.wallet.findFirst({
-      where: { id: cashWalletId, userId, active: true },
-      select: { balance: true, kind: true },
-    });
-    if (!w) throw new NotFoundException('Wallet not found');
-    if (String(w.kind) !== 'cash') throw new BadRequestException('Wallet must be a cash wallet');
-
-    if (Number(w.balance) < amount) {
-      throw new BadRequestException('Insufficient funds');
-    }
-  }
-
-  // -----------------------------
+  // =============================
   // Assets (CRUD)
-  // -----------------------------
+  // =============================
   async createAsset(userId: number, dto: CreateInvestmentAssetDto) {
     const name = (dto.name ?? '').trim();
     if (!name) throw new BadRequestException('Name is required');
@@ -261,7 +370,6 @@ export class InvestmentsService {
     }
 
     if (dto.type !== undefined) data.type = dto.type;
-
     if ((dto as any).riskType !== undefined) data.riskType = (dto as any).riskType;
 
     if (dto.currency !== undefined) {
@@ -279,10 +387,7 @@ export class InvestmentsService {
       data.description = raw && String(raw).trim() ? String(raw).trim() : null;
     }
 
-    const updated = await this.prisma.investmentAsset.update({
-      where: { id },
-      data,
-    });
+    const updated = await this.prisma.investmentAsset.update({ where: { id }, data });
 
     await this.recalcInvestmentWalletBalance(userId);
     return updated;
@@ -300,39 +405,25 @@ export class InvestmentsService {
     return deleted;
   }
 
-  // -----------------------------
+  // =============================
   // Valuations (Snapshots)
-  // -----------------------------
+  // =============================
   async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
     await this.assertAssetOwned(userId, dto.assetId);
 
-    const date = new Date(dto.date);
-    if (isNaN(date.getTime())) throw new BadRequestException('Invalid date');
+    const rawDate = new Date(dto.date);
+    if (Number.isNaN(rawDate.getTime())) throw new BadRequestException('Invalid date');
+    const date = this.startOfUtcDay(rawDate); // normalize day to avoid duplicates by time
 
     const value = this.parseNonNegative(dto.value, 'value');
     const currency = this.normalizeCurrency(dto.currency, 'EUR');
 
     const valuation = await this.prisma.investmentValuationSnapshot.upsert({
       where: {
-        userId_assetId_date: {
-          userId,
-          assetId: dto.assetId,
-          date,
-        },
+        userId_assetId_date: { userId, assetId: dto.assetId, date },
       },
-      update: {
-        value,
-        currency,
-        active: true,
-      },
-      create: {
-        userId,
-        assetId: dto.assetId,
-        date,
-        value,
-        currency,
-        active: true,
-      },
+      update: { value, currency, active: true },
+      create: { userId, assetId: dto.assetId, date, value, currency, active: true },
     });
 
     await this.recalcInvestmentWalletBalance(userId);
@@ -356,14 +447,13 @@ export class InvestmentsService {
   }
 
   async getValuationById(userId: number, id: number) {
-  const v = await this.prisma.investmentValuationSnapshot.findFirst({
-    where: { id, userId, active: true },
-  });
+    const v = await this.prisma.investmentValuationSnapshot.findFirst({
+      where: { id, userId, active: true },
+    });
 
-  if (!v) throw new NotFoundException("Valoración no encontrada");
-  return v;
-}
-
+    if (!v) throw new NotFoundException('Valoración no encontrada');
+    return v;
+  }
 
   async updateValuation(userId: number, id: number, dto: UpdateInvestmentValuationDto) {
     if (!Number.isInteger(id)) throw new BadRequestException('Invalid valuation id');
@@ -383,23 +473,15 @@ export class InvestmentsService {
     if (dto.assetId !== undefined) data.assetId = dto.assetId;
 
     if (dto.date !== undefined) {
-      const d = new Date(dto.date);
-      if (isNaN(d.getTime())) throw new BadRequestException('Invalid date');
-      data.date = d;
+      const raw = new Date(dto.date);
+      if (Number.isNaN(raw.getTime())) throw new BadRequestException('Invalid date');
+      data.date = this.startOfUtcDay(raw);
     }
 
-    if (dto.value !== undefined) {
-      data.value = this.parseNonNegative(dto.value, 'value');
-    }
+    if (dto.value !== undefined) data.value = this.parseNonNegative(dto.value, 'value');
+    if (dto.currency !== undefined) data.currency = this.normalizeCurrency(dto.currency, 'EUR');
 
-    if (dto.currency !== undefined) {
-      data.currency = this.normalizeCurrency(dto.currency, 'EUR');
-    }
-
-    const updated = await this.prisma.investmentValuationSnapshot.update({
-      where: { id },
-      data,
-    });
+    const updated = await this.prisma.investmentValuationSnapshot.update({ where: { id }, data });
 
     await this.recalcInvestmentWalletBalance(userId);
     return updated;
@@ -422,9 +504,9 @@ export class InvestmentsService {
     return deleted;
   }
 
-  // -----------------------------
-  // Summary
-  // -----------------------------
+  // =============================
+  // Summary (cash flows vs book allocation)
+  // =============================
   async getSummary(userId: number) {
     const assets = await this.prisma.investmentAsset.findMany({
       where: { userId, active: true },
@@ -453,24 +535,36 @@ export class InvestmentsService {
       };
     }
 
-    const inflowTypes = new Set(['transfer_in', 'buy', 'swap_in']);
-    const outflowTypes = new Set(['transfer_out', 'sell', 'swap_out']);
+    // Cash flows (true contributions/withdrawals)
+    const cashInTypes = new Set(['transfer_in', 'buy']);
+    const cashOutTypes = new Set(['transfer_out', 'sell']);
+
+    // Book allocation (includes swaps)
+    const bookInTypes = new Set(['transfer_in', 'buy', 'swap_in']);
+    const bookOutTypes = new Set(['transfer_out', 'sell', 'swap_out']);
 
     const ops = await this.prisma.investmentOperation.findMany({
       where: { userId, active: true, assetId: { in: assetIds } },
       select: { assetId: true, type: true, amount: true },
     });
 
-    const aggMap = new Map<number, { inflow: number; outflow: number }>();
+    const agg = new Map<
+      number,
+      { cashIn: number; cashOut: number; bookIn: number; bookOut: number }
+    >();
+
     for (const o of ops) {
-      const prev = aggMap.get(o.assetId) ?? { inflow: 0, outflow: 0 };
       const t = String(o.type);
       const amt = Number(o.amount ?? 0);
+      const prev = agg.get(o.assetId) ?? { cashIn: 0, cashOut: 0, bookIn: 0, bookOut: 0 };
 
-      if (inflowTypes.has(t)) prev.inflow += amt;
-      else if (outflowTypes.has(t)) prev.outflow += amt;
+      if (cashInTypes.has(t)) prev.cashIn += amt;
+      else if (cashOutTypes.has(t)) prev.cashOut += amt;
 
-      aggMap.set(o.assetId, prev);
+      if (bookInTypes.has(t)) prev.bookIn += amt;
+      else if (bookOutTypes.has(t)) prev.bookOut += amt;
+
+      agg.set(o.assetId, prev);
     }
 
     const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
@@ -493,21 +587,24 @@ export class InvestmentsService {
     const snapshotMap = new Map<number, { value: number; date: Date; currency: string }>();
     for (const s of latestSnapshots) {
       const prev = snapshotMap.get(s.assetId);
-      if (!prev || s.date > prev.date) {
-        snapshotMap.set(s.assetId, { value: s.value, date: s.date, currency: s.currency });
-      }
+      if (!prev || s.date > prev.date) snapshotMap.set(s.assetId, { value: Number(s.value ?? 0), date: s.date, currency: s.currency });
     }
 
     const perAsset = assets.map((a) => {
-      const agg = aggMap.get(a.id) ?? { inflow: 0, outflow: 0 };
+      const aAgg = agg.get(a.id) ?? { cashIn: 0, cashOut: 0, bookIn: 0, bookOut: 0 };
 
-      const totalContributed = Number(a.initialInvested ?? 0) + agg.inflow;
-      const totalWithdrawn = agg.outflow;
+      const initial = Number(a.initialInvested ?? 0);
+
+      const totalContributed = initial + aAgg.cashIn; // true cash contributed
+      const totalWithdrawn = aAgg.cashOut;            // true cash withdrawn
       const netContributed = totalContributed - totalWithdrawn;
 
+      // book value allocation (used as fallback if no valuations)
+      const bookValue = initial + aAgg.bookIn - aAgg.bookOut;
+
       const snap = snapshotMap.get(a.id);
-      const currentValue = snap?.value ?? netContributed;
-      const pnl = currentValue - netContributed;
+      const currentValue = snap?.value ?? bookValue;
+      const pnl = currentValue - netContributed; // PnL vs true net cash contributed
 
       return {
         id: a.id,
@@ -521,7 +618,7 @@ export class InvestmentsService {
         totalWithdrawn,
         netContributed,
 
-        invested: netContributed, // backward compatibility
+        invested: netContributed, // kept for backward compatibility: "true invested"
         currentValue,
         pnl,
         lastValuationDate: snap?.date ?? null,
@@ -546,9 +643,9 @@ export class InvestmentsService {
     };
   }
 
-  // -----------------------------
+  // =============================
   // Time series: per-asset
-  // -----------------------------
+  // =============================
   async getAssetSeries(userId: number, assetId: number) {
     await this.assertAssetOwned(userId, assetId);
 
@@ -559,18 +656,14 @@ export class InvestmentsService {
     });
   }
 
-  // -----------------------------
-  // Time series: portfolio total (last-known per asset)
-  // -----------------------------
+  // =============================
+  // Time series: portfolio total (daily)
+  // =============================
   private toDayKeyUTC(d: Date) {
     const y = d.getUTCFullYear();
     const m = String(d.getUTCMonth() + 1).padStart(2, '0');
     const day = String(d.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
-  }
-
-  private startOfUtcDay(d: Date) {
-    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }
 
   private addUtcDays(d: Date, days: number) {
@@ -579,176 +672,153 @@ export class InvestmentsService {
     return x;
   }
 
-async getPortfolioTimeline(userId: number, days = 90) {
-  const n = Math.max(7, Math.min(365, Number(days) || 90));
-  const now = new Date();
-  const toExclusive = this.addUtcDays(this.startOfUtcDay(now), 1);
-  const from = this.addUtcDays(this.startOfUtcDay(now), -n + 1);
+  async getPortfolioTimeline(userId: number, days = 90) {
+    const n = Math.max(7, Math.min(365, Number(days) || 90));
+    const now = new Date();
+    const toExclusive = this.addUtcDays(this.startOfUtcDay(now), 1);
+    const from = this.addUtcDays(this.startOfUtcDay(now), -n + 1);
 
-  const assets = await this.prisma.investmentAsset.findMany({
-    where: { userId, active: true },
-    select: { id: true, initialInvested: true },
-  });
+    const assets = await this.prisma.investmentAsset.findMany({
+      where: { userId, active: true },
+      select: { id: true, initialInvested: true },
+    });
 
-  const assetIds = assets.map((a) => a.id);
-  if (assetIds.length === 0) return { points: [] };
+    const assetIds = assets.map((a) => a.id);
+    if (assetIds.length === 0) return { points: [] };
 
-  const inflowTypes = new Set(['transfer_in', 'buy', 'swap_in']);
-  const outflowTypes = new Set(['transfer_out', 'sell', 'swap_out']);
+    const bookInTypes = new Set(['transfer_in', 'buy', 'swap_in']);
+    const bookOutTypes = new Set(['transfer_out', 'sell', 'swap_out']);
 
-  // -----------------------------
-  // 1) Seed de EQUITY (last known valuation <= from)
-  //    Optimizado: groupBy max(date) por asset y luego findMany
-  // -----------------------------
-  const seedDates = await this.prisma.investmentValuationSnapshot.groupBy({
-    by: ['assetId'],
-    where: { userId, active: true, assetId: { in: assetIds }, date: { lte: from } },
-    _max: { date: true },
-  });
+    // Seed equity (last valuation <= from)
+    const seedDates = await this.prisma.investmentValuationSnapshot.groupBy({
+      by: ['assetId'],
+      where: { userId, active: true, assetId: { in: assetIds }, date: { lte: from } },
+      _max: { date: true },
+    });
 
-  const seedPairs = seedDates
-    .filter((r) => r._max.date)
-    .map((r) => ({ assetId: r.assetId, date: r._max.date! }));
+    const seedPairs = seedDates
+      .filter((r) => r._max.date)
+      .map((r) => ({ assetId: r.assetId, date: r._max.date! }));
 
-  const seedSnaps = seedPairs.length
-    ? await this.prisma.investmentValuationSnapshot.findMany({
-        where: { userId, active: true, OR: seedPairs },
-        select: { assetId: true, date: true, value: true },
-      })
-    : [];
+    const seedSnaps = seedPairs.length
+      ? await this.prisma.investmentValuationSnapshot.findMany({
+          where: { userId, active: true, OR: seedPairs },
+          select: { assetId: true, date: true, value: true },
+        })
+      : [];
 
-  const seedValueMap = new Map<number, { date: Date; value: number }>();
-  for (const s of seedSnaps) {
-    const prev = seedValueMap.get(s.assetId);
-    if (!prev || s.date > prev.date) seedValueMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
-  }
-
-  // Valoraciones en rango (para ir actualizando lastKnown)
-  const valuations = await this.prisma.investmentValuationSnapshot.findMany({
-    where: {
-      userId,
-      active: true,
-      assetId: { in: assetIds },
-      date: { gte: from, lt: toExclusive },
-    },
-    orderBy: { date: 'asc' },
-    select: { assetId: true, date: true, value: true },
-  });
-
-  const valuationsByDay = new Map<string, Map<number, number>>();
-  for (const v of valuations) {
-    const dayKey = this.toDayKeyUTC(v.date);
-    if (!valuationsByDay.has(dayKey)) valuationsByDay.set(dayKey, new Map());
-    valuationsByDay.get(dayKey)!.set(v.assetId, Number(v.value ?? 0));
-  }
-
-  // -----------------------------
-  // 2) Seed de NET CONTRIBUTIONS
-  //    - Start con initialInvested
-  //    - Aplica operaciones < from para seedear contrib a inicio de ventana
-  //    - Aplica operaciones en [from, toExclusive) por día para evolucionar
-  // -----------------------------
-  // (a) mapa inicial por asset
-  const netContribByAsset = new Map<number, number>();
-  for (const a of assets) netContribByAsset.set(a.id, Number(a.initialInvested ?? 0));
-
-  // (b) operaciones hasta toExclusive (para seed + updates). Filtramos por fecha para evitar cargar todo el histórico.
-  const ops = await this.prisma.investmentOperation.findMany({
-    where: {
-      userId,
-      active: true,
-      assetId: { in: assetIds },
-      date: { lt: toExclusive }, // importante
-    },
-    select: { assetId: true, type: true, amount: true, date: true },
-    orderBy: { date: 'asc' },
-  });
-
-  // opsByDay: solo las ops dentro del rango visible
-  const opsByDay = new Map<string, Array<{ assetId: number; delta: number }>>();
-
-  for (const o of ops) {
-    const t = String(o.type);
-    const amt = Number(o.amount ?? 0);
-    const delta = inflowTypes.has(t) ? amt : outflowTypes.has(t) ? -amt : 0;
-    if (!delta) continue;
-
-    const dayKey = this.toDayKeyUTC(o.date);
-
-    // si la op es ANTES de 'from', cuenta para seed
-    if (o.date < from) {
-      netContribByAsset.set(o.assetId, (netContribByAsset.get(o.assetId) ?? 0) + delta);
-      continue;
+    const seedValueMap = new Map<number, { date: Date; value: number }>();
+    for (const s of seedSnaps) {
+      const prev = seedValueMap.get(s.assetId);
+      if (!prev || s.date > prev.date) seedValueMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
     }
 
-    // si está en rango, la guardamos para aplicarla día a día
-    if (!opsByDay.has(dayKey)) opsByDay.set(dayKey, []);
-    opsByDay.get(dayKey)!.push({ assetId: o.assetId, delta });
-  }
+    const valuations = await this.prisma.investmentValuationSnapshot.findMany({
+      where: {
+        userId,
+        active: true,
+        assetId: { in: assetIds },
+        date: { gte: from, lt: toExclusive },
+      },
+      orderBy: { date: 'asc' },
+      select: { assetId: true, date: true, value: true },
+    });
 
-  // -----------------------------
-  // 3) lastKnown equity por asset: seed snapshot o fallback a netContrib (mark-to-model)
-  // -----------------------------
-  const lastKnown = new Map<number, number>();
-  for (const assetId of assetIds) {
-    const seedSnap = seedValueMap.get(assetId)?.value;
-    const fallback = netContribByAsset.get(assetId) ?? 0; // consistente con tu lógica
-    lastKnown.set(assetId, seedSnap ?? fallback);
-  }
+    const valuationsByDay = new Map<string, Map<number, number>>();
+    for (const v of valuations) {
+      const dayKey = this.toDayKeyUTC(v.date);
+      if (!valuationsByDay.has(dayKey)) valuationsByDay.set(dayKey, new Map());
+      valuationsByDay.get(dayKey)!.set(v.assetId, Number(v.value ?? 0));
+    }
 
-  // -----------------------------
-  // 4) Construcción de puntos por día
-  // -----------------------------
-const points: Array<{
-  date: string;
-  totalCurrentValue: number;
-  equity: number;
-  netContributions: number;
-}> = [];
-  let cursor = new Date(from);
+    // Book value by asset as "netContributions" line (includes swaps to keep allocation)
+    const bookByAsset = new Map<number, number>();
+    for (const a of assets) bookByAsset.set(a.id, Number(a.initialInvested ?? 0));
 
-  while (cursor < toExclusive) {
-    const dayKey = this.toDayKeyUTC(cursor);
+    const ops = await this.prisma.investmentOperation.findMany({
+      where: {
+        userId,
+        active: true,
+        assetId: { in: assetIds },
+        date: { lt: toExclusive },
+      },
+      select: { assetId: true, type: true, amount: true, date: true },
+      orderBy: { date: 'asc' },
+    });
 
-    // actualiza contribuciones del día
-    const dayOps = opsByDay.get(dayKey);
-    if (dayOps) {
-      for (const { assetId, delta } of dayOps) {
-        netContribByAsset.set(assetId, (netContribByAsset.get(assetId) ?? 0) + delta);
+    const opsByDay = new Map<string, Array<{ assetId: number; delta: number }>>();
+
+    for (const o of ops) {
+      const t = String(o.type);
+      const amt = Number(o.amount ?? 0);
+      const delta = bookInTypes.has(t) ? amt : bookOutTypes.has(t) ? -amt : 0;
+      if (!delta) continue;
+
+      const dayKey = this.toDayKeyUTC(o.date);
+
+      // seed < from
+      if (o.date < from) {
+        bookByAsset.set(o.assetId, (bookByAsset.get(o.assetId) ?? 0) + delta);
+        continue;
       }
+
+      if (!opsByDay.has(dayKey)) opsByDay.set(dayKey, []);
+      opsByDay.get(dayKey)!.push({ assetId: o.assetId, delta });
     }
 
-    // actualiza equity por valoraciones del día
-    const updates = valuationsByDay.get(dayKey);
-    if (updates) {
-      for (const [assetId, val] of updates.entries()) lastKnown.set(assetId, val);
+    const lastKnown = new Map<number, number>();
+    for (const assetId of assetIds) {
+      const seedSnap = seedValueMap.get(assetId)?.value;
+      const fallback = bookByAsset.get(assetId) ?? 0;
+      lastKnown.set(assetId, seedSnap ?? fallback);
     }
 
-    // suma portfolio equity
-    let equity = 0;
-    for (const assetId of assetIds) equity += lastKnown.get(assetId) ?? 0;
+    const points: Array<{
+      date: string;
+      totalCurrentValue: number;
+      equity: number;
+      netContributions: number;
+    }> = [];
 
-    // suma portfolio net contributions
-    let netContributions = 0;
-    for (const assetId of assetIds) netContributions += netContribByAsset.get(assetId) ?? 0;
+    let cursor = new Date(from);
 
-points.push({
-  date: dayKey,
-  totalCurrentValue: equity,  // ✅ compatibilidad con tu frontend actual
-  equity,                     // ✅ nuevo nombre “pro”
-  netContributions,           // ✅ para aportaciones
-});
-    cursor = this.addUtcDays(cursor, 1);
+    while (cursor < toExclusive) {
+      const dayKey = this.toDayKeyUTC(cursor);
+
+      const dayOps = opsByDay.get(dayKey);
+      if (dayOps) {
+        for (const { assetId, delta } of dayOps) {
+          bookByAsset.set(assetId, (bookByAsset.get(assetId) ?? 0) + delta);
+        }
+      }
+
+      const updates = valuationsByDay.get(dayKey);
+      if (updates) {
+        for (const [assetId, val] of updates.entries()) lastKnown.set(assetId, val);
+      }
+
+      let equity = 0;
+      for (const assetId of assetIds) equity += lastKnown.get(assetId) ?? 0;
+
+      let netContributions = 0;
+      for (const assetId of assetIds) netContributions += bookByAsset.get(assetId) ?? 0;
+
+      points.push({
+        date: dayKey,
+        totalCurrentValue: equity, // compatibility
+        equity,
+        netContributions,
+      });
+
+      cursor = this.addUtcDays(cursor, 1);
+    }
+
+    return { points };
   }
 
-  return { points };
-}
-
-
-  // -----------------------------
-  // Operations (Investment-only)
-  // -----------------------------
-  // HARD RULE: cash siempre se elige; investment nunca (es única e implícita)
+  // =============================
+  // Operations
+  // =============================
 
   // Deposit: cash -> investment (inflow)
   async depositAsset(userId: number, assetId: number, dto: any) {
@@ -759,26 +829,30 @@ points.push({
     const date = this.parseDate(dto.date);
 
     const fromWalletId = this.requireInt(dto.fromWalletId, 'fromWalletId');
-    // valida que exista y sea cash
     await this.assertWalletKind(userId, fromWalletId, 'cash');
+
     const invWalletId = await this.getSingleInvestmentWallet(userId);
 
     const description = dto.description?.trim() || 'Deposit investment';
 
     const result = await this.prisma.$transaction(async (tx) => {
-      await this.assertCashSufficient(tx, userId, fromWalletId, amount);
+      // fee is paid from cash wallet (total outflow)
+      const totalOutflow = amount + fee;
+      await this.atomicDecrementCashWallet(tx, userId, fromWalletId, totalOutflow);
 
+      // Transaction amount reflects total cash outflow
       const createdTx = await tx.transaction.create({
         data: {
           userId,
           type: 'transfer',
-          amount,
+          amount: totalOutflow,
           description,
           date,
           fromWalletId,
           toWalletId: invWalletId,
           investmentAssetId: assetId,
           active: true,
+          source: 'investment',
         },
       });
 
@@ -788,17 +862,11 @@ points.push({
           assetId,
           type: 'transfer_in' as any,
           date,
-          amount,
+          amount, // principal
           fee,
           transactionId: createdTx.id,
           active: true,
         },
-      });
-
-      // solo cash sale (investment wallet balance se deriva del recálculo)
-      await tx.wallet.update({
-        where: { id: fromWalletId },
-        data: { balance: { decrement: amount } },
       });
 
       return { transaction: createdTx, operation: op };
@@ -809,11 +877,12 @@ points.push({
   }
 
   // Withdraw: investment -> cash (outflow)
+  // Here we assume dto.amount is NET cash received by user.
   async withdrawAsset(userId: number, assetId: number, dto: any) {
     await this.assertAssetOwned(userId, assetId);
 
-    const amount = this.parseAmount(dto.amount, 'amount');
-    const fee = this.parseFee(dto.fee);
+    const amountNet = this.parseAmount(dto.amount, 'amount');
+    const fee = this.parseFee(dto.fee); // informational unless you also model gross
     const date = this.parseDate(dto.date);
 
     const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
@@ -827,13 +896,14 @@ points.push({
         data: {
           userId,
           type: 'transfer',
-          amount,
+          amount: amountNet,
           description,
           date,
           fromWalletId: invWalletId,
           toWalletId,
           investmentAssetId: assetId,
           active: true,
+          source: 'investment',
         },
       });
 
@@ -843,17 +913,16 @@ points.push({
           assetId,
           type: 'transfer_out' as any,
           date,
-          amount,
-          fee,
+          amount: amountNet, // store net cash
+          fee,               // informational unless you model gross
           transactionId: createdTx.id,
           active: true,
         },
       });
 
-      // solo cash entra
       await tx.wallet.update({
         where: { id: toWalletId },
-        data: { balance: { increment: amount } },
+        data: { balance: { increment: amountNet } },
       });
 
       return { transaction: createdTx, operation: op };
@@ -863,7 +932,7 @@ points.push({
     return result;
   }
 
-  // BUY: cash -> investment (inflow), separado de deposit por tipo de operación
+  // BUY: cash -> investment (inflow)
   async buyAsset(userId: number, assetId: number, dto: any) {
     await this.assertAssetOwned(userId, assetId);
 
@@ -878,19 +947,21 @@ points.push({
     const description = dto.description?.trim() || 'Buy asset';
 
     const result = await this.prisma.$transaction(async (tx) => {
-      await this.assertCashSufficient(tx, userId, fromWalletId, amount);
+      const totalOutflow = amount + fee;
+      await this.atomicDecrementCashWallet(tx, userId, fromWalletId, totalOutflow);
 
       const createdTx = await tx.transaction.create({
         data: {
           userId,
           type: 'transfer',
-          amount,
+          amount: totalOutflow,
           description,
           date,
           fromWalletId,
           toWalletId: invWalletId,
           investmentAssetId: assetId,
           active: true,
+          source: 'investment',
         },
       });
 
@@ -907,12 +978,6 @@ points.push({
         },
       });
 
-      // solo cash sale
-      await tx.wallet.update({
-        where: { id: fromWalletId },
-        data: { balance: { decrement: amount } },
-      });
-
       return { transaction: createdTx, operation: op };
     });
 
@@ -920,12 +985,13 @@ points.push({
     return result;
   }
 
-  // SELL: investment -> cash (outflow), amount = cash NETO recibido
+  // SELL: investment -> cash (outflow)
+  // We assume dto.amount is NET cash received.
   async sellAsset(userId: number, assetId: number, dto: any) {
     await this.assertAssetOwned(userId, assetId);
 
-    const amount = this.parseAmount(dto.amount, 'amount');
-    const fee = this.parseFee(dto.fee);
+    const amountNet = this.parseAmount(dto.amount, 'amount');
+    const fee = this.parseFee(dto.fee); // informational unless gross modeled
     const date = this.parseDate(dto.date);
 
     const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
@@ -939,13 +1005,14 @@ points.push({
         data: {
           userId,
           type: 'transfer',
-          amount,
+          amount: amountNet,
           description,
           date,
           fromWalletId: invWalletId,
           toWalletId,
           investmentAssetId: assetId,
           active: true,
+          source: 'investment',
         },
       });
 
@@ -955,17 +1022,16 @@ points.push({
           assetId,
           type: 'sell' as any,
           date,
-          amount,
+          amount: amountNet,
           fee,
           transactionId: createdTx.id,
           active: true,
         },
       });
 
-      // solo cash entra
       await tx.wallet.update({
         where: { id: toWalletId },
-        data: { balance: { increment: amount } },
+        data: { balance: { increment: amountNet } },
       });
 
       return { transaction: createdTx, operation: op };
@@ -975,14 +1041,12 @@ points.push({
     return result;
   }
 
-  // Swap: asset A -> asset B (sin wallets en v1)
+  // Swap: asset A -> asset B (no wallets)
   async swapAssets(userId: number, dto: any) {
     const fromAssetId = this.requireInt(dto.fromAssetId, 'fromAssetId');
     const toAssetId = this.requireInt(dto.toAssetId, 'toAssetId');
 
-    if (fromAssetId === toAssetId) {
-      throw new BadRequestException('fromAssetId and toAssetId must be different');
-    }
+    if (fromAssetId === toAssetId) throw new BadRequestException('fromAssetId and toAssetId must be different');
 
     await this.assertAssetOwned(userId, fromAssetId);
     await this.assertAssetOwned(userId, toAssetId);
@@ -1006,7 +1070,7 @@ points.push({
           type: 'swap_out' as any,
           date,
           amount: amountOut,
-          fee,
+          fee, // fee assigned to out leg
           swapGroupId,
           active: true,
         },
@@ -1057,42 +1121,281 @@ points.push({
     return { swapGroupId: sg, deletedCount: ops.length };
   }
 
-  // Public hook para recalcular (usado por otros servicios si lo necesitas)
   async recalcInvestmentWallet(userId: number) {
     await this.recalcInvestmentWalletBalance(userId);
   }
 
   async listOperations(userId: number, assetId: number, active?: boolean) {
-  // Opcional: valida que el asset pertenezca al user para evitar leaks por id
-  const asset = await this.prisma.investmentAsset.findFirst({
-    where: { id: assetId, userId, active: true },
-    select: { id: true },
+    const asset = await this.prisma.investmentAsset.findFirst({
+      where: { id: assetId, userId, active: true },
+      select: { id: true },
+    });
+    if (!asset) throw new BadRequestException('Asset no encontrado');
+
+    const where: any = { userId, assetId };
+    if (typeof active === 'boolean') where.active = active;
+
+    return this.prisma.investmentOperation.findMany({
+      where,
+      orderBy: [{ date: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        userId: true,
+        assetId: true,
+        type: true,
+        date: true,
+        amount: true,
+        fee: true,
+        transactionId: true,
+        swapGroupId: true,
+        createdAt: true,
+        updatedAt: true,
+        active: true,
+      },
+    });
+  }
+  // =============================
+// Month boundaries (UTC)
+// =============================
+
+private startOfMonthUTC(y: number, m1to12: number) {
+  return new Date(Date.UTC(y, m1to12 - 1, 1, 0, 0, 0, 0));
+}
+
+private nextMonthStartUTC(y: number, m1to12: number) {
+  // 00:00Z del día 1 del mes siguiente
+  return new Date(Date.UTC(y, m1to12, 1, 0, 0, 0, 0));
+}
+
+private normalizeToMonthStartUTC(d: Date) {
+  const y = d.getUTCFullYear();
+  const m1 = d.getUTCMonth() + 1;
+  return this.startOfMonthUTC(y, m1);
+}
+
+// =============================
+// Portfolio monthly snapshots (editable) — at month start boundary
+// =============================
+
+async upsertPortfolioSnapshot(userId: number, date: Date, isAuto: boolean) {
+  // ✅ normaliza a 00:00Z del día 1 del mes (boundary)
+  const normalizedDate = this.normalizeToMonthStartUTC(date);
+
+  const totalValue = await this.getPortfolioValueAt(userId, normalizedDate);
+
+  const existing = await this.prisma.portfolioSnapshot.findFirst({
+    where: { userId, date: normalizedDate, active: true },
   });
-  if (!asset) {
-    throw new BadRequestException('Asset no encontrado');
+
+  if (existing) {
+    return this.prisma.portfolioSnapshot.update({
+      where: { id: existing.id },
+      data: {
+        totalValue,
+        isAuto,
+        // preserve user edits:
+        // do not touch editedValue/isEdited/editedValue
+      },
+    });
   }
 
-  const where: any = { userId, assetId };
-  if (typeof active === 'boolean') where.active = active;
-
-  return this.prisma.investmentOperation.findMany({
-    where,
-    orderBy: [{ date: 'desc' }, { id: 'desc' }],
-    select: {
-      id: true,
-      userId: true,
-      assetId: true,
-      type: true,
-      date: true,
-      amount: true,
-      fee: true,
-      transactionId: true,
-      swapGroupId: true,
-      createdAt: true,
-      updatedAt: true,
+  return this.prisma.portfolioSnapshot.create({
+    data: {
+      userId,
+      date: normalizedDate,
+      totalValue,
+      currency: "EUR",
+      isAuto,
       active: true,
     },
   });
 }
+
+async editPortfolioSnapshot(userId: number, id: number, dto: { editedValue: number; note?: string }) {
+  const s = await this.prisma.portfolioSnapshot.findFirst({
+    where: { id, userId, active: true },
+  });
+  if (!s) throw new NotFoundException("Snapshot not found");
+
+  const editedValue = Number(dto.editedValue);
+  if (!Number.isFinite(editedValue) || editedValue < 0) {
+    throw new BadRequestException("editedValue inválido");
+  }
+
+  return this.prisma.portfolioSnapshot.update({
+    where: { id },
+    data: {
+      isEdited: true,
+      editedValue,
+      editedAt: new Date(),
+      note: dto.note?.trim() || null,
+    },
+  });
+}
+
+private effectiveSnapshotValue(s: { totalValue: any; isEdited: boolean; editedValue: any }) {
+  const v = s.isEdited ? (s.editedValue ?? s.totalValue) : s.totalValue;
+  return Number(v ?? 0);
+}
+
+private async getBoundaryValue(userId: number, boundary: Date) {
+  const snap = await this.prisma.portfolioSnapshot.findFirst({
+    where: { userId, date: boundary, active: true },
+    select: { id: true, totalValue: true, isEdited: true, editedValue: true },
+  });
+
+  if (snap) {
+    return {
+      source: "snapshot" as const,
+      snapshotId: snap.id,
+      value: this.effectiveSnapshotValue(snap as any),
+    };
+  }
+
+  // ✅ No hay snapshot: calculamos al vuelo
+  const computed = await this.getPortfolioValueAt(userId, boundary);
+  return {
+    source: "computed" as const,
+    snapshotId: null as number | null,
+    value: Number(computed ?? 0),
+  };
+}
+
+private async getMonthCashFlow(userId: number, startInclusive: Date, nextStartExclusive: Date) {
+  const ops = await this.prisma.investmentOperation.findMany({
+    where: {
+      userId,
+      active: true,
+      date: { gte: startInclusive, lt: nextStartExclusive },
+      type: { in: ["transfer_in", "buy", "transfer_out", "sell"] as any },
+    },
+    select: { type: true, amount: true, fee: true },
+  });
+
+  let cf = 0;
+
+  for (const o of ops) {
+    const t = String(o.type);
+    const amt = Number(o.amount ?? 0);
+    const fee = Number(o.fee ?? 0);
+
+    if (t === "transfer_in" || t === "buy") {
+      cf += amt + fee; // cash out
+    } else if (t === "transfer_out" || t === "sell") {
+      cf -= amt; // cash in (amount neto)
+    }
+  }
+
+  return cf;
+}
+
+async getMonthlyPerformance(userId: number, fromYM: string, toYM: string) {
+  const months = this.monthRange(fromYM, toYM);
+
+  const out: Array<{
+    period: string;
+    startValue: number;
+    endValue: number;
+    netCashFlow: number;
+    returnAmount: number;
+    returnPct: number | null;
+
+    // opcional (muy útil para UI / debug)
+    startSource: "snapshot" | "computed";
+    endSource: "snapshot" | "computed";
+    startSnapshotId: number | null;
+    endSnapshotId: number | null;
+  }> = [];
+
+  for (const { y, m } of months) {
+    const startBoundary = this.startOfMonthUTC(y, m);
+    const endBoundary = this.nextMonthStartUTC(y, m);
+
+    const s0 = await this.getBoundaryValue(userId, startBoundary);
+    const s1 = await this.getBoundaryValue(userId, endBoundary);
+
+    const CF = await this.getMonthCashFlow(userId, startBoundary, endBoundary);
+
+    const V0 = s0.value;
+    const V1 = s1.value;
+
+    const returnAmount = V1 - V0 - CF;
+    const returnPct = V0 > 0 ? returnAmount / V0 : null;
+
+    out.push({
+      period: `${y}-${String(m).padStart(2, "0")}`,
+      startValue: V0,
+      endValue: V1,
+      netCashFlow: CF,
+      returnAmount,
+      returnPct,
+      startSource: s0.source,
+      endSource: s1.source,
+      startSnapshotId: s0.snapshotId,
+      endSnapshotId: s1.snapshotId,
+    });
+  }
+
+  let compoundedReturn: number | null = null;
+  const valid = out.filter((x) => typeof x.returnPct === "number") as Array<{ returnPct: number }>;
+  if (valid.length) {
+    compoundedReturn = valid.reduce((acc, x) => acc * (1 + x.returnPct), 1) - 1;
+  }
+
+  return { months: out, compoundedReturn };
+}
+
+// =============================
+// Month parsing + range (UTC)
+// =============================
+
+private parseYM(input: string, label: string): { y: number; m: number } {
+  const raw = String(input ?? '').trim();
+  const m = /^(\d{4})-(\d{2})$/.exec(raw);
+  if (!m) throw new BadRequestException(`${label} must be YYYY-MM`);
+
+  const y = Number(m[1]);
+  const mm = Number(m[2]);
+
+  if (!Number.isInteger(y) || y < 1900 || y > 3000) {
+    throw new BadRequestException(`${label} year out of range`);
+  }
+  if (!Number.isInteger(mm) || mm < 1 || mm > 12) {
+    throw new BadRequestException(`${label} month must be 01-12`);
+  }
+
+  return { y, m: mm };
+}
+
+/**
+ * Inclusive month range between fromYM and toYM (both YYYY-MM).
+ * Example: monthRange("2025-11","2026-02") => [{2025,11},{2025,12},{2026,1},{2026,2}]
+ */
+private monthRange(fromYM: string, toYM: string): Array<{ y: number; m: number }> {
+  const from = this.parseYM(fromYM, 'fromYM');
+  const to = this.parseYM(toYM, 'toYM');
+
+  const fromIndex = from.y * 12 + (from.m - 1);
+  const toIndex = to.y * 12 + (to.m - 1);
+
+  if (toIndex < fromIndex) {
+    throw new BadRequestException('toYM must be >= fromYM');
+  }
+
+  const out: Array<{ y: number; m: number }> = [];
+  for (let idx = fromIndex; idx <= toIndex; idx++) {
+    const y = Math.floor(idx / 12);
+    const m = (idx % 12) + 1;
+    out.push({ y, m });
+  }
+
+  // Optional hard cap to protect the DB from huge ranges
+  if (out.length > 240) {
+    throw new BadRequestException('Range too large (max 240 months)');
+  }
+
+  return out;
+}
+
 
 }

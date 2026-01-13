@@ -62,12 +62,14 @@ enum InvestmentRiskType {
 }
 
 enum InvestmentOperationType {
+  transfer_in
+  transfer_out
   buy
   sell
-  swap
-withdraw
-deposit
+  swap_in
+  swap_out
 }
+
 
 
 
@@ -545,6 +547,29 @@ model InvestmentOperation {
 
   @@index([userId, assetId, date])
 }
+
+model PortfolioSnapshot {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  date       DateTime // cierre de mes (por ejemplo 2026-01-31T00:00:00Z o 23:59:59Z, pero consistente)
+  totalValue Float
+  currency   String   @default("EUR")
+
+  // editable
+  isAuto     Boolean  @default(true)
+  isEdited   Boolean  @default(false)
+  editedValue Float?
+  editedAt   DateTime?
+  note       String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  active     Boolean  @default(true)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
 
 
 model MonthlyReport {
