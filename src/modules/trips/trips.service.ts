@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "src/common/prisma/prisma.service";
-import { CreateTripDto, UpdateTripDto } from "./dto/create-trip.dto";
+import { CreateTripDto, StatusDto, UpdateTripDto } from "./dto/create-trip.dto";
 import { CreateTripPlanItemDto } from "./dto/create-trip-plan-item.dto";
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import PDFDocument = require("pdfkit");
@@ -1042,4 +1042,68 @@ return this.prisma.trip.create({
       doc.addPage();
     }
   }
+
+
+  async getSummary(userId: number) {
+      const TOTAL_COUNTRIES = 195;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // 1) Próximo viaje (planning, startDate >= hoy)
+    const nextTrip = await this.prisma.trip.findFirst({
+      where: {
+        userId,
+        status: "planning" as StatusDto,
+        startDate: { gte: today },
+        destination: { not: null },
+      },
+      orderBy: { startDate: "asc" },
+      select: { id: true, name: true, startDate: true, destination: true },
+    });
+
+    const daysToNextTrip =
+      nextTrip?.startDate
+        ? Math.max(
+            0,
+            Math.ceil((nextTrip.startDate.getTime() - today.getTime()) / 86400000)
+          )
+        : null;
+
+    // 2) Países visitados (seen)
+    const seenTrips = await this.prisma.trip.findMany({
+      where: { userId, status: "seen" as StatusDto, destination: { not: null } },
+      select: { destination: true },
+    });
+
+    const visitedSet = new Set(
+      seenTrips
+        .map((t) => (t.destination || "").trim().toUpperCase())
+        .filter(Boolean)
+    );
+  const visitedCountries = visitedSet.size;
+
+    // 3) Países por visitar (wishlist + planning), excluyendo visitados
+  const pendingCountries = Math.max(
+    0,
+    TOTAL_COUNTRIES - visitedCountries
+  );
+
+const visitedPct = Math.round(
+  (visitedCountries / TOTAL_COUNTRIES) * 100
+);
+
+  return {
+    daysToNextTrip,
+    nextTrip: nextTrip
+      ? { id: nextTrip.id, name: nextTrip.name, startDate: nextTrip.startDate }
+      : null,
+    visitedCountries,
+    pendingCountries,
+    visitedPct,
+    totalCountries: TOTAL_COUNTRIES,
+  };
 }
+}
+
+

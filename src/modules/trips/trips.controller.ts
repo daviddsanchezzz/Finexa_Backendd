@@ -15,6 +15,10 @@ export class TripsController {
   createTrip(@User('id') userId: number, @Body() dto: CreateTripDto) {
     return this.tripsService.createTrip(userId, dto);
   }
+      @Get("summary")
+  getSummary(@User('id') userId: number) {
+    return this.tripsService.getSummary(userId);
+  }
 
   @Get()
   getTrips(@User('id') userId: number) {
@@ -25,6 +29,8 @@ export class TripsController {
   getTripDetail(@User('id') userId: number, @Param("id") id: string) {
     return this.tripsService.getTripDetail(userId, +id);
   }
+
+
 
   @Patch(":id")
   updateTrip(
