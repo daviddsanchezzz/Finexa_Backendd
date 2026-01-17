@@ -8,22 +8,22 @@ export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get('summary')
-  getSummary(@User('userId') userId: number, @Query() filters: FilterDashboardDto) {
+  getSummary(@User('id') userId: number, @Query() filters: FilterDashboardDto) {
     return this.dashboardService.getSummary(userId, filters);
   }
 
   @Get('summary2')
-  getSummary2(@User('userId') userId: number, @Query() filters: FilterDashboardDto) {
+  getSummary2(@User('id') userId: number, @Query() filters: FilterDashboardDto) {
     return this.dashboardService.getSummary2(userId, filters);
   }
 
   @Get('by-category')
-  getByCategory(@User('userId') userId: number, @Query() filters: FilterDashboardDto) {
+  getByCategory(@User('id') userId: number, @Query() filters: FilterDashboardDto) {
     return this.dashboardService.getByCategory(userId, filters);
   }
 
   @Get('trends')
-  getTrends(@User('userId') userId: number, @Query() filters: FilterDashboardDto) {
+  getTrends(@User('id') userId: number, @Query() filters: FilterDashboardDto) {
     return this.dashboardService.getTrends(userId, filters);
   }
 }

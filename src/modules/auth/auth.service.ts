@@ -88,7 +88,7 @@ export class AuthService {
     });
 
     // Emite tokens + guarda refresh hasheado
-    return this.issueTokens(user.id, user.email);
+    return this.issueTokens(user.id, user.email   , user.name);
   }
 
   // ============================
@@ -101,10 +101,10 @@ export class AuthService {
     const passwordValid = await bcrypt.compare(password, user.password);
     if (!passwordValid) throw new UnauthorizedException("Invalid credentials");
 
-    const access_token = this.generateAccessToken(user.id, user.email);
+    const access_token = this.generateAccessToken(user.id, user.email, user.name);
 
     // Refresh token 30d + guardado hasheado en DB
-    const refresh_token = this.generateRefreshToken(user.id, user.email);
+    const refresh_token = this.generateRefreshToken(user.id, user.email, user.name);
     const refreshHash = await bcrypt.hash(refresh_token, 10);
 
     await this.prisma.user.update({
@@ -139,10 +139,10 @@ export class AuthService {
       if (!match) throw new UnauthorizedException("Refresh token mismatch");
 
       // Nuevo access
-      const access_token = this.generateAccessToken(user.id, user.email);
+      const access_token = this.generateAccessToken(user.id, user.email , user.name);
 
       // ROTACIÓN: emitir refresh nuevo y sustituir hash en DB
-      const new_refresh_token = this.generateRefreshToken(user.id, user.email);
+      const new_refresh_token = this.generateRefreshToken(user.id, user.email, user.name);
       const newRefreshHash = await bcrypt.hash(new_refresh_token, 10);
 
       await this.prisma.user.update({
@@ -181,9 +181,9 @@ export class AuthService {
   // ============================
   // Helpers
   // ============================
-  private async issueTokens(userId: number, email: string): Promise<Tokens> {
-    const access_token = this.generateAccessToken(userId, email);
-    const refresh_token = this.generateRefreshToken(userId, email);
+  private async issueTokens(userId: number, email: string, name: string): Promise<Tokens> {
+    const access_token = this.generateAccessToken(userId, email, name);
+    const refresh_token = this.generateRefreshToken(userId, email, name);
 
     const refreshHash = await bcrypt.hash(refresh_token, 10);
     await this.prisma.user.update({
@@ -194,13 +194,13 @@ export class AuthService {
     return { access_token, refresh_token };
   }
 
-  private generateAccessToken(userId: number, email: string): string {
-    const payload = { sub: userId, email };
+  private generateAccessToken(userId: number, email: string, name: string): string {
+    const payload = { sub: userId, email, name };
     return this.jwtService.sign(payload, { expiresIn: "15m" });
   }
 
-  private generateRefreshToken(userId: number, email: string): string {
-    const payload = { sub: userId, email };
+  private generateRefreshToken(userId: number, email: string, name: string): string {
+    const payload = { sub: userId, email, name };
     return this.jwtService.sign(payload, { expiresIn: "30d" });
   }
 }

@@ -9,28 +9,28 @@ export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
 
   @Post()
-  create(@User('userId') userId: number, @Body() dto: CreateCategoryDto) {
+  create(@User('id') userId: number, @Body() dto: CreateCategoryDto) {
     return this.categoriesService.create(userId, dto);
   }
 
   @Get()
-  findAll(@User('userId') userId: number) {
+  findAll(@User('id') userId: number) {
     return this.categoriesService.findAll(userId);
   }
 
   @Get(':id')
-  findOne(@User('userId') userId: number, @Param('id') id: string) {
+  findOne(@User('id') userId: number, @Param('id') id: string) {
     return this.categoriesService.findOne(userId, +id);
   }
 
     @Patch('reorder')
-  reorder(@User('userId') userId: number, @Body() dto: ReorderCategoriesDto) {
+  reorder(@User('id') userId: number, @Body() dto: ReorderCategoriesDto) {
     return this.categoriesService.reorder(userId, dto);
   }
 
   @Patch(':id')
   update(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param('id') id: string,
     @Body() dto: UpdateCategoryDto,
   ) {
@@ -38,7 +38,7 @@ export class CategoriesController {
   }
 
   @Delete(':id')
-  remove(@User('userId') userId: number, @Param('id') id: string, @Query('deleteTransactions') deleteTransactions: string,
+  remove(@User('id') userId: number, @Param('id') id: string, @Query('deleteTransactions') deleteTransactions: string,
 ) {
     const removeTx = deleteTransactions === 'true';
     return this.categoriesService.remove(userId, +id, removeTx);

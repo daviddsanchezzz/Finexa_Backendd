@@ -10,25 +10,49 @@ import { CreateTripPlanItemDto } from "./dto/create-trip-plan-item.dto";
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import PDFDocument = require("pdfkit");
 
+function normalizeCountryCode(code?: string | null): string | null {
+  if (!code) return null;
+
+  const c = code.trim().toUpperCase();
+
+  // ISO 3166-1 alpha-2
+  if (!/^[A-Z]{2}$/.test(c)) {
+    throw new Error("Invalid country code");
+  }
+
+  return c;
+}
+
 @Injectable()
 export class TripsService {
   constructor(private prisma: PrismaService) {}
 
-  async createTrip(userId: number, dto: CreateTripDto) {
-    return this.prisma.trip.create({
-      data: {
-        userId,
-        name: dto.name,
-        destination: dto.destination,
-        startDate: new Date(dto.startDate),
-        endDate: new Date(dto.endDate),
-        companions: dto.companions ?? [],
-        emoji: dto.emoji,
-        budget: dto.budget,
-        cost: dto.cost,
-      },
-    });
-  }
+  
+async createTrip(userId: number, dto: CreateTripDto) {
+const startDate = dto.startDate ? new Date(dto.startDate) : undefined;
+const endDate = dto.endDate ? new Date(dto.endDate) : undefined;
+
+const year =
+  startDate?.getFullYear() ??
+  endDate?.getFullYear() ??
+  undefined;
+
+return this.prisma.trip.create({
+  data: {
+    userId,
+    name: dto.name,
+    destination: normalizeCountryCode(dto.destination),
+    startDate,
+    endDate,
+    companions: dto.companions ?? [],
+    budget: dto.budget,
+    cost: dto.cost,
+    continent: dto.continent, // si lo mandas
+    year, // calculado
+    status: dto.status, // si lo mandas
+  },
+});
+}
 
   async getTrips(userId: number) {
     return this.prisma.trip.findMany({

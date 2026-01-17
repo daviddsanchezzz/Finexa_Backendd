@@ -24,14 +24,14 @@ export class AllocationPlanController {
   // -----------------------------
   // GET /allocation-plan
   @Get()
-  get(@User('userId') userId: number) {
+  get(@User('id') userId: number) {
     return this.service.get(userId);
   }
 
   // PATCH /allocation-plan (actualiza income/currency si procede)
   @Patch()
   updatePlan(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Body() dto: UpdateAllocationPlanDto,
   ) {
     return this.service.updatePlan(userId, dto);
@@ -43,7 +43,7 @@ export class AllocationPlanController {
   // POST /allocation-plan/items
   @Post('items')
   addItem(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Body() dto: CreateAllocationItemDto,
   ) {
     return this.service.addItem(userId, dto);
@@ -52,7 +52,7 @@ export class AllocationPlanController {
   // PATCH /allocation-plan/items/:id
   @Patch('items/:id')
   updateItem(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAllocationItemDto,
   ) {
@@ -62,7 +62,7 @@ export class AllocationPlanController {
   // DELETE /allocation-plan/items/:id
   @Delete('items/:id')
   deleteItem(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.service.deleteItem(userId, id);

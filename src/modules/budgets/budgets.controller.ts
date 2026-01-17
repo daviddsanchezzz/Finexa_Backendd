@@ -10,28 +10,28 @@ export class BudgetsController {
   constructor(private readonly budgetsService: BudgetsService) {}
 
   @Get("overview")
-  overview(@User("userId") userId: number, @Query() query: BudgetsOverviewQueryDto) {
+  overview(@User("id") userId: number, @Query() query: BudgetsOverviewQueryDto) {
     return this.budgetsService.overview(userId, query);
   }
 
   @Get()
-  findAll(@User("userId") userId: number) {
+  findAll(@User("id") userId: number) {
     return this.budgetsService.findAll(userId);
   }
 
   @Get(":id")
-  findOne(@User("userId") userId: number, @Param("id") id: string) {
+  findOne(@User("id") userId: number, @Param("id") id: string) {
     return this.budgetsService.findOne(userId, Number(id));
   }
 
   @Post()
-  create(@User("userId") userId: number, @Body() dto: CreateBudgetDto) {
+  create(@User("id") userId: number, @Body() dto: CreateBudgetDto) {
     return this.budgetsService.create(userId, dto);
   }
 
   @Patch(":id")
   update(
-    @User("userId") userId: number,
+    @User("id") userId: number,
     @Param("id") id: string,
     @Body() dto: UpdateBudgetDto
   ) {
@@ -39,7 +39,7 @@ export class BudgetsController {
   }
 
   @Delete(":id")
-  remove(@User("userId") userId: number, @Param("id") id: string) {
+  remove(@User("id") userId: number, @Param("id") id: string) {
     return this.budgetsService.remove(userId, Number(id));
   }
 }

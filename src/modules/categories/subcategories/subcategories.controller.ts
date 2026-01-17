@@ -10,7 +10,7 @@ export class SubcategoriesController {
 
   @Post()
   create(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param('categoryId') categoryId: string,
     @Body() dto: CreateSubcategoryDto,
   ) {

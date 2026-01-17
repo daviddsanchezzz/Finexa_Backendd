@@ -17,7 +17,7 @@ export class ReportsController {
   @Get('monthly/pdf')
   @Header('Content-Type', 'application/pdf')
   async getMonthlyPdf(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Query('month') month: string, // YYYY-MM
     @Query('walletId') walletId?: string,
     @Query('currency') currency?: string,
@@ -41,7 +41,7 @@ export class ReportsController {
   @Get('yearly/pdf')
   @Header('Content-Type', 'application/pdf')
   async getYearlyPdf(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Query('year') year: string, // YYYY
     @Query('walletId') walletId?: string,
     @Query('currency') currency?: string,

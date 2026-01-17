@@ -388,30 +388,49 @@ model ManualMonthData {
 
 // Trips
 
+enum Continent {
+  europe
+  africa
+  asia
+  north_america
+  south_america
+  oceania
+  antarctica
+}
+
+enum TripStatus {
+  wishlist    // por visitar
+  planning    // organizando
+  seen        // visto
+}
+
 model Trip {
   id          Int       @id @default(autoincrement())
   userId      Int
 
   name        String
-  destination String?
-  startDate   DateTime
-  endDate     DateTime
-  companions  String[]  // ["Juan", "María"]
+  destination String?   // ISO country code (LT, CV, ES...)
 
-  emoji       String?
-  cost        Float @default(0)
+  // ✅ ahora opcionales (para "por visitar" sin fechas)
+  startDate   DateTime?
+  endDate     DateTime?
+
+  companions  String[]  // ["Juan", "María"]
+  status      TripStatus @default(wishlist)
+
+  cost        Float     @default(0)
   budget      Float?
+
+  // ✅ NUEVO
+  continent   Continent?
+  year        Int?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-
   user        User      @relation(fields: [userId], references: [id])
 
-  // Relación con transacciones del viaje
   transactions Transaction[]
-
-  // Relación con planning del viaje
   planItems   TripPlanItem[]
 }
 

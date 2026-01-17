@@ -11,18 +11,18 @@ export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 
   @Post()
-  create(@User('userId') userId: number, @Body() dto: CreateTransactionDto) {
+  create(@User('id') userId: number, @Body() dto: CreateTransactionDto) {
     return this.transactionsService.create(userId, dto);
   }
 
   @Get('last-salary')
-  findLastSalary(@User('userId') userId: number) {
+  findLastSalary(@User('id') userId: number) {
     return this.transactionsService.findLastSalary(userId);
   }
 
   @Get()
   findAll(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Query() query: any, 
   ) {
     const filters = {
@@ -40,7 +40,7 @@ export class TransactionsController {
   
 
   @Get(':id')
-  findOne(@User('userId') userId: number, @Param('id') id: string) {
+  findOne(@User('id') userId: number, @Param('id') id: string) {
     return this.transactionsService.findOne(userId, +id);
   }
 
@@ -48,7 +48,7 @@ export class TransactionsController {
 
   @Patch(':id')
   update(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param('id') id: string,
     @Body() dto: UpdateTransactionDto,
     @Query('scope') scope: UpdateDeleteScope = 'single',
@@ -58,7 +58,7 @@ export class TransactionsController {
 
   @Delete(':id')
   remove(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param('id') id: string,
     @Query('scope') scope: UpdateDeleteScope = 'single',
   ) {

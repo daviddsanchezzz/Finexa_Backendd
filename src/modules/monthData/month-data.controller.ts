@@ -19,20 +19,20 @@ export class MonthDataController {
 
   // CREAR / ACTUALIZAR OVERRIDE
   @Post()
-  async upsert(@User('userId') userId: number, @Body() dto: MonthDataDto) {
+  async upsert(@User('id') userId: number, @Body() dto: MonthDataDto) {
      return this.service.upsert(userId, dto);
   }
 
   // LISTAR TODOS
   @Get()
-  async findAll(@User('userId') userId: number) {
+  async findAll(@User('id') userId: number) {
     return this.service.findAll(userId);
   }
 
   // LISTAR POR AÑO
   @Get(":year")
   async findByYear(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("year", ParseIntPipe) year: number
   ) {
     return this.service.findByYear(userId, year);
@@ -41,7 +41,7 @@ export class MonthDataController {
   // ELIMINAR OVERRIDE (DESACTIVAR)
   @Delete(":year/:month")
   async delete(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("year", ParseIntPipe) year: number,
     @Param("month", ParseIntPipe) month: number,
   ) {

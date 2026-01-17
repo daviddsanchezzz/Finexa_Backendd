@@ -9,7 +9,7 @@ export class TransactionsRecurringScheduler {
   constructor(private readonly transactionsService: TransactionsService) {}
 
   // Ejecutar cada minuto, en el segundo 0
-  @Cron('0 * * * * *') // formato: sec min hour day month dayOfWeek
+  @Cron('0 */10 * * * *') // cada 10' (en el segundo 0)
   async handleRecurringTransactions() {
     try {
       // Opcional: log si quieres ver que se dispara

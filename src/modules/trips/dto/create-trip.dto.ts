@@ -1,5 +1,20 @@
-// trips/dto/create-trip.dto.ts
-import { IsString, IsOptional, IsDateString, IsArray, IsNumber } from "class-validator";
+import { IsString, IsOptional, IsDateString, IsArray, IsNumber, Length, Matches, IsEnum, IsInt } from "class-validator";
+
+export enum ContinentDto {
+  europe = "europe",
+  africa = "africa",
+  asia = "asia",
+  north_america = "north_america",
+  south_america = "south_america",
+  oceania = "oceania",
+  antarctica = "antarctica",
+}
+
+export enum StatusDto {
+  seen = "seen",
+  wishlist = "wishlist",
+  planning = "planning",
+}
 
 export class CreateTripDto {
   @IsString()
@@ -7,31 +22,45 @@ export class CreateTripDto {
 
   @IsOptional()
   @IsString()
+  @Length(2, 2)
+  @Matches(/^[A-Z]{2}$/i, { message: "destination must be ISO country code (e.g. ES, IT, LT)" })
   destination?: string;
 
-  @IsDateString()
-  startDate: string;
+  @IsOptional()
+@IsEnum(ContinentDto)
+continent?: ContinentDto;
 
+  @IsOptional()
+@IsEnum(StatusDto)
+status?: StatusDto;
+
+@IsOptional()
+@IsInt()
+year?: number;
+
+  
+
+  @IsOptional()
   @IsDateString()
-  endDate: string;
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 
   @IsOptional()
   @IsArray()
-  companions?: string[]; // o string si al final guardas un texto plano
-
-  @IsOptional()
-  @IsString()
-  emoji?: string;
+  companions?: string[];
 
   @IsOptional()
   @IsNumber()
   budget?: number;
 
-    @IsOptional()
+  @IsOptional()
   @IsNumber()
   cost?: number;
-
 }
+
 
 // trips/dto/update-trip.dto.ts
 import { PartialType } from "@nestjs/mapped-types";

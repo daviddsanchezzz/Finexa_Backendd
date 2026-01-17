@@ -19,28 +19,28 @@ export class DebtsController {
   constructor(private readonly debtsService: DebtsService) {}
 
   @Post()
-  async create(@User('userId') userId: number, @Body() dto: CreateDebtDto) {
+  async create(@User('id') userId: number, @Body() dto: CreateDebtDto) {
     return this.debtsService.create(userId, dto);
   }
 
   @Get()
-  async findAll(@User('userId') userId: number) {
+  async findAll(@User('id') userId: number) {
     return this.debtsService.findAll(userId);
   }
 
   @Get(":id")
-  async findOne(@User('userId') userId: number, @Param("id") id: string) {
+  async findOne(@User('id') userId: number, @Param("id") id: string) {
     return this.debtsService.findOne(userId, Number(id));
   }
 
   @Get(":id/detail")
-  async getDetail(@User('userId') userId: number, @Param("id") id: string) {
+  async getDetail(@User('id') userId: number, @Param("id") id: string) {
     return this.debtsService.getDetail(userId, Number(id));
   }
 
   @Patch(":id")
   async update(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("id") id: string,
     @Body() dto: UpdateDebtDto,
   ) {
@@ -49,13 +49,13 @@ export class DebtsController {
 
   // 🔹 Cerrar deuda
   @Patch(":id/close")
-  async close(@User('userId') userId: number, @Param("id") id: string) {
+  async close(@User('id') userId: number, @Param("id") id: string) {
     return this.debtsService.close(userId, Number(id));
   }
 
   // (Opcional) borrar de verdad o soft delete separado del cierre
   @Delete(":id")
-  async remove(@User('userId') userId: number, @Param("id") id: string) {
+  async remove(@User('id') userId: number, @Param("id") id: string) {
     return this.debtsService.remove(userId, Number(id));
   }
 }

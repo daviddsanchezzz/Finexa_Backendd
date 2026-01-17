@@ -12,23 +12,23 @@ export class TripsController {
   constructor(private readonly tripsService: TripsService) {}
 
   @Post()
-  createTrip(@User('userId') userId: number, @Body() dto: CreateTripDto) {
+  createTrip(@User('id') userId: number, @Body() dto: CreateTripDto) {
     return this.tripsService.createTrip(userId, dto);
   }
 
   @Get()
-  getTrips(@User('userId') userId: number) {
+  getTrips(@User('id') userId: number) {
     return this.tripsService.getTrips(userId);
   }
 
   @Get(":id")
-  getTripDetail(@User('userId') userId: number, @Param("id") id: string) {
+  getTripDetail(@User('id') userId: number, @Param("id") id: string) {
     return this.tripsService.getTripDetail(userId, +id);
   }
 
   @Patch(":id")
   updateTrip(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("id") id: string,
     @Body() dto: UpdateTripDto
   ) {
@@ -36,13 +36,13 @@ export class TripsController {
   }
 
   @Delete(":id")
-  deleteTrip(@User('userId') userId: number, @Param("id") id: string) {
+  deleteTrip(@User('id') userId: number, @Param("id") id: string) {
     return this.tripsService.deleteTrip(userId, +id);
   }
 
   @Post(":id/plan-items")
   addPlanItem(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("id") id: string,
     @Body() dto: CreateTripPlanItemDto
   ) {
@@ -51,7 +51,7 @@ export class TripsController {
 
 @Patch(":tripId/plan-items/:planItemId")
   updatePlanItem(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("tripId") tripId: number,
     @Param("planItemId") planItemId: number,
     @Body() dto: CreateTripPlanItemDto
@@ -61,7 +61,7 @@ export class TripsController {
 
   @Delete(':tripId/plan-items/:planItemId')
 deletePlanItem(
-    @User('userId') userId: number,
+    @User('id') userId: number,
   @Param('tripId') tripId: string,
   @Param('planItemId') planItemId: string,
 ) {
@@ -75,7 +75,7 @@ deletePlanItem(
 
   @Patch(":id/attach-transactions")
   attachTransactions(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("id") id: string,
     @Body() dto: AttachTransactionsDto
   ) {
@@ -84,7 +84,7 @@ deletePlanItem(
 
   @Patch(":id/detach-transactions")
   detachTransactions(
-    @User('userId') userId: number,
+    @User('id') userId: number,
     @Param("id") id: string,
     @Body() dto: AttachTransactionsDto
   ) {
