@@ -386,7 +386,9 @@ model ManualMonthData {
   @@unique([userId, year, month])
 }
 
+// =========================
 // Trips
+// =========================
 
 enum Continent {
   europe
@@ -399,101 +401,349 @@ enum Continent {
 }
 
 enum TripStatus {
-  wishlist    // por visitar
-  planning    // organizando
-  seen        // visto
+  wishlist
+  planning
+  seen
 }
 
 model Trip {
-  id          Int       @id @default(autoincrement())
+  id          Int        @id @default(autoincrement())
   userId      Int
 
   name        String
-  destination String?   // ISO country code (LT, CV, ES...)
+  destination String?    // ISO country code (ES, PL...)
 
-  // ✅ ahora opcionales (para "por visitar" sin fechas)
   startDate   DateTime?
   endDate     DateTime?
 
-  companions  String[]  // ["Juan", "María"]
+  companions  String[]
   status      TripStatus @default(wishlist)
 
-  cost        Float     @default(0)
+  cost        Float      @default(0)
   budget      Float?
 
-  // ✅ NUEVO
   continent   Continent?
   year        Int?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
-  user        User      @relation(fields: [userId], references: [id])
+  user        User       @relation(fields: [userId], references: [id])
 
+  notes       TripNote[]
+  tasks       TripTask[]
   transactions Transaction[]
   planItems   TripPlanItem[]
 }
 
-// TripPlanIten
-
-model TripPlanItem {
-  id            Int               @id @default(autoincrement())
-  tripId        Int
-
-  type          TripPlanItemType 
-
-  title         String            // "Vuelo WRO-DUB", "Free tour centro", "Hotel Ibis"
-  date          DateTime?         // día principal
-  startTime     DateTime?         // opcional
-  endTime       DateTime?         // opcional
-
-  location      String?           // "Aeropuerto de Wroclaw", "Centro", "Hostal tal"
-  notes         String?           // código de booking, punto de encuentro...
-
-  // Opcional: enlazar planning con un gasto (transacción)
-  transactionId Int?
-  transaction   Transaction?      @relation(fields: [transactionId], references: [id])
-
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-
-  cost          Float?
-
-  trip          Trip              @relation(fields: [tripId], references: [id])
-}
+// =========================
+// Plan Items (base)
+// =========================
 
 enum TripPlanItemType {
-  // Logistics
+  // Logistics “grandes”
   flight
   accommodation
-  transport
-  taxi
-
-  // Old generic activity (temporal, para migrar datos)
-  activity
+  transport_destination   // tren/bus/coche (al destino)
+  transport_local         // dentro del destino
 
   // Culture & tourism
   museum
   monument
   viewpoint
+  free_tour
+  guided_tour             // ✅ añadido (engloba free/paid si quieres)
 
   // Leisure / entertainment
-  free_tour
   concert
+  sport                   // ✅ añadido
   bar_party
+  nightlife               // ✅ añadido
 
   // Nature
   beach
+  hike                    // ✅ añadido
 
   // Gastronomy
   restaurant
+  cafe                    // ✅ añadido
+  market                  // ✅ añadido
 
   // Shopping
   shopping
 
+  // Excursions / special
+  day_trip                // ✅ añadido
+
   // Generic
+  activity                // ✅ añadido (actividad genérica)
+  expense                 // ✅ añadido (gasto sin actividad)
   other
 }
+
+
+model TripPlanItem {
+  id            Int              @id @default(autoincrement())
+  tripId        Int
+
+  type          TripPlanItemType
+  title         String
+
+  // viejos (NO borrar aún)
+  date      DateTime?
+  startTime DateTime?
+  endTime   DateTime?
+
+  // ✅ Tiempo “potente”
+  day           DateTime?        // día principal (normaliza a 00:00)
+  startAt       DateTime?
+  endAt         DateTime?
+  timezone      String?          // útil para mostrar bien (Europe/Madrid)
+
+  location      String?
+  notes         String?
+
+  // ✅ dinero
+  cost          Decimal?
+  payed         Boolean?         @default(false)
+  currency      String?          // "EUR"
+  logistics     Boolean          @default(false)
+  paymentStatus PaymentStatus    @default(pending)
+
+  // ✅ para guardar cualquier cosa extra sin migraciones
+  metadata      Json?            @db.JsonB
+
+  // link con un gasto
+  transactionId Int?
+  transaction   Transaction?     @relation(fields: [transactionId], references: [id])
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  trip          Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  // ✅ details 1-1 según tipo
+  flightDetails        FlightDetails?
+  accommodationDetails AccommodationDetails?
+  destinationTransport DestinationTransportDetails?
+ expenseDetails ExpenseDetails?
+
+  attachments Attachment[]
+
+  @@index([tripId, type])
+  @@index([tripId, startAt])
+  @@index([tripId, day])
+}
+
+enum FlightProvider {
+  aerodatabox
+  manual
+  other
+}
+
+model FlightDetails {
+  planItemId Int @id
+
+  provider     FlightProvider @default(aerodatabox)
+  status       String?
+  lastUpdatedUtc DateTime?
+
+  flightNumberRaw  String?   // "FR 6341"
+  flightNumberIata String?   // "FR6341"
+  airlineName      String?
+  airlineIata      String?
+
+  fromIata   String?
+  toIata     String?
+  fromName   String?
+  toName     String?
+  fromCity   String?
+  toCity     String?
+  depTz      String?
+  arrTz      String?
+
+  depTerminal String?
+  arrTerminal String?
+
+  aircraftModel String?
+
+  // tiempos (schedule/estimated/actual por si mañana amplías)
+  schedDepAt DateTime?
+  schedArrAt DateTime?
+  estDepAt   DateTime?
+  estArrAt   DateTime?
+  actDepAt   DateTime?
+  actArrAt   DateTime?
+
+  providerRaw Json? @db.JsonB
+
+  planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)
+
+  @@index([flightNumberIata])
+  @@index([airlineIata])
+  @@index([fromIata, toIata])
+  @@index([schedDepAt])
+}
+
+enum RoomType {
+  single
+  double
+  twin
+  triple
+  family
+  suite
+  apartment
+  dorm
+}
+
+enum BathroomType {
+  private
+  shared
+}
+
+model AccommodationDetails {
+  planItemId Int @id
+
+  name      String?
+  address   String?
+  city      String?
+  country   String?
+
+  checkInAt  DateTime?
+  checkOutAt DateTime?
+
+  guests     Int?
+  rooms      Int?
+
+  roomType      RoomType?
+  bathroomType  BathroomType?
+
+  bookingRef String?
+  phone      String?
+  website    String?
+
+  metadata   Json? @db.JsonB
+
+  planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)
+
+  @@index([checkInAt])
+  @@index([checkOutAt])
+  @@index([roomType])
+  @@index([bathroomType])
+}
+
+enum DestinationTransportMode {
+  train
+  bus
+  car
+  other
+}
+
+model DestinationTransportDetails {
+  planItemId Int @id
+
+  mode       DestinationTransportMode
+  company    String?
+  bookingRef String?
+
+  fromName   String?
+  toName     String?
+
+  depAt      DateTime?
+  arrAt      DateTime?
+
+  metadata   Json? @db.JsonB
+
+  planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)
+
+  @@index([mode])
+  @@index([depAt])
+}
+
+enum BudgetCategoryType {
+  accommodation
+  transport_main
+  transport_local
+  food
+  activities
+  leisure
+  shopping
+  other
+}
+
+model ExpenseDetails {
+  planItemId Int @id
+
+  category   BudgetCategoryType
+  planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)
+
+  @@index([category])
+}
+
+
+model Attachment {
+  id              Int @id @default(autoincrement())
+
+  // uno de estos dos debe estar informado
+  planItemId      Int?
+
+  kind      String
+  url       String
+  filename  String?
+  mimeType  String?
+  sizeBytes Int?
+  metadata  Json? @db.JsonB
+
+  createdAt DateTime @default(now())
+
+  planItem      TripPlanItem?   @relation(fields: [planItemId], references: [id], onDelete: Cascade)
+
+  @@index([planItemId])
+}
+
+model TripNote {
+  id        Int      @id @default(autoincrement())
+  tripId    Int
+
+  title     String?
+  body      String
+  pinned    Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+}
+
+model TripTask {
+  id        Int        @id @default(autoincrement())
+  tripId    Int
+
+  title     String
+  status    TaskStatus @default(to_do)
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  trip      Trip       @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId, status])
+}
+
+
+enum TaskStatus {
+  to_do
+  done
+}
+
+enum PaymentStatus {
+  pending
+  paid
+}
+
+
 
 
 model InvestmentAsset {

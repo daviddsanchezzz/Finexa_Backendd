@@ -816,310 +816,412 @@ export class InvestmentsService {
     return { points };
   }
 
-  // =============================
-  // Operations
-  // =============================
+// =============================
+// Operaciones (movimientos de inversión)
+// =============================
+//
+// Idea general del módulo:
+// - Cada operación de inversión genera (casi siempre) 2 cosas:
+//   1) Un "Transaction" (registro contable general) para que aparezca en el histórico
+//   2) Un "InvestmentOperation" (registro específico) para poder calcular cartera/inversiones
+//
+// - Todas las operaciones se ejecutan en una transacción de BD (prisma.$transaction)
+//   para que NO se quede nada a medias si algo falla.
+//
+// - Tras cada operación, recalculamos el balance de la "wallet" de inversión
+//   (una wallet especial que agrupa el valor total invertido).
+//
+// Nota importante sobre fees/comisiones:
+// - En "deposit" y "buy": el dinero sale de cash, y la comisión también => outflow = amount + fee
+// - En "withdraw" y "sell": aquí asumimos que dto.amount es NETO (lo que recibe el usuario),
+//   y fee es informativo a menos que modeles también el "bruto".
 
-  // Deposit: cash -> investment (inflow)
-  async depositAsset(userId: number, assetId: number, dto: any) {
-    await this.assertAssetOwned(userId, assetId);
 
-    const amount = this.parseAmount(dto.amount, 'amount');
-    const fee = this.parseFee(dto.fee);
-    const date = this.parseDate(dto.date);
+/**
+ * DEPOSIT: cash -> investment (entrada a inversión)
+ * - Usuario mete dinero desde una wallet de cash hacia la wallet de inversión.
+ * - La comisión (fee) se paga también desde la wallet de cash.
+ * - En Transaction guardamos el total que salió de cash (amount + fee).
+ * - En InvestmentOperation guardamos:
+ *   - amount = principal (lo invertido)
+ *   - fee = comisión
+ */
+async depositAsset(userId: number, assetId: number, dto: any) {
+  // 1) Seguridad: el asset debe ser del usuario
+  await this.assertAssetOwned(userId, assetId);
 
-    const fromWalletId = this.requireInt(dto.fromWalletId, 'fromWalletId');
-    await this.assertWalletKind(userId, fromWalletId, 'cash');
+  // 2) Parseos/validaciones
+  const amount = this.parseAmount(dto.amount, 'amount'); // principal invertido
+  const fee = this.parseFee(dto.fee);                    // comisión (>= 0)
+  const date = this.parseDate(dto.date);                 // fecha válida
 
-    const invWalletId = await this.getSingleInvestmentWallet(userId);
+  // 3) Origen: wallet de cash (de dónde sale el dinero)
+  const fromWalletId = this.requireInt(dto.fromWalletId, 'fromWalletId');
+  await this.assertWalletKind(userId, fromWalletId, 'cash'); // debe ser wallet tipo cash
 
-    const description = dto.description?.trim() || 'Deposit investment';
+  // 4) Destino: wallet única de inversión (centralizada)
+  const invWalletId = await this.getSingleInvestmentWallet(userId);
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      // fee is paid from cash wallet (total outflow)
-      const totalOutflow = amount + fee;
-      await this.atomicDecrementCashWallet(tx, userId, fromWalletId, totalOutflow);
+  // 5) Descripción por defecto
+  const description = dto.description?.trim() || 'Deposit investment';
 
-      // Transaction amount reflects total cash outflow
-      const createdTx = await tx.transaction.create({
-        data: {
-          userId,
-          type: 'transfer',
-          amount: totalOutflow,
-          description,
-          date,
-          fromWalletId,
-          toWalletId: invWalletId,
-          investmentAssetId: assetId,
-          active: true,
-          source: 'investment',
-        },
-      });
+  // 6) Ejecutamos todo atómico
+  const result = await this.prisma.$transaction(async (tx) => {
+    // fee se paga desde cash: total que sale de cash
+    const totalOutflow = amount + fee;
 
-      const op = await tx.investmentOperation.create({
-        data: {
-          userId,
-          assetId,
-          type: 'transfer_in' as any,
-          date,
-          amount, // principal
-          fee,
-          transactionId: createdTx.id,
-          active: true,
-        },
-      });
+    // 6.1) Actualizamos balance de cash de forma atómica (decrement)
+    await this.atomicDecrementCashWallet(tx, userId, fromWalletId, totalOutflow);
 
-      return { transaction: createdTx, operation: op };
-    });
-
-    await this.recalcInvestmentWalletBalance(userId);
-    return result;
-  }
-
-  // Withdraw: investment -> cash (outflow)
-  // Here we assume dto.amount is NET cash received by user.
-  async withdrawAsset(userId: number, assetId: number, dto: any) {
-    await this.assertAssetOwned(userId, assetId);
-
-    const amountNet = this.parseAmount(dto.amount, 'amount');
-    const fee = this.parseFee(dto.fee); // informational unless you also model gross
-    const date = this.parseDate(dto.date);
-
-    const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
-    await this.assertWalletKind(userId, toWalletId, 'cash');
-    const invWalletId = await this.getSingleInvestmentWallet(userId);
-
-    const description = dto.description?.trim() || 'Withdraw investment';
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const createdTx = await tx.transaction.create({
-        data: {
-          userId,
-          type: 'transfer',
-          amount: amountNet,
-          description,
-          date,
-          fromWalletId: invWalletId,
-          toWalletId,
-          investmentAssetId: assetId,
-          active: true,
-          source: 'investment',
-        },
-      });
-
-      const op = await tx.investmentOperation.create({
-        data: {
-          userId,
-          assetId,
-          type: 'transfer_out' as any,
-          date,
-          amount: amountNet, // store net cash
-          fee,               // informational unless you model gross
-          transactionId: createdTx.id,
-          active: true,
-        },
-      });
-
-      await tx.wallet.update({
-        where: { id: toWalletId },
-        data: { balance: { increment: amountNet } },
-      });
-
-      return { transaction: createdTx, operation: op };
-    });
-
-    await this.recalcInvestmentWalletBalance(userId);
-    return result;
-  }
-
-  // BUY: cash -> investment (inflow)
-  async buyAsset(userId: number, assetId: number, dto: any) {
-    await this.assertAssetOwned(userId, assetId);
-
-    const amount = this.parseAmount(dto.amount, 'amount');
-    const fee = this.parseFee(dto.fee);
-    const date = this.parseDate(dto.date);
-
-    const fromWalletId = this.requireInt(dto.fromWalletId, 'fromWalletId');
-    await this.assertWalletKind(userId, fromWalletId, 'cash');
-    const invWalletId = await this.getSingleInvestmentWallet(userId);
-
-    const description = dto.description?.trim() || 'Buy asset';
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const totalOutflow = amount + fee;
-      await this.atomicDecrementCashWallet(tx, userId, fromWalletId, totalOutflow);
-
-      const createdTx = await tx.transaction.create({
-        data: {
-          userId,
-          type: 'transfer',
-          amount: totalOutflow,
-          description,
-          date,
-          fromWalletId,
-          toWalletId: invWalletId,
-          investmentAssetId: assetId,
-          active: true,
-          source: 'investment',
-        },
-      });
-
-      const op = await tx.investmentOperation.create({
-        data: {
-          userId,
-          assetId,
-          type: 'buy' as any,
-          date,
-          amount,
-          fee,
-          transactionId: createdTx.id,
-          active: true,
-        },
-      });
-
-      return { transaction: createdTx, operation: op };
-    });
-
-    await this.recalcInvestmentWalletBalance(userId);
-    return result;
-  }
-
-  // SELL: investment -> cash (outflow)
-  // We assume dto.amount is NET cash received.
-  async sellAsset(userId: number, assetId: number, dto: any) {
-    await this.assertAssetOwned(userId, assetId);
-
-    const amountNet = this.parseAmount(dto.amount, 'amount');
-    const fee = this.parseFee(dto.fee); // informational unless gross modeled
-    const date = this.parseDate(dto.date);
-
-    const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
-    await this.assertWalletKind(userId, toWalletId, 'cash');
-    const invWalletId = await this.getSingleInvestmentWallet(userId);
-
-    const description = dto.description?.trim() || 'Sell investment';
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const createdTx = await tx.transaction.create({
-        data: {
-          userId,
-          type: 'transfer',
-          amount: amountNet,
-          description,
-          date,
-          fromWalletId: invWalletId,
-          toWalletId,
-          investmentAssetId: assetId,
-          active: true,
-          source: 'investment',
-        },
-      });
-
-      const op = await tx.investmentOperation.create({
-        data: {
-          userId,
-          assetId,
-          type: 'sell' as any,
-          date,
-          amount: amountNet,
-          fee,
-          transactionId: createdTx.id,
-          active: true,
-        },
-      });
-
-      await tx.wallet.update({
-        where: { id: toWalletId },
-        data: { balance: { increment: amountNet } },
-      });
-
-      return { transaction: createdTx, operation: op };
-    });
-
-    await this.recalcInvestmentWalletBalance(userId);
-    return result;
-  }
-
-  // Swap: asset A -> asset B (no wallets)
-  async swapAssets(userId: number, dto: any) {
-    const fromAssetId = this.requireInt(dto.fromAssetId, 'fromAssetId');
-    const toAssetId = this.requireInt(dto.toAssetId, 'toAssetId');
-
-    if (fromAssetId === toAssetId) throw new BadRequestException('fromAssetId and toAssetId must be different');
-
-    await this.assertAssetOwned(userId, fromAssetId);
-    await this.assertAssetOwned(userId, toAssetId);
-
-    const amountOut = this.parseAmount(dto.amountOut, 'amountOut');
-    const amountIn = Number(dto.amountIn ?? dto.amountOut);
-    if (!Number.isFinite(amountIn) || amountIn <= 0) throw new BadRequestException('Invalid amountIn');
-
-    const fee = this.parseFee(dto.fee);
-    const date = this.parseDate(dto.date);
-
-    const swapGroupId =
-      (dto.swapGroupId && String(dto.swapGroupId).trim()) ||
-      `swap_${userId}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const outOp = await tx.investmentOperation.create({
-        data: {
-          userId,
-          assetId: fromAssetId,
-          type: 'swap_out' as any,
-          date,
-          amount: amountOut,
-          fee, // fee assigned to out leg
-          swapGroupId,
-          active: true,
-        },
-      });
-
-      const inOp = await tx.investmentOperation.create({
-        data: {
-          userId,
-          assetId: toAssetId,
-          type: 'swap_in' as any,
-          date,
-          amount: amountIn,
-          fee: 0,
-          swapGroupId,
-          active: true,
-        },
-      });
-
-      return { swapGroupId, outOperation: outOp, inOperation: inOp };
-    });
-
-    await this.recalcInvestmentWalletBalance(userId);
-    return result;
-  }
-
-  async deleteSwap(userId: number, swapGroupId: string) {
-    const sg = (swapGroupId ?? '').trim();
-    if (!sg) throw new BadRequestException('swapGroupId is required');
-
-    const ops = await this.prisma.investmentOperation.findMany({
-      where: {
+    // 6.2) Creamos la transacción "general" (para historial)
+    // - amount = totalOutflow porque es lo que salió de cash realmente
+    const createdTx = await tx.transaction.create({
+      data: {
         userId,
+        type: 'transfer',              // lo modelas como transferencia entre wallets
+        amount: totalOutflow,          // salida total (principal + fee)
+        description,
+        date,
+        fromWalletId,
+        toWalletId: invWalletId,       // entra a la wallet de inversión
+        investmentAssetId: assetId,    // vinculado al asset
         active: true,
-        swapGroupId: sg,
-        type: { in: ['swap_in', 'swap_out'] as any },
+        source: 'investment',          // etiqueta para diferenciar origen
       },
-      select: { id: true },
     });
 
-    if (ops.length === 0) throw new NotFoundException('Swap not found');
-
-    await this.prisma.investmentOperation.updateMany({
-      where: { userId, swapGroupId: sg, type: { in: ['swap_in', 'swap_out'] as any } },
-      data: { active: false },
+    // 6.3) Creamos la operación de inversión (detalle financiero)
+    const op = await tx.investmentOperation.create({
+      data: {
+        userId,
+        assetId,
+        type: 'transfer_in' as any,    // entrada a inversión
+        date,
+        amount,                        // SOLO principal
+        fee,                           // comisión
+        transactionId: createdTx.id,   // enlace con Transaction
+        active: true,
+      },
     });
 
-    await this.recalcInvestmentWalletBalance(userId);
-    return { swapGroupId: sg, deletedCount: ops.length };
+    return { transaction: createdTx, operation: op };
+  });
+
+  // 7) Recalcular la wallet de inversión (para reflejar el valor total)
+  await this.recalcInvestmentWalletBalance(userId);
+  return result;
+}
+
+
+/**
+ * WITHDRAW: investment -> cash (salida desde inversión)
+ * - Usuario retira dinero desde la wallet de inversión hacia una wallet de cash.
+ * - SUPOSICIÓN: dto.amount es NETO (lo que el usuario recibe).
+ * - fee se guarda como informativo (si quieres "bruto", necesitas modelarlo aparte).
+ */
+async withdrawAsset(userId: number, assetId: number, dto: any) {
+  await this.assertAssetOwned(userId, assetId);
+
+  const amountNet = this.parseAmount(dto.amount, 'amount'); // neto recibido
+  const fee = this.parseFee(dto.fee);                       // informativo (si no modelas bruto)
+  const date = this.parseDate(dto.date);
+
+  // Wallet destino: cash
+  const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
+  await this.assertWalletKind(userId, toWalletId, 'cash');
+
+  // Wallet origen: inversión
+  const invWalletId = await this.getSingleInvestmentWallet(userId);
+
+  const description = dto.description?.trim() || 'Withdraw investment';
+
+  const result = await this.prisma.$transaction(async (tx) => {
+    // 1) Creamos Transaction general (transferencia investment -> cash)
+    const createdTx = await tx.transaction.create({
+      data: {
+        userId,
+        type: 'transfer',
+        amount: amountNet,             // aquí guardas lo que realmente llega (neto)
+        description,
+        date,
+        fromWalletId: invWalletId,
+        toWalletId,
+        investmentAssetId: assetId,
+        active: true,
+        source: 'investment',
+      },
+    });
+
+    // 2) Creamos InvestmentOperation específica
+    const op = await tx.investmentOperation.create({
+      data: {
+        userId,
+        assetId,
+        type: 'transfer_out' as any,   // salida de inversión
+        date,
+        amount: amountNet,             // guardas neto
+        fee,                           // informativo
+        transactionId: createdTx.id,
+        active: true,
+      },
+    });
+
+    // 3) Incrementamos el cash wallet porque el usuario recibe dinero
+    await tx.wallet.update({
+      where: { id: toWalletId },
+      data: { balance: { increment: amountNet } },
+    });
+
+    return { transaction: createdTx, operation: op };
+  });
+
+  await this.recalcInvestmentWalletBalance(userId);
+  return result;
+}
+
+
+/**
+ * BUY: cash -> investment (compra de un asset)
+ * - Similar a deposit, pero semánticamente es una "compra".
+ * - Sale cash: amount + fee
+ * - En Transaction registras total outflow
+ * - En InvestmentOperation: tipo buy, amount principal y fee
+ */
+async buyAsset(userId: number, assetId: number, dto: any) {
+  await this.assertAssetOwned(userId, assetId);
+
+  const amount = this.parseAmount(dto.amount, 'amount'); // principal
+  const fee = this.parseFee(dto.fee);
+  const date = this.parseDate(dto.date);
+
+  const fromWalletId = this.requireInt(dto.fromWalletId, 'fromWalletId');
+  await this.assertWalletKind(userId, fromWalletId, 'cash');
+
+  const invWalletId = await this.getSingleInvestmentWallet(userId);
+
+  const description = dto.description?.trim() || 'Buy asset';
+
+  const result = await this.prisma.$transaction(async (tx) => {
+    // Total que sale de cash = principal + comisión
+    const totalOutflow = amount + fee;
+
+    // Decremento atómico de cash
+    await this.atomicDecrementCashWallet(tx, userId, fromWalletId, totalOutflow);
+
+    // Transaction general (transfer cash -> inv)
+    const createdTx = await tx.transaction.create({
+      data: {
+        userId,
+        type: 'transfer',
+        amount: totalOutflow,
+        description,
+        date,
+        fromWalletId,
+        toWalletId: invWalletId,
+        investmentAssetId: assetId,
+        active: true,
+        source: 'investment',
+      },
+    });
+
+    // Operation específica buy
+    const op = await tx.investmentOperation.create({
+      data: {
+        userId,
+        assetId,
+        type: 'buy' as any,
+        date,
+        amount,                      // principal
+        fee,                         // comisión
+        transactionId: createdTx.id,
+        active: true,
+      },
+    });
+
+    return { transaction: createdTx, operation: op };
+  });
+
+  await this.recalcInvestmentWalletBalance(userId);
+  return result;
+}
+
+
+/**
+ * SELL: investment -> cash (venta de un asset)
+ * - SUPOSICIÓN: dto.amount es NETO recibido.
+ * - Crea Transaction transfer investment -> cash con amountNet
+ * - Crea InvestmentOperation tipo sell con amountNet y fee informativo
+ * - Incrementa la wallet de cash
+ */
+async sellAsset(userId: number, assetId: number, dto: any) {
+  await this.assertAssetOwned(userId, assetId);
+
+  const amountNet = this.parseAmount(dto.amount, 'amount');
+  const fee = this.parseFee(dto.fee); // informativo a menos que modeles bruto
+  const date = this.parseDate(dto.date);
+
+  const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
+  await this.assertWalletKind(userId, toWalletId, 'cash');
+
+  const invWalletId = await this.getSingleInvestmentWallet(userId);
+
+  const description = dto.description?.trim() || 'Sell investment';
+
+  const result = await this.prisma.$transaction(async (tx) => {
+    // Transaction general
+    const createdTx = await tx.transaction.create({
+      data: {
+        userId,
+        type: 'transfer',
+        amount: amountNet,
+        description,
+        date,
+        fromWalletId: invWalletId,
+        toWalletId,
+        investmentAssetId: assetId,
+        active: true,
+        source: 'investment',
+      },
+    });
+
+    // Operation específica sell
+    const op = await tx.investmentOperation.create({
+      data: {
+        userId,
+        assetId,
+        type: 'sell' as any,
+        date,
+        amount: amountNet,
+        fee,
+        transactionId: createdTx.id,
+        active: true,
+      },
+    });
+
+    // El usuario recibe cash => incrementamos wallet destino
+    await tx.wallet.update({
+      where: { id: toWalletId },
+      data: { balance: { increment: amountNet } },
+    });
+
+    return { transaction: createdTx, operation: op };
+  });
+
+  await this.recalcInvestmentWalletBalance(userId);
+  return result;
+}
+
+
+/**
+ * SWAP: asset A -> asset B (sin mover wallets)
+ * - Intercambio entre dos assets.
+ * - No se crea Transaction general (porque no hay cash involved).
+ * - Se crean 2 InvestmentOperation:
+ *   - swap_out: sale del asset A
+ *   - swap_in : entra al asset B
+ * - Ambas comparten swapGroupId para vincularlas y poder borrar el swap "como unidad".
+ */
+async swapAssets(userId: number, dto: any) {
+  // 1) IDs de assets
+  const fromAssetId = this.requireInt(dto.fromAssetId, 'fromAssetId');
+  const toAssetId = this.requireInt(dto.toAssetId, 'toAssetId');
+
+  // 2) No tiene sentido swappear el mismo asset
+  if (fromAssetId === toAssetId) {
+    throw new BadRequestException('fromAssetId and toAssetId must be different');
   }
+
+  // 3) Seguridad: ambos assets deben ser del usuario
+  await this.assertAssetOwned(userId, fromAssetId);
+  await this.assertAssetOwned(userId, toAssetId);
+
+  // 4) Cantidades
+  const amountOut = this.parseAmount(dto.amountOut, 'amountOut'); // lo que "sale" del asset A
+
+  // amountIn: si no viene, usamos amountOut (swap 1:1 por defecto)
+  const amountIn = Number(dto.amountIn ?? dto.amountOut);
+  if (!Number.isFinite(amountIn) || amountIn <= 0) {
+    throw new BadRequestException('Invalid amountIn');
+  }
+
+  const fee = this.parseFee(dto.fee);
+  const date = this.parseDate(dto.date);
+
+  // 5) swapGroupId: permite agrupar las dos patas del swap
+  const swapGroupId =
+    (dto.swapGroupId && String(dto.swapGroupId).trim()) ||
+    `swap_${userId}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  const result = await this.prisma.$transaction(async (tx) => {
+    // Pata de salida (asset A)
+    const outOp = await tx.investmentOperation.create({
+      data: {
+        userId,
+        assetId: fromAssetId,
+        type: 'swap_out' as any,
+        date,
+        amount: amountOut,
+        fee,              // asignamos fee al out leg (decisión de modelado)
+        swapGroupId,
+        active: true,
+      },
+    });
+
+    // Pata de entrada (asset B)
+    const inOp = await tx.investmentOperation.create({
+      data: {
+        userId,
+        assetId: toAssetId,
+        type: 'swap_in' as any,
+        date,
+        amount: amountIn,
+        fee: 0,           // fee ya lo imputamos al out leg
+        swapGroupId,
+        active: true,
+      },
+    });
+
+    return { swapGroupId, outOperation: outOp, inOperation: inOp };
+  });
+
+  await this.recalcInvestmentWalletBalance(userId);
+  return result;
+}
+
+
+/**
+ * Eliminar un swap por swapGroupId
+ * - Busca las operaciones swap_in y swap_out activas del grupo
+ * - Si no hay, 404
+ * - Si hay, hace "soft delete" (active: false)
+ * - Recalcula wallet de inversión
+ */
+async deleteSwap(userId: number, swapGroupId: string) {
+  const sg = (swapGroupId ?? '').trim();
+  if (!sg) throw new BadRequestException('swapGroupId is required');
+
+  // 1) Verificamos que exista algo que borrar
+  const ops = await this.prisma.investmentOperation.findMany({
+    where: {
+      userId,
+      active: true,
+      swapGroupId: sg,
+      type: { in: ['swap_in', 'swap_out'] as any },
+    },
+    select: { id: true },
+  });
+
+  if (ops.length === 0) throw new NotFoundException('Swap not found');
+
+  // 2) Soft delete de ambas patas
+  await this.prisma.investmentOperation.updateMany({
+    where: { userId, swapGroupId: sg, type: { in: ['swap_in', 'swap_out'] as any } },
+    data: { active: false },
+  });
+
+  await this.recalcInvestmentWalletBalance(userId);
+  return { swapGroupId: sg, deletedCount: ops.length };
+}
 
   async recalcInvestmentWallet(userId: number) {
     await this.recalcInvestmentWalletBalance(userId);
