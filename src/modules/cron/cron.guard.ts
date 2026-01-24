@@ -5,7 +5,8 @@ import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from
 export class CronGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
-    const secret = req.headers['x-cron-secret'];
+
+    const secret = req.get('x-cron-secret'); // ← CLAVE
 
     if (!secret || secret !== process.env.CRON_SECRET) {
       throw new UnauthorizedException('Invalid cron secret');
