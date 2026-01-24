@@ -16,8 +16,10 @@ import { CronGuard } from './cron.guard';
 import { InvestmentsService } from '../investments/investments.service';
 import { CronService } from './cron.service';
 import {  UpsertValuationBatchDto } from './dto/valuations.dto';
+import { Public } from 'src/common/decorators/public.decorator';
 
 @Controller('cron')
+@Public()
 export class CronController {
   constructor(private readonly cronService: CronService) {}
 
