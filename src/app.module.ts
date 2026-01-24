@@ -16,9 +16,10 @@ import { InvestmentsModule } from './modules/investments/investments.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AllocationPlanModule } from './modules/monthly-allocations/monthly-allocations.module';
 import { HealthModule } from './modules/health/health.module';
+import { CronModule } from './modules/cron/cron.module';
 
 @Module({
-  imports: [PrismaModule, HealthModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule  ,DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
+  imports: [PrismaModule,CronModule, HealthModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule  ,DebtsModule, AuthModule, WalletsModule, BudgetsModule, 
     DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
     ScheduleModule.forRoot()],
 })
