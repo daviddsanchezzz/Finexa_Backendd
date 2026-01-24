@@ -756,6 +756,8 @@ model InvestmentAsset {
   type      InvestmentAssetType @default(custom)
   riskType  InvestmentRiskType?
   currency  String              @default("EUR")
+  quantity  Decimal             @default(0)
+  identificator String?
 
   initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
   operations InvestmentOperation[]
@@ -779,8 +781,13 @@ model InvestmentValuationSnapshot {
   asset     InvestmentAsset @relation(fields: [assetId], references: [id])
 
   date      DateTime   // fin de mes
-  value     Float
+  value     Decimal
   currency  String     @default("EUR")
+
+  unitPrice Decimal?
+  quantity Decimal?
+  
+  source String  @default("Manual")
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt

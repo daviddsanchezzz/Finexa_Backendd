@@ -49,6 +49,48 @@ function parseNullableDate(v?: string | Date | null) {
   return d;
 }
 
+type ContinentKey =
+  | "europe"
+  | "africa"
+  | "asia"
+  | "north_america"
+  | "south_america"
+  | "oceania"
+  | "antarctica"
+  | "unknown";
+
+const CONTINENTS_ORDER: ContinentKey[] = [
+  "europe",
+  "africa",
+  "asia",
+  "north_america",
+  "south_america",
+  "oceania",
+  "antarctica",
+  "unknown",
+];
+
+/**
+ * ⚠️ Pon aquí tus totales “países por continente”.
+ * Si quieres precisión absoluta, usa la opción 2 con tabla Country.
+ */
+const TOTAL_COUNTRIES_BY_CONTINENT: Record<ContinentKey, number> = {
+  europe: 45,
+  africa: 54,
+  asia: 47,
+  north_america: 23,
+  south_america: 12,
+  oceania: 14,
+  antarctica: 0,
+  unknown: 0,
+};
+
+function safePct(num: number, den: number) {
+  if (!den || den <= 0) return 0;
+  return Math.round((num / den) * 100);
+}
+
+
 @Injectable()
 export class TripsService {
   constructor(private prisma: PrismaService, private aerodatabox: AerodataboxService) {}
@@ -881,6 +923,61 @@ async toggleTripTaskStatus(tripId: number, taskId: number) {
     where: { id: taskId },
     data: { status: next },
   });
+}
+
+
+
+async getContinentsStats(userId: number) {
+  // 1) Trae los trips vistos con country + continent
+  const seen = await this.prisma.trip.findMany({
+    where: {
+      userId,
+      status: "seen" as any,
+      destination: { not: null },
+    },
+    select: {
+      destination: true,
+      continent: true,
+    },
+  });
+
+  // 2) Agrupa en Sets (únicos) por continente
+  const visitedSets = new Map<ContinentKey, Set<string>>();
+  const tripsCount = new Map<ContinentKey, number>();
+
+  const bump = (k: ContinentKey) => tripsCount.set(k, (tripsCount.get(k) ?? 0) + 1);
+
+  for (const t of seen) {
+    const rawC = (t.continent || "").toString().toLowerCase().trim();
+    const key: ContinentKey = (CONTINENTS_ORDER.includes(rawC as any) ? rawC : "unknown") as ContinentKey;
+
+    const code = (t.destination || "").trim().toUpperCase();
+    if (!code) continue;
+
+    if (!visitedSets.has(key)) visitedSets.set(key, new Set());
+    visitedSets.get(key)!.add(code);
+
+    bump(key);
+  }
+
+  // 3) Devuelve en formato listo para el front: visited/total + pct + trips
+  const rows = CONTINENTS_ORDER.map((continent) => {
+    const visited = visitedSets.get(continent)?.size ?? 0;
+    const total = TOTAL_COUNTRIES_BY_CONTINENT[continent] ?? 0;
+
+    return {
+      continent,                // "europe"
+      visitedCountries: visited, // 31
+      totalCountries: total,     // 52
+      pct: safePct(visited, total), // 67
+      trips: tripsCount.get(continent) ?? 0, // opcional: nº de viajes vistos
+    };
+  });
+
+  // si quieres ordenar de más a menos por % o por visited:
+  // rows.sort((a,b)=> b.visitedCountries - a.visitedCountries);
+
+  return rows;
 }
 
 

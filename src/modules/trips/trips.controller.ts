@@ -35,6 +35,12 @@ export class TripsController {
     return this.tripsService.getSummary(userId);
   }
 
+  @Get("continents-stats")
+getContinentsStats(@User("id") userId: number) {
+  return this.tripsService.getContinentsStats(userId);
+}
+
+
   @Get()
   getTrips(@User("id") userId: number) {
     return this.tripsService.getTrips(userId);

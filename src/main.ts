@@ -13,12 +13,7 @@ async function bootstrap() {
 
   // ✅ Habilitar CORS
   app.enableCors({
-    origin: [
-      'http://localhost:8081', // Expo web
-      'http://localhost:19006', // Expo dev
-      'http://192.168.68.53:8081', // acceso LAN desde móvil
-      'https://finexa-david.netlify.app', // 🌐 tu web en producción
-    ],
+    origin: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], // 👈 añade PUT aquí
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
