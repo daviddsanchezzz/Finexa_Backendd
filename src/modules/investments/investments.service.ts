@@ -9,6 +9,8 @@ import { CreateInvestmentAssetDto } from './dto/create-investment-asset.dto';
 import { UpdateInvestmentAssetDto } from './dto/update-investment-asset.dto';
 import { CreateInvestmentValuationDto } from './dto/create-valuation.dto';
 import { UpdateInvestmentValuationDto } from './dto/update-valuation.dto';
+import { Prisma, PrismaClient } from '@prisma/client';
+type Tx = Prisma.TransactionClient;
 
 /**
  * IMPORTANT (schema alignment)
@@ -74,7 +76,7 @@ export class InvestmentsService {
     return c || fallback;
   }
 
-  private async assertAssetOwned(userId: number, assetId: number) {
+  public async assertAssetOwned(userId: number, assetId: number) {
     if (!Number.isInteger(assetId)) throw new BadRequestException('Invalid assetId');
 
     const asset = await this.prisma.investmentAsset.findFirst({
@@ -238,7 +240,7 @@ export class InvestmentsService {
    * Recalculates investment wallet balance = sum(last valuation per asset), fallback to "book value".
    * Book value includes swaps to preserve allocation after swaps.
    */
-  private async recalcInvestmentWalletBalance(userId: number) {
+  public async recalcInvestmentWalletBalance(userId: number) {
     const investmentWalletId = await this.getSingleInvestmentWallet(userId);
 
     const assets = await this.prisma.investmentAsset.findMany({
@@ -408,27 +410,72 @@ export class InvestmentsService {
   // =============================
   // Valuations (Snapshots)
   // =============================
-  async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
-    await this.assertAssetOwned(userId, dto.assetId);
+async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
+  await this.assertAssetOwned(userId, dto.assetId);
 
-    const rawDate = new Date(dto.date);
-    if (Number.isNaN(rawDate.getTime())) throw new BadRequestException('Invalid date');
-    const date = this.startOfUtcDay(rawDate); // normalize day to avoid duplicates by time
+  const rawDate = new Date(dto.date);
+  if (Number.isNaN(rawDate.getTime())) throw new BadRequestException('Invalid date');
+  const date = this.startOfUtcDay(rawDate);
 
-    const value = this.parseNonNegative(dto.value, 'value');
-    const currency = this.normalizeCurrency(dto.currency, 'EUR');
+  const valueNumber = this.parseNonNegative(dto.value, 'value');
 
-    const valuation = await this.prisma.investmentValuationSnapshot.upsert({
-      where: {
-        userId_assetId_date: { userId, assetId: dto.assetId, date },
-      },
-      update: { value, currency, active: true },
-      create: { userId, assetId: dto.assetId, date, value, currency, active: true },
+  const value = new Prisma.Decimal(valueNumber); // ✅ conversión aquí
+  const currency = this.normalizeCurrency(dto.currency, 'EUR');
+
+  const valuation = await this.prisma.$transaction(async (tx) => {
+    const v = await this.upsertValuationSnapshotTx(tx, userId, {
+      assetId: dto.assetId,
+      date,
+      value,
+      currency,
+      // unitPrice/quantity si aplica en createValuation
     });
+    return v;
+  });
 
-    await this.recalcInvestmentWalletBalance(userId);
-    return valuation;
-  }
+  await this.recalcInvestmentWalletBalance(userId);
+  return valuation;
+}
+
+  public async upsertValuationSnapshotTx(
+  tx: Tx,
+  userId: number,
+  dto: {
+    assetId: number;
+    date: Date;
+    value: Prisma.Decimal;
+    currency: string;
+    unitPrice?: Prisma.Decimal | null;
+    quantity?: Prisma.Decimal | null;
+    source?: string | null;
+  },
+) {
+  return tx.investmentValuationSnapshot.upsert({
+    where: {
+      userId_assetId_date: { userId, assetId: dto.assetId, date: dto.date },
+    },
+    update: {
+      value: dto.value,
+      currency: dto.currency,
+      unitPrice: dto.unitPrice ?? null,
+      quantity: dto.quantity ?? null,
+      source: dto.source ?? 'cron',
+      active: true,
+    },
+    create: {
+      userId,
+      assetId: dto.assetId,
+      date: dto.date,
+      value: dto.value,
+      currency: dto.currency,
+      unitPrice: dto.unitPrice ?? null,
+      quantity: dto.quantity ?? null,
+      source: dto.source ?? 'cron',
+      active: true,
+    },
+  });
+}
+
 
   async listValuations(userId: number, assetId?: number) {
     if (assetId !== undefined) {
