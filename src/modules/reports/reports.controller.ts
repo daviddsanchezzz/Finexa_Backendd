@@ -3,9 +3,7 @@ import { Controller, Get, Header, Query, StreamableFile } from '@nestjs/common';
 import { User } from 'src/common/decorators/user.decorator';
 import { ReportsService } from './reports.service';
 import { PdfService } from './pdf.service';
-import { monthlyReportHtml } from './templates/monthly-report';
-import { yearlyReportHtml } from './templates/yearly-report';
-import { toMonthlyTemplateParams, toYearlyTemplateParams } from './reports.presenter';
+import { toMonthlyTemplateParams, toYearlyParams, toYearlyTemplateParams } from './reports.presenter';
 
 @Controller('reports')
 export class ReportsController {
@@ -27,8 +25,8 @@ export class ReportsController {
       walletId: walletId ? Number(walletId) : undefined,
     });
 
-    const html = monthlyReportHtml(toMonthlyTemplateParams(report, currency || 'EUR'));
-    const pdfBuffer = await this.pdfService.htmlToPdfBuffer(html);
+const params = toMonthlyTemplateParams(report, currency || "EUR");
+const pdfBuffer = await this.pdfService.monthlyPdfBuffer(params);
 
     // Para que el navegador lo “descargue” con nombre (opcional)
     // Si lo quieres inline en webview, cambia attachment -> inline
@@ -51,8 +49,8 @@ export class ReportsController {
       walletId: walletId ? Number(walletId) : undefined,
     });
 
-    const html = yearlyReportHtml(toYearlyTemplateParams(report, currency || 'EUR'));
-    const pdfBuffer = await this.pdfService.htmlToPdfBuffer(html);
+const params = toYearlyParams(report, currency || "EUR");
+const pdfBuffer = await this.pdfService.yearlyPdfBuffer(params);
 
     return new StreamableFile(pdfBuffer, {
       type: 'application/pdf',

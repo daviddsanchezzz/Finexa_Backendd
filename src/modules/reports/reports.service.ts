@@ -1,27 +1,28 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { PrismaService } from 'src/common/prisma/prisma.service';
+// src/reports/reports.service.ts
+import { BadRequestException, Injectable } from "@nestjs/common";
+import { PrismaService } from "src/common/prisma/prisma.service";
 
 function monthRange(month: string) {
   const m = month?.trim();
-  if (!/^\d{4}-\d{2}$/.test(m)) throw new BadRequestException('month debe ser YYYY-MM');
-  const [y, mm] = m.split('-').map(Number);
+  if (!/^\d{4}-\d{2}$/.test(m)) throw new BadRequestException("month debe ser YYYY-MM");
+  const [y, mm] = m.split("-").map(Number);
   const start = new Date(Date.UTC(y, mm - 1, 1, 0, 0, 0));
   const end = new Date(Date.UTC(y, mm, 1, 0, 0, 0));
   return { start, end };
 }
 
 function prevMonth(month: string) {
-  const [y, mm] = month.split('-').map(Number);
+  const [y, mm] = month.split("-").map(Number);
   const d = new Date(Date.UTC(y, mm - 1, 1));
   d.setUTCMonth(d.getUTCMonth() - 1);
   const y2 = d.getUTCFullYear();
-  const m2 = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const m2 = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${y2}-${m2}`;
 }
 
 function yearRange(year: string) {
   const y = year?.trim();
-  if (!/^\d{4}$/.test(y)) throw new BadRequestException('year debe ser YYYY');
+  if (!/^\d{4}$/.test(y)) throw new BadRequestException("year debe ser YYYY");
   const Y = Number(y);
   const start = new Date(Date.UTC(Y, 0, 1, 0, 0, 0));
   const end = new Date(Date.UTC(Y + 1, 0, 1, 0, 0, 0));
@@ -33,10 +34,172 @@ function prevYear(year: string) {
   return String(Y - 1);
 }
 
+type CategoryAmount = {
+  categoryId: number;
+  name: string;
+  amount: number;
+  emoji: string | null;
+  color: string | null;
+};
+
+type SubcategoryAmount = {
+  subcategoryId: number;
+  categoryId: number | null; // para poder agrupar por categoría
+  name: string;
+  amount: number;
+  emoji: string | null;
+  color: string | null;
+};
+
+// Formato “opción 2”: categoría + subcategorías
+type CategoryWithSubs = {
+  categoryId: number;
+  name: string;
+  emoji: string | null;
+  color: string | null;
+  amount: number; // total de la categoría (en el periodo)
+  subcategories: Array<{
+    subcategoryId: number;
+    name: string;
+    amount: number;
+    emoji: string | null;
+    color: string | null;
+  }>;
+};
+
 @Injectable()
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
 
+  private delta(cur: number, prev: number) {
+    return {
+      value: cur - prev,
+      pct: prev !== 0 ? (cur - prev) / prev : null,
+    };
+  }
+
+  // -----------------------------
+  // Category helpers
+  // -----------------------------
+  private async getCategoriesMap(categoryIds: number[]) {
+    const ids = Array.from(new Set(categoryIds)).filter(Boolean) as number[];
+    if (ids.length === 0) return new Map<number, { name: string; emoji: string | null; color: string | null }>();
+
+    const categories = await this.prisma.category.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, emoji: true, color: true },
+    });
+
+    return new Map(categories.map((c) => [c.id, { name: c.name, emoji: c.emoji ?? null, color: c.color ?? null }]));
+  }
+
+  private mapGroupByToNamed(
+    rows: Array<{ categoryId: number | null; _sum: { amount: any } }>,
+    catMap: Map<number, { name: string; emoji: string | null; color: string | null }>,
+  ): CategoryAmount[] {
+    return rows
+      .filter((r) => r.categoryId != null)
+      .map((r) => {
+        const id = r.categoryId as number;
+        const amount = Number(r._sum.amount || 0);
+        const meta = catMap.get(id);
+
+        return {
+          categoryId: id,
+          name: meta?.name ?? "Sin nombre",
+          emoji: meta?.emoji ?? null,
+          color: meta?.color ?? null,
+          amount,
+        };
+      })
+      .filter((x) => x.amount !== 0);
+  }
+
+  // -----------------------------
+  // Subcategory helpers
+  // -----------------------------
+  private async getSubcategoriesMap(subcategoryIds: number[]) {
+    const ids = Array.from(new Set(subcategoryIds)).filter(Boolean) as number[];
+    if (ids.length === 0)
+      return new Map<number, { name: string; categoryId: number | null; emoji: string | null; color: string | null }>();
+
+    // Ajusta el modelo/fields si tu Prisma usa otro nombre
+    const subs = await this.prisma.subcategory.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, categoryId: true, emoji: true, color: true },
+    });
+
+    return new Map(
+      subs.map((s) => [
+        s.id,
+        { name: s.name, categoryId: s.categoryId ?? null, emoji: s.emoji ?? null, color: s.color ?? null },
+      ]),
+    );
+  }
+
+  private mapGroupBySubToNamed(
+    rows: Array<{ subcategoryId: number | null; _sum: { amount: any } }>,
+    subMap: Map<number, { name: string; categoryId: number | null; emoji: string | null; color: string | null }>,
+  ): SubcategoryAmount[] {
+    return rows
+      .filter((r) => r.subcategoryId != null)
+      .map((r) => {
+        const id = r.subcategoryId as number;
+        const amount = Number(r._sum.amount || 0);
+        const meta = subMap.get(id);
+
+        return {
+          subcategoryId: id,
+          categoryId: meta?.categoryId ?? null,
+          name: meta?.name ?? "Sin nombre",
+          emoji: meta?.emoji ?? null,
+          color: meta?.color ?? null,
+          amount,
+        };
+      })
+      .filter((x) => x.amount !== 0);
+  }
+
+  private buildCategoriesWithSubcategories(
+    categories: CategoryAmount[],
+    subcategories: SubcategoryAmount[],
+  ): CategoryWithSubs[] {
+    const subsByCat = new Map<number, SubcategoryAmount[]>();
+    for (const s of subcategories) {
+      if (!s.categoryId) continue;
+      const arr = subsByCat.get(s.categoryId) || [];
+      arr.push(s);
+      subsByCat.set(s.categoryId, arr);
+    }
+
+    return categories
+      .map((c) => {
+        const subs = (subsByCat.get(c.categoryId) || [])
+          .slice()
+          .sort((a, b) => b.amount - a.amount)
+          .map((s) => ({
+            subcategoryId: s.subcategoryId,
+            name: s.name,
+            amount: s.amount,
+            emoji: s.emoji,
+            color: s.color,
+          }));
+
+        return {
+          categoryId: c.categoryId,
+          name: c.name,
+          emoji: c.emoji,
+          color: c.color,
+          amount: c.amount,
+          subcategories: subs,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+  }
+
+  // ======================================================================
+  // MONTHLY
+  // ======================================================================
   async getMonthlyReport(userId: number, opts: { month: string; walletId?: number }) {
     const { start, end } = monthRange(opts.month);
     const prev = prevMonth(opts.month);
@@ -45,7 +208,7 @@ export class ReportsService {
     const baseWhere: any = {
       userId,
       active: true,
-      excludeFromStats: false, // si no existe, quita esta línea
+      excludeFromStats: false, // si no existe en tu schema, quita esta línea
       date: { gte: start, lt: end },
     };
     if (opts.walletId) baseWhere.walletId = opts.walletId;
@@ -58,13 +221,14 @@ export class ReportsService {
     };
     if (opts.walletId) prevWhere.walletId = opts.walletId;
 
+    // Totales periodo actual
     const [incomeAgg, expenseAgg] = await Promise.all([
       this.prisma.transaction.aggregate({
-        where: { ...baseWhere, type: 'income' },
+        where: { ...baseWhere, type: "income" },
         _sum: { amount: true },
       }),
       this.prisma.transaction.aggregate({
-        where: { ...baseWhere, type: 'expense' },
+        where: { ...baseWhere, type: "expense" },
         _sum: { amount: true },
       }),
     ]);
@@ -74,13 +238,14 @@ export class ReportsService {
     const savings = income - expense;
     const savingsRate = income > 0 ? savings / income : 0;
 
+    // Totales periodo anterior
     const [pIncomeAgg, pExpenseAgg] = await Promise.all([
       this.prisma.transaction.aggregate({
-        where: { ...prevWhere, type: 'income' },
+        where: { ...prevWhere, type: "income" },
         _sum: { amount: true },
       }),
       this.prisma.transaction.aggregate({
-        where: { ...prevWhere, type: 'expense' },
+        where: { ...prevWhere, type: "expense" },
         _sum: { amount: true },
       }),
     ]);
@@ -89,38 +254,77 @@ export class ReportsService {
     const pExpense = Number(pExpenseAgg._sum.amount || 0);
     const pSavings = pIncome - pExpense;
 
-    const delta = (cur: number, prev: number) => ({
-      value: cur - prev,
-      pct: prev !== 0 ? (cur - prev) / prev : null,
-    });
+    // -----------------------------
+    // Breakdown por categoría
+    // -----------------------------
+    const [expenseByCategory, incomeByCategory] = await Promise.all([
+      this.prisma.transaction.groupBy({
+        by: ["categoryId"],
+        where: { ...baseWhere, type: "expense", categoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+      this.prisma.transaction.groupBy({
+        by: ["categoryId"],
+        where: { ...baseWhere, type: "income", categoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+    ]);
 
-    const topByCategory = await this.prisma.transaction.groupBy({
-      by: ['categoryId'],
-      where: { ...baseWhere, type: 'expense', categoryId: { not: null } },
-      _sum: { amount: true },
-      orderBy: { _sum: { amount: 'desc' } },
-      take: 5,
-    });
+    const allCategoryIds = [
+      ...expenseByCategory.map((x) => x.categoryId).filter(Boolean),
+      ...incomeByCategory.map((x) => x.categoryId).filter(Boolean),
+    ] as number[];
 
-    const categoryIds = topByCategory.map((x) => x.categoryId).filter(Boolean) as number[];
-    const categories = categoryIds.length
-      ? await this.prisma.category.findMany({
-          where: { id: { in: categoryIds } },
-          select: { id: true, name: true },
-        })
-      : [];
-    const catName = new Map(categories.map((c) => [c.id, c.name]));
+    const catMap = await this.getCategoriesMap(allCategoryIds);
 
-    const topCategories = topByCategory.map((x) => ({
-      categoryId: x.categoryId,
-      name: x.categoryId ? catName.get(x.categoryId) ?? 'Sin nombre' : 'Sin categoría',
-      amount: Number(x._sum.amount || 0),
-    }));
+    const expenseCategories = this.mapGroupByToNamed(expenseByCategory as any, catMap);
+    const incomeCategories = this.mapGroupByToNamed(incomeByCategory as any, catMap);
 
+    const topCategories = expenseCategories.slice(0, 5);
+
+    // -----------------------------
+    // Breakdown por subcategoría (NUEVO)
+    // -----------------------------
+    const [expenseBySub, incomeBySub] = await Promise.all([
+      this.prisma.transaction.groupBy({
+        by: ["subcategoryId"],
+        where: { ...baseWhere, type: "expense", subcategoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+      this.prisma.transaction.groupBy({
+        by: ["subcategoryId"],
+        where: { ...baseWhere, type: "income", subcategoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+    ]);
+
+    const allSubIds = [
+      ...expenseBySub.map((x) => x.subcategoryId).filter(Boolean),
+      ...incomeBySub.map((x) => x.subcategoryId).filter(Boolean),
+    ] as number[];
+
+    const subMap = await this.getSubcategoriesMap(allSubIds);
+
+    const expenseSubcategories = this.mapGroupBySubToNamed(expenseBySub as any, subMap);
+    const incomeSubcategories = this.mapGroupBySubToNamed(incomeBySub as any, subMap);
+
+    // Opción 2 (recomendada): categoría + subcategorías
+    const categoriesWithSubcategories = {
+      expense: this.buildCategoriesWithSubcategories(expenseCategories, expenseSubcategories),
+      income: this.buildCategoriesWithSubcategories(incomeCategories, incomeSubcategories),
+    };
+
+    // -----------------------------
+    // Serie gasto diario
+    // -----------------------------
     const monthExpenses = await this.prisma.transaction.findMany({
-      where: { ...baseWhere, type: 'expense' },
+      where: { ...baseWhere, type: "expense" },
       select: { amount: true, date: true },
-      orderBy: { date: 'asc' },
+      orderBy: { date: "asc" },
     });
 
     const byDay = new Map<string, number>();
@@ -135,22 +339,43 @@ export class ReportsService {
       .map(([date, amount]) => ({ date, amount }));
 
     return {
-      period: { type: 'monthly', month: opts.month },
+      period: { type: "monthly", month: opts.month },
       walletId: opts.walletId ?? null,
+
       totals: { income, expense, savings, savingsRate },
+
       trends: {
         vsPreviousMonth: {
-          income: delta(income, pIncome),
-          expense: delta(expense, pExpense),
-          savings: delta(savings, pSavings),
+          income: this.delta(income, pIncome),
+          expense: this.delta(expense, pExpense),
+          savings: this.delta(savings, pSavings),
         },
         previousMonth: { month: prev, income: pIncome, expense: pExpense, savings: pSavings },
       },
+
       topCategories,
+
+      categoriesBreakdown: {
+        expense: expenseCategories,
+        income: incomeCategories,
+      },
+
+      // NUEVO: breakdown subcategorías (flat)
+      subcategoriesBreakdown: {
+        expense: expenseSubcategories,
+        income: incomeSubcategories,
+      },
+
+      // NUEVO: opción 2 (pro): categorías + subcategorías
+      categoriesWithSubcategories,
+
       series: { dailyExpense },
     };
   }
 
+  // ======================================================================
+  // YEARLY
+  // ======================================================================
   async getYearlyReport(userId: number, opts: { year: string; walletId?: number }) {
     const { start, end } = yearRange(opts.year);
     const prev = prevYear(opts.year);
@@ -175,11 +400,11 @@ export class ReportsService {
     // Totales del año
     const [incomeAgg, expenseAgg] = await Promise.all([
       this.prisma.transaction.aggregate({
-        where: { ...baseWhere, type: 'income' },
+        where: { ...baseWhere, type: "income" },
         _sum: { amount: true },
       }),
       this.prisma.transaction.aggregate({
-        where: { ...baseWhere, type: 'expense' },
+        where: { ...baseWhere, type: "expense" },
         _sum: { amount: true },
       }),
     ]);
@@ -192,28 +417,24 @@ export class ReportsService {
     // Totales año anterior
     const [pIncomeAgg, pExpenseAgg] = await Promise.all([
       this.prisma.transaction.aggregate({
-        where: { ...prevWhere, type: 'income' },
+        where: { ...prevWhere, type: "income" },
         _sum: { amount: true },
       }),
       this.prisma.transaction.aggregate({
-        where: { ...prevWhere, type: 'expense' },
+        where: { ...prevWhere, type: "expense" },
         _sum: { amount: true },
       }),
     ]);
+
     const pIncome = Number(pIncomeAgg._sum.amount || 0);
     const pExpense = Number(pExpenseAgg._sum.amount || 0);
     const pSavings = pIncome - pExpense;
 
-    const delta = (cur: number, prev: number) => ({
-      value: cur - prev,
-      pct: prev !== 0 ? (cur - prev) / prev : null,
-    });
-
     // Serie mensual (ingresos/gastos/ahorro por mes)
     const yearTx = await this.prisma.transaction.findMany({
-      where: { ...baseWhere, type: { in: ['income', 'expense'] } },
+      where: { ...baseWhere, type: { in: ["income", "expense"] } },
       select: { amount: true, date: true, type: true },
-      orderBy: { date: 'asc' },
+      orderBy: { date: "asc" },
     });
 
     const byMonth = new Map<string, { income: number; expense: number }>();
@@ -221,57 +442,113 @@ export class ReportsService {
       const d = new Date(t.date);
       const key = d.toISOString().slice(0, 7); // YYYY-MM
       const cur = byMonth.get(key) || { income: 0, expense: 0 };
-      if (t.type === 'income') cur.income += Number(t.amount);
+      if (t.type === "income") cur.income += Number(t.amount);
       else cur.expense += Number(t.amount);
       byMonth.set(key, cur);
     }
 
-    // Asegura que salgan los 12 meses aunque no haya tx
     const months: string[] = [];
-    for (let m = 1; m <= 12; m++) months.push(`${opts.year}-${String(m).padStart(2, '0')}`);
+    for (let m = 1; m <= 12; m++) months.push(`${opts.year}-${String(m).padStart(2, "0")}`);
 
     const monthly = months.map((m) => {
       const v = byMonth.get(m) || { income: 0, expense: 0 };
       return { month: m, income: v.income, expense: v.expense, savings: v.income - v.expense };
     });
 
-    // Top categorías del año (gasto)
-    const topByCategory = await this.prisma.transaction.groupBy({
-      by: ['categoryId'],
-      where: { ...baseWhere, type: 'expense', categoryId: { not: null } },
-      _sum: { amount: true },
-      orderBy: { _sum: { amount: 'desc' } },
-      take: 8,
-    });
+    // -----------------------------
+    // Breakdown por categoría
+    // -----------------------------
+    const [expenseByCategory, incomeByCategory] = await Promise.all([
+      this.prisma.transaction.groupBy({
+        by: ["categoryId"],
+        where: { ...baseWhere, type: "expense", categoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+      this.prisma.transaction.groupBy({
+        by: ["categoryId"],
+        where: { ...baseWhere, type: "income", categoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+    ]);
 
-    const categoryIds = topByCategory.map((x) => x.categoryId).filter(Boolean) as number[];
-    const categories = categoryIds.length
-      ? await this.prisma.category.findMany({
-          where: { id: { in: categoryIds } },
-          select: { id: true, name: true },
-        })
-      : [];
-    const catName = new Map(categories.map((c) => [c.id, c.name]));
+    const allCategoryIds = [
+      ...expenseByCategory.map((x) => x.categoryId).filter(Boolean),
+      ...incomeByCategory.map((x) => x.categoryId).filter(Boolean),
+    ] as number[];
 
-    const topCategories = topByCategory.map((x) => ({
-      categoryId: x.categoryId,
-      name: x.categoryId ? catName.get(x.categoryId) ?? 'Sin nombre' : 'Sin categoría',
-      amount: Number(x._sum.amount || 0),
-    }));
+    const catMap = await this.getCategoriesMap(allCategoryIds);
+
+    const expenseCategories = this.mapGroupByToNamed(expenseByCategory as any, catMap);
+    const incomeCategories = this.mapGroupByToNamed(incomeByCategory as any, catMap);
+
+    const topCategories = expenseCategories.slice(0, 8);
+
+    // -----------------------------
+    // Breakdown por subcategoría (NUEVO)
+    // -----------------------------
+    const [expenseBySub, incomeBySub] = await Promise.all([
+      this.prisma.transaction.groupBy({
+        by: ["subcategoryId"],
+        where: { ...baseWhere, type: "expense", subcategoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+      this.prisma.transaction.groupBy({
+        by: ["subcategoryId"],
+        where: { ...baseWhere, type: "income", subcategoryId: { not: null } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+      }),
+    ]);
+
+    const allSubIds = [
+      ...expenseBySub.map((x) => x.subcategoryId).filter(Boolean),
+      ...incomeBySub.map((x) => x.subcategoryId).filter(Boolean),
+    ] as number[];
+
+    const subMap = await this.getSubcategoriesMap(allSubIds);
+
+    const expenseSubcategories = this.mapGroupBySubToNamed(expenseBySub as any, subMap);
+    const incomeSubcategories = this.mapGroupBySubToNamed(incomeBySub as any, subMap);
+
+    const categoriesWithSubcategories = {
+      expense: this.buildCategoriesWithSubcategories(expenseCategories, expenseSubcategories),
+      income: this.buildCategoriesWithSubcategories(incomeCategories, incomeSubcategories),
+    };
 
     return {
-      period: { type: 'yearly', year: opts.year },
+      period: { type: "yearly", year: opts.year },
       walletId: opts.walletId ?? null,
+
       totals: { income, expense, savings, savingsRate },
+
       trends: {
         vsPreviousYear: {
-          income: delta(income, pIncome),
-          expense: delta(expense, pExpense),
-          savings: delta(savings, pSavings),
+          income: this.delta(income, pIncome),
+          expense: this.delta(expense, pExpense),
+          savings: this.delta(savings, pSavings),
         },
         previousYear: { year: prev, income: pIncome, expense: pExpense, savings: pSavings },
       },
+
       topCategories,
+
+      categoriesBreakdown: {
+        expense: expenseCategories,
+        income: incomeCategories,
+      },
+
+      // NUEVO
+      subcategoriesBreakdown: {
+        expense: expenseSubcategories,
+        income: incomeSubcategories,
+      },
+
+      // NUEVO (opción 2 pro)
+      categoriesWithSubcategories,
+
       series: { monthly },
     };
   }
