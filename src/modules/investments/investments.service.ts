@@ -1316,183 +1316,121 @@ private nextMonthStartUTC(y: number, m1to12: number) {
   return new Date(Date.UTC(y, m1to12, 1, 0, 0, 0, 0));
 }
 
-private normalizeToMonthStartUTC(d: Date) {
-  const y = d.getUTCFullYear();
-  const m1 = d.getUTCMonth() + 1;
-  return this.startOfMonthUTC(y, m1);
-}
 
 // =============================
 // Portfolio monthly snapshots (editable) — at month start boundary
 // =============================
 
-async upsertPortfolioSnapshot(userId: number, date: Date, isAuto: boolean) {
-  // ✅ normaliza a 00:00Z del día 1 del mes (boundary)
-  const normalizedDate = this.normalizeToMonthStartUTC(date);
 
-  const totalValue = await this.getPortfolioValueAt(userId, normalizedDate);
-
-  const existing = await this.prisma.portfolioSnapshot.findFirst({
-    where: { userId, date: normalizedDate, active: true },
-  });
-
-  if (existing) {
-    return this.prisma.portfolioSnapshot.update({
-      where: { id: existing.id },
-      data: {
-        totalValue,
-        isAuto,
-        // preserve user edits:
-        // do not touch editedValue/isEdited/editedValue
-      },
-    });
-  }
-
-  return this.prisma.portfolioSnapshot.create({
-    data: {
-      userId,
-      date: normalizedDate,
-      totalValue,
-      currency: "EUR",
-      isAuto,
-      active: true,
-    },
-  });
+private normalizeToMonthStartUTC(d: Date) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
 }
 
-async editPortfolioSnapshot(userId: number, id: number, dto: { editedValue: number; note?: string }) {
-  const s = await this.prisma.portfolioSnapshot.findFirst({
-    where: { id, userId, active: true },
-  });
-  if (!s) throw new NotFoundException("Snapshot not found");
-
-  const editedValue = Number(dto.editedValue);
-  if (!Number.isFinite(editedValue) || editedValue < 0) {
-    throw new BadRequestException("editedValue inválido");
-  }
-
-  return this.prisma.portfolioSnapshot.update({
-    where: { id },
-    data: {
-      isEdited: true,
-      editedValue,
-      editedAt: new Date(),
-      note: dto.note?.trim() || null,
-    },
-  });
+private addMonthsUTC(d: Date, months: number) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1, 0, 0, 0, 0));
 }
 
-private effectiveSnapshotValue(s: { totalValue: any; isEdited: boolean; editedValue: any }) {
-  const v = s.isEdited ? (s.editedValue ?? s.totalValue) : s.totalValue;
-  return Number(v ?? 0);
-}
-
-private async getBoundaryValue(userId: number, boundary: Date) {
-  const snap = await this.prisma.portfolioSnapshot.findFirst({
-    where: { userId, date: boundary, active: true },
-    select: { id: true, totalValue: true, isEdited: true, editedValue: true },
-  });
-
-  if (snap) {
-    return {
-      source: "snapshot" as const,
-      snapshotId: snap.id,
-      value: this.effectiveSnapshotValue(snap as any),
-    };
-  }
-
-  // ✅ No hay snapshot: calculamos al vuelo
-  const computed = await this.getPortfolioValueAt(userId, boundary);
-  return {
-    source: "computed" as const,
-    snapshotId: null as number | null,
-    value: Number(computed ?? 0),
-  };
-}
-
-private async getMonthCashFlow(userId: number, startInclusive: Date, nextStartExclusive: Date) {
+private async getCashflowNetForMonth(userId: number, from: Date, to: Date): Promise<number> {
   const ops = await this.prisma.investmentOperation.findMany({
     where: {
       userId,
       active: true,
-      date: { gte: startInclusive, lt: nextStartExclusive },
-      type: { in: ["transfer_in", "buy", "transfer_out", "sell"] as any },
+      date: { gte: from, lt: to },
+      type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell'] as any }, // excluye swaps
     },
-    select: { type: true, amount: true, fee: true },
+    select: { type: true, amount: true },
   });
 
-  let cf = 0;
-
+  let net = 0;
   for (const o of ops) {
-    const t = String(o.type);
     const amt = Number(o.amount ?? 0);
-    const fee = Number(o.fee ?? 0);
+    const t = String(o.type);
 
-    if (t === "transfer_in" || t === "buy") {
-      cf += amt + fee; // cash out
-    } else if (t === "transfer_out" || t === "sell") {
-      cf -= amt; // cash in (amount neto)
-    }
+    if (t === 'transfer_in' || t === 'buy') net += amt;
+    else if (t === 'transfer_out' || t === 'sell') net -= amt;
   }
-
-  return cf;
+  return net;
 }
 
-async getMonthlyPerformance(userId: number, fromYM: string, toYM: string) {
-  const months = this.monthRange(fromYM, toYM);
 
-  const out: Array<{
-    period: string;
-    startValue: number;
-    endValue: number;
-    netCashFlow: number;
-    returnAmount: number;
-    returnPct: number | null;
+async createMonthlySnapshot(userId: number, monthStartInput: Date, isAuto: boolean) {
+  const monthStart = this.normalizeToMonthStartUTC(monthStartInput);
+  const periodEnd = this.addMonthsUTC(monthStart, 1);
+  const prevMonthStart = this.addMonthsUTC(monthStart, -1);
 
-    // opcional (muy útil para UI / debug)
-    startSource: "snapshot" | "computed";
-    endSource: "snapshot" | "computed";
-    startSnapshotId: number | null;
-    endSnapshotId: number | null;
-  }> = [];
+  // 1) startValue = endValue del mes anterior (si existe)
+  const prevSnap = await this.prisma.portfolioSnapshot.findUnique({
+    where: { userId_monthStart: { userId, monthStart: prevMonthStart } },
+    select: { endValue: true },
+  });
+  const startValue = prevSnap?.endValue ?? null;
 
-  for (const { y, m } of months) {
-    const startBoundary = this.startOfMonthUTC(y, m);
-    const endBoundary = this.nextMonthStartUTC(y, m);
+  // 2) endValue = portfolio value at periodEnd (cierre del mes)
+  const endValue = await this.getPortfolioValueAt(userId, periodEnd);
 
-    const s0 = await this.getBoundaryValue(userId, startBoundary);
-    const s1 = await this.getBoundaryValue(userId, endBoundary);
+  // 3) cashflowNet del mes (sin swaps)
+  const cashflowNet = await this.getCashflowNetForMonth(userId, monthStart, periodEnd);
 
-    const CF = await this.getMonthCashFlow(userId, startBoundary, endBoundary);
+  // 4) profit y returnPct
+  const start = startValue ?? 0;
+const profit = startValue == null ? null : endValue - startValue - cashflowNet;
+const returnPct =
+  startValue != null && startValue > 0 && profit != null
+    ? profit / startValue
+    : null;
 
-    const V0 = s0.value;
-    const V1 = s1.value;
-
-    const returnAmount = V1 - V0 - CF;
-    const returnPct = V0 > 0 ? returnAmount / V0 : null;
-
-    out.push({
-      period: `${y}-${String(m).padStart(2, "0")}`,
-      startValue: V0,
-      endValue: V1,
-      netCashFlow: CF,
-      returnAmount,
-      returnPct,
-      startSource: s0.source,
-      endSource: s1.source,
-      startSnapshotId: s0.snapshotId,
-      endSnapshotId: s1.snapshotId,
+  try {
+    return await this.prisma.portfolioSnapshot.create({
+      data: {
+        userId,
+        monthStart,
+        currency: 'EUR',
+        startValue,
+        endValue,
+        cashflowNet,
+        profit,
+        returnPct,
+        isAuto,
+        active: true,
+      },
     });
+  } catch (e: any) {
+    // Prisma P2002 => unique constraint (ya existe ese mes)
+    if (e?.code === 'P2002') return null;
+    throw e;
   }
-
-  let compoundedReturn: number | null = null;
-  const valid = out.filter((x) => typeof x.returnPct === "number") as Array<{ returnPct: number }>;
-  if (valid.length) {
-    compoundedReturn = valid.reduce((acc, x) => acc * (1 + x.returnPct), 1) - 1;
-  }
-
-  return { months: out, compoundedReturn };
 }
+
+async listMonthlySnapshots(q: { from?: string; to?: string; limit?: number }) {
+  const where: any = { active: true };
+
+  if (q.from || q.to) {
+    where.monthStart = {};
+    if (q.from) where.monthStart.gte = new Date(q.from);
+    if (q.to) where.monthStart.lt = new Date(q.to);
+  }
+
+  const rows = await this.prisma.portfolioSnapshot.findMany({
+    where,
+    orderBy: { monthStart: 'asc' },
+    take: q.limit ?? 200, // safe default
+    select: {
+      monthStart: true,
+      currency: true,
+      startValue: true,
+      endValue: true,
+      cashflowNet: true,
+      profit: true,
+      returnPct: true,
+      isAuto: true,
+      createdAt: true,
+    },
+  });
+
+  // Si quieres, puedes formatear returnPct a % en front; aquí lo dejas como ratio (0.042 => 4.2%)
+  return rows;
+}
+
 
 // =============================
 // Month parsing + range (UTC)

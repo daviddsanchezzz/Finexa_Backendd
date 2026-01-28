@@ -12,25 +12,38 @@ export class InvestmentsSnapshotScheduler {
     private investments: InvestmentsService,
   ) {}
 
-  // Día 1 a las 00:05 (hora local del server; si quieres, fuerza TZ a Europe/Madrid en el entorno)
-  @Cron('5 0 1 * *')
-  async closePreviousMonth() {
-    // obtén todos los users activos (o solo los que tienen assets)
-    const users = await this.prisma.user.findMany({
-      where: { active: true },
-      select: { id: true },
-    });
+// Día 1 a las 00:05 (Europa/Madrid)
+@Cron('5 0 1 * *', { timeZone: 'Europe/Madrid' })
+async closePreviousMonth() {
+  const users = await this.prisma.user.findMany({
+    where: { active: true },
+    select: { id: true },
+  });
 
-    const now = new Date();
-    const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)); 
-    // día 0 del mes actual => último día del mes anterior (UTC)
+  const now = new Date();
 
-    for (const u of users) {
-      try {
-        await this.investments.upsertPortfolioSnapshot(u.id, target, true);
-      } catch (e: any) {
-        this.logger.error(`Snapshot failed user=${u.id}: ${e?.message ?? e}`);
-      }
+  // Mes actual en UTC: YYYY-MM-01T00:00:00.000Z
+  const currentMonthStartUTC = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    1,
+    0, 0, 0, 0
+  ));
+
+  // Mes a cerrar = mes anterior
+  const prevMonthStartUTC = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth() - 1,
+    1,
+    0, 0, 0, 0
+  ));
+
+  for (const u of users) {
+    try {
+      await this.investments.createMonthlySnapshot(u.id, prevMonthStartUTC, true);
+    } catch (e: any) {
+      this.logger.error(`Snapshot failed user=${u.id}: ${e?.message ?? e}`);
     }
   }
+}
 }

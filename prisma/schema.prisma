@@ -825,25 +825,33 @@ model InvestmentOperation {
 }
 
 model PortfolioSnapshot {
-  id         Int      @id @default(autoincrement())
-  userId     Int
-  date       DateTime // cierre de mes (por ejemplo 2026-01-31T00:00:00Z o 23:59:59Z, pero consistente)
-  totalValue Float
-  currency   String   @default("EUR")
+  id          Int      @id @default(autoincrement())
+  userId      Int
 
-  // editable
-  isAuto     Boolean  @default(true)
-  isEdited   Boolean  @default(false)
-  editedValue Float?
-  editedAt   DateTime?
-  note       String?
+  // Identificador del mes: 2026-01-01T00:00:00.000Z
+  monthStart  DateTime
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  active     Boolean  @default(true)
+  currency    String   @default("EUR")
 
-  @@unique([userId, date])
-  @@index([userId, date])
+  // Valores
+  startValue  Float?   // totalValue del snapshot anterior (null si primer mes)
+  endValue    Float    // totalValue calculado al cierre (lo que ahora llamas totalValue)
+
+  // Cashflow mensual (neto: inflows - outflows). Recomendación: NO incluir swaps.
+  cashflowNet Float    @default(0)
+
+  // Métricas derivadas (para pintar rápido)
+  profit      Float?    @default(0)  // end - start - cashflow
+  returnPct   Float?              // profit / startValue (si startValue > 0)
+
+  // Metadata
+  isAuto      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  active      Boolean  @default(true)
+
+  @@unique([userId, monthStart])
+  @@index([userId, monthStart])
 }
 
 
