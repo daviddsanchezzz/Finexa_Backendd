@@ -2,6 +2,7 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "src/common/prisma/prisma.service";
 import { InvestmentAssetMini } from "./monthly-report.pdf";
+import { MonthDataService } from "../monthData/month-data.service";
 
 function monthRange(month: string) {
   const m = month?.trim();
@@ -83,7 +84,7 @@ type CategoryWithSubs = {
 
 @Injectable()
 export class ReportsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private monthDataService: MonthDataService) {}
 
   private delta(cur: number, prev: number) {
     return {
@@ -91,6 +92,36 @@ export class ReportsService {
       pct: prev !== 0 ? (cur - prev) / prev : null,
     };
   }
+
+  private async getMonthlyNetWorth(
+  userId: number,
+  year: number,
+  month: number,
+  walletId?: number,
+): Promise<number> {
+  // 1️⃣ Intentar cierre mensual
+  const closedBalance =
+    walletId == null
+      ? await this.monthDataService.findOneByMonthAndYear(userId, year, month)
+      : null; // si hay walletId, no usamos cierre global
+
+  if (typeof closedBalance === "number" && closedBalance > 0) {
+    return closedBalance;
+  }
+
+  // 2️⃣ Fallback: suma de wallets (estado actual)
+  const agg = await this.prisma.wallet.aggregate({
+    where: {
+      userId,
+      active: true,
+      ...(walletId ? { id: walletId } : {}),
+    },
+    _sum: { balance: true },
+  });
+
+  return Number(agg._sum.balance || 0);
+}
+
 
   // -----------------------------
   // Category helpers
@@ -524,15 +555,14 @@ async getMonthlyReport(userId: number, opts: { month: string; walletId?: number 
   // -----------------------------
   // Patrimonio total (suma balances wallets)
   // -----------------------------
-  const netWorthAgg = await this.prisma.wallet.aggregate({
-    where: {
-      userId,
-      active: true,
-      ...(opts.walletId ? { id: opts.walletId } : {}),
-    },
-    _sum: { balance: true }, // ajusta si tu campo se llama distinto
-  });
-  const netWorthTotal = Number(netWorthAgg._sum.balance || 0);
+const [year, month] = opts.month.split("-").map(Number);
+
+const netWorthTotal = await this.getMonthlyNetWorth(
+  userId,
+  year,
+  month,
+  opts.walletId,
+);
 
   // -----------------------------
   // Inversiones: operaciones del mes + assets

@@ -876,12 +876,6 @@ const totalReturnPct = totalStart > 0 ? totalProfit / totalStart : null;
                     >
                       {o.asset?.name ?? "—"}
                     </Text>
-
-                    {!!assetSub ? (
-                      <Text style={styles.invAssetSub} wrap={false}>
-                        {assetSub}
-                      </Text>
-                    ) : null}
                   </View>
 
                   <Text
@@ -968,11 +962,6 @@ const totalReturnPct = totalStart > 0 ? totalProfit / totalStart : null;
                       <Text style={styles.invPerfName} wrap={false}>
                         {assetLabel}
                       </Text>
-                      {!!assetSub && (
-                        <Text style={styles.invPerfSub} wrap={false}>
-                          {assetSub}
-                        </Text>
-                      )}
                     </View>
 
                     <Text style={[styles.small, styles.invPerfColNum]} wrap={false}>

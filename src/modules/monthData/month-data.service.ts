@@ -21,6 +21,28 @@ export class MonthDataService {
     return v === undefined || v === null ? null : Number(v);
   }
 
+async findOneByMonthAndYear(
+  userId: number,
+  year: number,
+  month: number,
+): Promise<number | null> {
+  const finalMonth = month - 1
+  const row = await this.prisma.manualMonthData.findFirst({
+    where: {
+      userId,
+      year,
+      month: finalMonth,
+      active: true, // coherente con el resto del servicio
+    },
+    select: {
+      finalBalance: true,
+    },
+  });
+
+  return row?.finalBalance ?? null;
+}
+
+
   /**
    * Crea o actualiza un override mensual
    */
