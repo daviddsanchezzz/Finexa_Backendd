@@ -49,6 +49,23 @@ export type CategoryBreakdownRow = {
   color?: string | null; // hex: #EEF2FF, etc
 };
 
+export type InvestmentOpRow = {
+  id: number;
+  date: string; // ISO
+  type: string; // "buy" | "sell" | "dividend" | ...
+  amount: number;
+  fee: number;
+  transactionId: number | null;
+  swapGroupId: number | null;
+  asset: {
+    id: number;
+    name: string;
+    type: string;
+    identificator: string | null;
+    currency: string | null;
+  };
+};
+
 export type MonthlyTemplateParams = {
   monthKey: string;
   monthLabel: string;
@@ -56,12 +73,17 @@ export type MonthlyTemplateParams = {
   walletId: number | null;
   walletName: string | null;
   currency: string;
+    netWorthTotal: number;
 
   totals: { income: number; expense: number; savings: number; savingsRate: number };
 
   previous: null | {
     monthKey: string;
     totals: { income: number; expense: number; savings: number };
+  };
+
+    investments?: {
+    operations: InvestmentOpRow[];
   };
 
   trends: {
@@ -139,9 +161,9 @@ export function toMonthlyTemplateParams(report: any, currency: string): MonthlyT
     monthKey,
     monthLabel: formatMonthLabel(monthKey),
     generatedAtISO: new Date().toISOString(),
-
     walletId: report?.walletId ?? null,
     walletName: report?.walletName ?? null,
+  netWorthTotal: Number(report?.netWorthTotal || 0), // <-- AÑADIR
 
     currency,
 
@@ -168,6 +190,28 @@ export function toMonthlyTemplateParams(report: any, currency: string): MonthlyT
       expense: deltaOf(report?.trends?.vsPreviousMonth?.expense),
       savings: deltaOf(report?.trends?.vsPreviousMonth?.savings),
     },
+
+        investments: report?.investments
+      ? {
+          operations: (report.investments.operations || []).map((o: any) => ({
+            id: Number(o.id),
+            date: String(o.date),
+            type: String(o.type),
+            amount: Number(o.amount || 0),
+            fee: Number(o.fee || 0),
+            transactionId: o.transactionId == null ? null : Number(o.transactionId),
+            swapGroupId: o.swapGroupId == null ? null : Number(o.swapGroupId),
+            asset: {
+              id: Number(o.asset?.id),
+              name: String(o.asset?.name ?? "—"),
+              type: String(o.asset?.type ?? "unknown"),
+              identificator: o.asset?.identificator ?? null,
+              currency: o.asset?.currency ?? null,
+            },
+          })),
+        }
+      : undefined,
+
 
     topCategories: (report?.topCategories || []).map((c: any) => ({
       name: c.name,

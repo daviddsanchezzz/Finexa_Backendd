@@ -12,6 +12,7 @@ import {
   Line,
 } from "@react-pdf/renderer";
 import { formatMoney, formatSignedMoney } from "./pdf.utils";
+import { KpiCard } from "./templates/KpiCard";
 
 type Delta = { value: number; pct?: number | null };
 type CategoryRow = { name: string; amount: number };
@@ -21,6 +22,87 @@ type SubcategoryRow = {
   name: string;
   amount: number;
 };
+
+// Traduce tipo de operación (buy/sell/transfer/etc)
+type BackendOpType =
+  | "buy"
+  | "sell"
+  | "transfer_in"
+  | "transfer_out"
+  | "swap_in"
+  | "swap_out"
+  | string;
+
+function opLabel(t: BackendOpType) {
+  switch (t) {
+    case "transfer_in":
+      return "Aportación";
+    case "transfer_out":
+      return "Retirada";
+    case "buy":
+      return "Compra";
+    case "sell":
+      return "Venta";
+    case "swap_in":
+      return "Swap (entrada)";
+    case "swap_out":
+      return "Swap (salida)";
+    default:
+      // fallback: Capitaliza si viene algo nuevo
+      return String(t || "—")
+        .replaceAll("_", " ")
+        .replace(/^\w/, (c) => c.toUpperCase());
+  }
+}
+
+// Traduce tipo de activo (crypto/stock/etc)
+type InvestmentAssetType =
+  | "crypto"
+  | "etf"
+  | "stock"
+  | "fund"
+  | "custom"
+  | "cash"
+  | string;
+
+function assetTypeLabel(t: InvestmentAssetType) {
+  switch (t) {
+    case "crypto":
+      return "Cripto";
+    case "etf":
+      return "ETF";
+    case "stock":
+      return "Acción";
+    case "fund":
+      return "Fondo";
+    case "custom":
+      return "Personalizado";
+    case "cash":
+      return "Efectivo";
+    default:
+      return "Otro";
+  }
+}
+
+type InvestmentAssetMini = {
+  id: number;
+  name: string;
+  type: string;
+  identificator?: string | null;
+  currency?: string | null;
+};
+
+type InvestmentOperationRow = {
+  id: number;
+  date: string; // ISO
+  type: string; // "buy" | "sell" | ...
+  amount: number;
+  fee: number;
+  transactionId?: number | null;
+  swapGroupId?: number | null;
+  asset: InvestmentAssetMini;
+};
+
 
 type CategoryWithSubs = {
   categoryId: number;
@@ -45,6 +127,11 @@ export type MonthlyParams = {
     income: CategoryWithSubs[];
     expense: CategoryWithSubs[];
   };
+    netWorthTotal?: number | null; // <-- NUEVO (patrimonio total)
+  investments?: {
+    operations: InvestmentOperationRow[];
+  };
+
 
   // opcional: si también lo guardas flat
   subcategoriesBreakdown?: {
@@ -216,6 +303,21 @@ subTr: {
 },
 
 
+invTable: { borderWidth: 1, borderColor: palette.border, borderRadius: 12, overflow: "hidden" },
+invHead: { flexDirection: "row", backgroundColor: "#F8FAFC", paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: palette.border },
+invRow: { flexDirection: "row", paddingVertical: 7, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: "#F1F5F9" },
+invLast: { borderBottomWidth: 0 },
+
+invColDate: { width: 70 },
+invColAsset: { flex: 1 },
+invColType: { width: 54, textAlign: "right" },
+invColAmt: { width: 80, textAlign: "right" },
+invColFee: { width: 60, textAlign: "right" },
+
+invTypeBuy: { color: palette.good, fontWeight: 700 },
+invTypeSell: { color: palette.bad, fontWeight: 700 },
+
+invAssetSub: { fontSize: 9, color: palette.muted, marginTop: 1 },
 
 
 // styles
@@ -313,6 +415,14 @@ function fmtISODate(iso?: string) {
     return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric" }).format(d);
   } catch {
     return null;
+  }
+}
+function fmtShortDate(iso: string) {
+  try {
+    const d = new Date(iso);
+    return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" }).format(d);
+  } catch {
+    return iso?.slice(0, 10) ?? "—";
   }
 }
 
@@ -565,10 +675,73 @@ function PageExpense({ p }: { p: MonthlyParams }) {
 }
 
 function PageInvestments({ p }: { p: MonthlyParams }) {
+  const ops = (p.investments?.operations || [])
+    .slice()
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   return (
     <Page size="A4" style={styles.page}>
-        <Text>Sección de inversiones no implementada aún.</Text>
+      <Text style={styles.sectionTitle}>Inversiones</Text>
+      <Text style={styles.sectionSub}>
+        Operaciones del mes · {p.monthLabel}{p.walletName ? ` · Cartera: ${p.walletName}` : ""}
+      </Text>
+
+      {ops.length === 0 ? (
+        <Text style={{ color: palette.muted }}>No hay operaciones de inversión en este periodo.</Text>
+      ) : (
+        <View style={styles.invTable}>
+          <View style={styles.invHead}>
+            <Text style={[styles.th, styles.invColDate]}>Fecha</Text>
+            <Text style={[styles.th, styles.invColAsset]}>Activo</Text>
+            <Text style={[styles.th, styles.invColType]}>Tipo</Text>
+            <Text style={[styles.th, styles.invColAmt]}>Importe</Text>
+            <Text style={[styles.th, styles.invColFee]}>Comisión</Text>
+          </View>
+
+          {ops.map((o, idx) => {
+            const isLast = idx === ops.length - 1;
+            const isBuy = o.type === "buy";
+            const isSell = o.type === "sell";
+
+            return (
+<View key={o.id} style={[styles.invRow, ...(isLast ? [styles.invLast] : [])]}>
+                <Text style={[styles.small, styles.invColDate]}>{fmtShortDate(o.date)}</Text>
+
+                <View style={styles.invColAsset}>
+                  <Text style={{ fontSize: 10.5, fontWeight: 700 }}>{o.asset?.name ?? "—"}</Text>
+                  {(o.asset?.identificator || o.asset?.type) ? (
+                    <Text style={styles.invAssetSub}>
+<Text style={styles.invAssetSub}>
+  {[assetTypeLabel(o.asset?.type), o.asset?.identificator].filter(Boolean).join(" · ")}
+</Text>
+                    </Text>
+                  ) : null}
+                </View>
+
+<Text
+  style={[
+    styles.small,
+    styles.invColType,
+    ...(o.type === "buy" ? [styles.invTypeBuy] : []),
+    ...(o.type === "sell" ? [styles.invTypeSell] : []),
+  ]}
+>
+  {opLabel(o.type)}
+</Text>
+
+
+                <Text style={[styles.small, styles.invColAmt]}>
+                  {formatMoney(Number(o.amount || 0), p.currency)}
+                </Text>
+
+                <Text style={[styles.small, styles.invColFee]}>
+                  {formatMoney(Number(o.fee || 0), p.currency)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       <View style={styles.footer} fixed>
         <Text>Finexa · Reportes</Text>
@@ -711,6 +884,30 @@ export function MonthlyReportPdf({ p }: { p: MonthlyParams }) {
   const midIdx = daily.length ? Math.floor((daily.length - 1) / 2) : 0;
   const midDay = daily.length ? monthDayLabel(daily[midIdx].date) : "—";
 
+  const income = Number(p.totals?.income || 0);
+const expense = Number(p.totals?.expense || 0);
+const savings = Number(p.totals?.savings || 0);
+const savingsRate = Math.max(0, Math.min(1, Number(p.totals?.savingsRate || 0)));
+
+const netWorth = p.netWorthTotal == null ? null : Number(p.netWorthTotal);
+
+const balanceLabel = formatMoney(savings, p.currency); // o formatMoney(income - expense, p.currency)
+const savingsRateLabel = fmtPct1(savingsRate);
+
+// chips (texto)
+const incomeChipText = fmtDeltaLabel(p.trends.income, p.currency);
+const expenseChipText = fmtDeltaLabel(p.trends.expense, p.currency);
+
+// colores gasto: subir gasto = malo
+const expenseChipColors =
+  Number(p.trends.expense?.value || 0) <= 0
+    ? { bg: "#DCFCE7", fg: palette.good } // baja gasto => bueno
+    : { bg: "#FEE2E2", fg: palette.bad }; // sube gasto => malo
+
+// balance: lo consideramos "bueno" si sube, "malo" si baja
+const balanceChipColors =
+  savings >= 0 ? { bg: "#DCFCE7", fg: palette.good } : { bg: "#FEE2E2", fg: palette.bad };
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -730,60 +927,46 @@ export function MonthlyReportPdf({ p }: { p: MonthlyParams }) {
             </View>
           </View>
 
-          <View style={styles.kpiRow}>
-            <View style={styles.kpiCard}>
-              <Text style={styles.kpiLabel}>Ingresos</Text>
-              <Text style={styles.kpiValue}>{formatMoney(p.totals.income, p.currency)}</Text>
-              <View style={styles.kpiSub}>
-                <Text style={{ color: palette.muted, fontSize: 10, marginRight: 8 }}>Variación</Text>
-                {incomeChip}
-              </View>
-            </View>
 
-            <View style={[styles.kpiCard, styles.kpiCardMid]}>
-              <Text style={styles.kpiLabel}>Gastos</Text>
-              <Text style={styles.kpiValue}>{formatMoney(p.totals.expense, p.currency)}</Text>
-              <View style={styles.kpiSub}>
-                <Text style={{ color: palette.muted, fontSize: 10, marginRight: 8 }}>Variación</Text>
-                {expenseChip}
-              </View>
-            </View>
+<View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>
+  {/* Patrimonio: más ancho */}
+  <KpiCard
+    variant="premium"
+    tone="neutral"
+    size="lg"
+    title="PATRIMONIO TOTAL"
+    value={formatMoney(p.netWorthTotal ?? 0, p.currency)}
+    bottomText={p.walletName ?? "Todas las carteras"}
+    style={{ flexGrow: 2, flexBasis: 0 }}
+  />
 
-            <View style={styles.kpiCard}>
-              <Text style={styles.kpiLabel}>Ahorro</Text>
-              <Text style={styles.kpiValue}>{formatMoney(p.totals.savings, p.currency)}</Text>
+  <KpiCard
+    tone="info"
+    title="BALANCE"
+    value={formatMoney(p.totals.savings, p.currency)}
+    bottomText={`Ahorro: ${fmtPct1(p.totals.savingsRate || 0)}`}
+    style={{ flexGrow: 1, flexBasis: 0 }}
+  />
 
-              <View style={styles.kpiSub}>
-                <Text style={{ color: palette.muted, fontSize: 10, marginRight: 8 }}>Variación</Text>
-                {savingsChip}
-              </View>
+  <KpiCard
+    tone="success"
+    title="INGRESOS"
+    value={formatMoney(p.totals.income, p.currency)}
+    bottomText={p.monthLabel}
+    style={{ flexGrow: 1, flexBasis: 0 }}
+  />
 
-              <View style={{ marginTop: 8 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                  <Text style={{ color: palette.muted, fontSize: 10 }}>Tasa de ahorro</Text>
-                  <Text style={{ fontSize: 10, fontWeight: 700 }}>{fmtPct1(rate)}</Text>
-                </View>
-                <View
-                  style={{
-                    height: 6,
-                    borderRadius: 999,
-                    backgroundColor: "#E5E7EB",
-                    marginTop: 6,
-                    overflow: "hidden",
-                  }}
-                >
-                  <View
-                    style={{
-                      height: 6,
-                      borderRadius: 999,
-                      backgroundColor: palette.primary,
-                      width: `${Math.round(rate * 100)}%`,
-                    }}
-                  />
-                </View>
-              </View>
-            </View>
-          </View>
+  <KpiCard
+    tone="danger"
+    title="GASTOS"
+    value={formatMoney(p.totals.expense, p.currency)}
+    bottomText={p.monthLabel}
+    style={{ flexGrow: 1, flexBasis: 0 }}
+  />
+</View>
+
+
+
         </View>
 
         <View style={styles.dashStack}>

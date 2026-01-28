@@ -42,6 +42,18 @@ type CategoryAmount = {
   color: string | null;
 };
 
+type InvestmentOpRow = {
+  id: number;
+  date: string;
+  type: string;
+  amount: number;
+  fee: number;
+  transactionId: number | null;
+  swapGroupId: number | null;
+  asset: { id: number; name: string; type: string; identificator: string | null; currency: string | null };
+};
+
+
 type SubcategoryAmount = {
   subcategoryId: number;
   categoryId: number | null; // para poder agrupar por categoría
@@ -200,178 +212,261 @@ export class ReportsService {
   // ======================================================================
   // MONTHLY
   // ======================================================================
-  async getMonthlyReport(userId: number, opts: { month: string; walletId?: number }) {
-    const { start, end } = monthRange(opts.month);
-    const prev = prevMonth(opts.month);
-    const { start: pStart, end: pEnd } = monthRange(prev);
+async getMonthlyReport(userId: number, opts: { month: string; walletId?: number }) {
+  const { start, end } = monthRange(opts.month);
+  const prev = prevMonth(opts.month);
+  const { start: pStart, end: pEnd } = monthRange(prev);
 
-    const baseWhere: any = {
-      userId,
-      active: true,
-      excludeFromStats: false, // si no existe en tu schema, quita esta línea
-      date: { gte: start, lt: end },
-    };
-    if (opts.walletId) baseWhere.walletId = opts.walletId;
+  // ---- helper robusto para fechas ----
+  const toIso = (d: any) => {
+    if (!d) return null;
+    if (d instanceof Date) return d.toISOString();
 
-    const prevWhere: any = {
-      userId,
-      active: true,
-      excludeFromStats: false,
-      date: { gte: pStart, lt: pEnd },
-    };
-    if (opts.walletId) prevWhere.walletId = opts.walletId;
-
-    // Totales periodo actual
-    const [incomeAgg, expenseAgg] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where: { ...baseWhere, type: "income" },
-        _sum: { amount: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: { ...baseWhere, type: "expense" },
-        _sum: { amount: true },
-      }),
-    ]);
-
-    const income = Number(incomeAgg._sum.amount || 0);
-    const expense = Number(expenseAgg._sum.amount || 0);
-    const savings = income - expense;
-    const savingsRate = income > 0 ? savings / income : 0;
-
-    // Totales periodo anterior
-    const [pIncomeAgg, pExpenseAgg] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        where: { ...prevWhere, type: "income" },
-        _sum: { amount: true },
-      }),
-      this.prisma.transaction.aggregate({
-        where: { ...prevWhere, type: "expense" },
-        _sum: { amount: true },
-      }),
-    ]);
-
-    const pIncome = Number(pIncomeAgg._sum.amount || 0);
-    const pExpense = Number(pExpenseAgg._sum.amount || 0);
-    const pSavings = pIncome - pExpense;
-
-    // -----------------------------
-    // Breakdown por categoría
-    // -----------------------------
-    const [expenseByCategory, incomeByCategory] = await Promise.all([
-      this.prisma.transaction.groupBy({
-        by: ["categoryId"],
-        where: { ...baseWhere, type: "expense", categoryId: { not: null } },
-        _sum: { amount: true },
-        orderBy: { _sum: { amount: "desc" } },
-      }),
-      this.prisma.transaction.groupBy({
-        by: ["categoryId"],
-        where: { ...baseWhere, type: "income", categoryId: { not: null } },
-        _sum: { amount: true },
-        orderBy: { _sum: { amount: "desc" } },
-      }),
-    ]);
-
-    const allCategoryIds = [
-      ...expenseByCategory.map((x) => x.categoryId).filter(Boolean),
-      ...incomeByCategory.map((x) => x.categoryId).filter(Boolean),
-    ] as number[];
-
-    const catMap = await this.getCategoriesMap(allCategoryIds);
-
-    const expenseCategories = this.mapGroupByToNamed(expenseByCategory as any, catMap);
-    const incomeCategories = this.mapGroupByToNamed(incomeByCategory as any, catMap);
-
-    const topCategories = expenseCategories.slice(0, 5);
-
-    // -----------------------------
-    // Breakdown por subcategoría (NUEVO)
-    // -----------------------------
-    const [expenseBySub, incomeBySub] = await Promise.all([
-      this.prisma.transaction.groupBy({
-        by: ["subcategoryId"],
-        where: { ...baseWhere, type: "expense", subcategoryId: { not: null } },
-        _sum: { amount: true },
-        orderBy: { _sum: { amount: "desc" } },
-      }),
-      this.prisma.transaction.groupBy({
-        by: ["subcategoryId"],
-        where: { ...baseWhere, type: "income", subcategoryId: { not: null } },
-        _sum: { amount: true },
-        orderBy: { _sum: { amount: "desc" } },
-      }),
-    ]);
-
-    const allSubIds = [
-      ...expenseBySub.map((x) => x.subcategoryId).filter(Boolean),
-      ...incomeBySub.map((x) => x.subcategoryId).filter(Boolean),
-    ] as number[];
-
-    const subMap = await this.getSubcategoriesMap(allSubIds);
-
-    const expenseSubcategories = this.mapGroupBySubToNamed(expenseBySub as any, subMap);
-    const incomeSubcategories = this.mapGroupBySubToNamed(incomeBySub as any, subMap);
-
-    // Opción 2 (recomendada): categoría + subcategorías
-    const categoriesWithSubcategories = {
-      expense: this.buildCategoriesWithSubcategories(expenseCategories, expenseSubcategories),
-      income: this.buildCategoriesWithSubcategories(incomeCategories, incomeSubcategories),
-    };
-
-    // -----------------------------
-    // Serie gasto diario
-    // -----------------------------
-    const monthExpenses = await this.prisma.transaction.findMany({
-      where: { ...baseWhere, type: "expense" },
-      select: { amount: true, date: true },
-      orderBy: { date: "asc" },
-    });
-
-    const byDay = new Map<string, number>();
-    for (const t of monthExpenses) {
-      const d = new Date(t.date);
-      const key = d.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
-      byDay.set(key, (byDay.get(key) || 0) + Number(t.amount));
+    // "YYYY-MM-DD HH:mm:ss.SSS" -> "YYYY-MM-DDTHH:mm:ss.SSSZ" (asumimos UTC)
+    if (typeof d === "string" && d.includes(" ") && !d.includes("T")) {
+      const isoGuess = d.replace(" ", "T") + "Z";
+      const parsed = new Date(isoGuess);
+      if (!isNaN(parsed.getTime())) return parsed.toISOString();
     }
 
-    const dailyExpense = [...byDay.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, amount]) => ({ date, amount }));
+    const parsed = new Date(d);
+    return isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  };
 
-    return {
-      period: { type: "monthly", month: opts.month },
-      walletId: opts.walletId ?? null,
+  const baseWhere: any = {
+    userId,
+    active: true,
+    excludeFromStats: false,
+    recurrence: null,
+    date: { gte: start, lt: end },
+  };
+  if (opts.walletId) baseWhere.walletId = opts.walletId;
 
-      totals: { income, expense, savings, savingsRate },
+  const prevWhere: any = {
+    userId,
+    active: true,
+    excludeFromStats: false,
+    recurrence: null,
+    date: { gte: pStart, lt: pEnd },
+  };
+  if (opts.walletId) prevWhere.walletId = opts.walletId;
 
-      trends: {
-        vsPreviousMonth: {
-          income: this.delta(income, pIncome),
-          expense: this.delta(expense, pExpense),
-          savings: this.delta(savings, pSavings),
-        },
-        previousMonth: { month: prev, income: pIncome, expense: pExpense, savings: pSavings },
-      },
+  // -----------------------------
+  // Totales periodo actual + anterior
+  // -----------------------------
+  const [incomeAgg, expenseAgg, pIncomeAgg, pExpenseAgg] = await Promise.all([
+    this.prisma.transaction.aggregate({
+      where: { ...baseWhere, type: "income" },
+      _sum: { amount: true },
+    }),
+    this.prisma.transaction.aggregate({
+      where: { ...baseWhere, type: "expense" },
+      _sum: { amount: true },
+    }),
+    this.prisma.transaction.aggregate({
+      where: { ...prevWhere, type: "income" },
+      _sum: { amount: true },
+    }),
+    this.prisma.transaction.aggregate({
+      where: { ...prevWhere, type: "expense" },
+      _sum: { amount: true },
+    }),
+  ]);
 
-      topCategories,
+  const income = Number(incomeAgg._sum.amount || 0);
+  const expense = Number(expenseAgg._sum.amount || 0);
+  const savings = income - expense;
+  const savingsRate = income > 0 ? savings / income : 0;
 
-      categoriesBreakdown: {
-        expense: expenseCategories,
-        income: incomeCategories,
-      },
+  const pIncome = Number(pIncomeAgg._sum.amount || 0);
+  const pExpense = Number(pExpenseAgg._sum.amount || 0);
+  const pSavings = pIncome - pExpense;
 
-      // NUEVO: breakdown subcategorías (flat)
-      subcategoriesBreakdown: {
-        expense: expenseSubcategories,
-        income: incomeSubcategories,
-      },
+  // -----------------------------
+  // Breakdown por categoría
+  // -----------------------------
+  const [expenseByCategory, incomeByCategory] = await Promise.all([
+    this.prisma.transaction.groupBy({
+      by: ["categoryId"],
+      where: { ...baseWhere, type: "expense", categoryId: { not: null } },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: "desc" } },
+    }),
+    this.prisma.transaction.groupBy({
+      by: ["categoryId"],
+      where: { ...baseWhere, type: "income", categoryId: { not: null } },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: "desc" } },
+    }),
+  ]);
 
-      // NUEVO: opción 2 (pro): categorías + subcategorías
-      categoriesWithSubcategories,
+  const allCategoryIds = [
+    ...expenseByCategory.map((x) => x.categoryId).filter(Boolean),
+    ...incomeByCategory.map((x) => x.categoryId).filter(Boolean),
+  ] as number[];
 
-      series: { dailyExpense },
-    };
+  const catMap = await this.getCategoriesMap(allCategoryIds);
+
+  const expenseCategories = this.mapGroupByToNamed(expenseByCategory as any, catMap);
+  const incomeCategories = this.mapGroupByToNamed(incomeByCategory as any, catMap);
+
+  const topCategories = expenseCategories.slice(0, 5);
+
+  // -----------------------------
+  // Breakdown por subcategoría
+  // -----------------------------
+  const [expenseBySub, incomeBySub] = await Promise.all([
+    this.prisma.transaction.groupBy({
+      by: ["subcategoryId"],
+      where: { ...baseWhere, type: "expense", subcategoryId: { not: null } },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: "desc" } },
+    }),
+    this.prisma.transaction.groupBy({
+      by: ["subcategoryId"],
+      where: { ...baseWhere, type: "income", subcategoryId: { not: null } },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: "desc" } },
+    }),
+  ]);
+
+  const allSubIds = [
+    ...expenseBySub.map((x) => x.subcategoryId).filter(Boolean),
+    ...incomeBySub.map((x) => x.subcategoryId).filter(Boolean),
+  ] as number[];
+
+  const subMap = await this.getSubcategoriesMap(allSubIds);
+
+  const expenseSubcategories = this.mapGroupBySubToNamed(expenseBySub as any, subMap);
+  const incomeSubcategories = this.mapGroupBySubToNamed(incomeBySub as any, subMap);
+
+  const categoriesWithSubcategories = {
+    expense: this.buildCategoriesWithSubcategories(expenseCategories, expenseSubcategories),
+    income: this.buildCategoriesWithSubcategories(incomeCategories, incomeSubcategories),
+  };
+
+  // -----------------------------
+  // Serie gasto diario
+  // -----------------------------
+  const monthExpenses = await this.prisma.transaction.findMany({
+    where: { ...baseWhere, type: "expense" },
+    select: { amount: true, date: true },
+    orderBy: { date: "asc" },
+  });
+
+  const byDay = new Map<string, number>();
+  for (const t of monthExpenses) {
+    const d = new Date(t.date);
+    const key = d.toISOString().slice(0, 10); // YYYY-MM-DD
+    byDay.set(key, (byDay.get(key) || 0) + Number(t.amount));
   }
+
+  const dailyExpense = [...byDay.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, amount]) => ({ date, amount }));
+
+  // -----------------------------
+  // Patrimonio total (suma balances wallets)
+  // -----------------------------
+  const netWorthAgg = await this.prisma.wallet.aggregate({
+    where: {
+      userId,
+      active: true,
+      ...(opts.walletId ? { id: opts.walletId } : {}),
+    },
+    _sum: { balance: true }, // ajusta si tu campo se llama distinto
+  });
+  const netWorthTotal = Number(netWorthAgg._sum.balance || 0);
+
+  // -----------------------------
+  // Inversiones: operaciones del mes + assets
+  // -----------------------------
+  const invWhere: any = { userId, active: true, date: { gte: start, lt: end } };
+
+  const invOps = await this.prisma.investmentOperation.findMany({
+    where: invWhere,
+    select: {
+      id: true,
+      assetId: true,
+      type: true,
+      date: true,
+      amount: true,
+      fee: true,
+      transactionId: true,
+      swapGroupId: true,
+    },
+    orderBy: { date: "desc" },
+  });
+
+  const assetIds = Array.from(new Set(invOps.map((o) => o.assetId).filter(Boolean))) as number[];
+
+  const assets = assetIds.length
+    ? await this.prisma.investmentAsset.findMany({
+        where: { id: { in: assetIds }, userId, active: true },
+        select: { id: true, name: true, type: true, identificator: true, currency: true },
+      })
+    : [];
+
+  const assetMap = new Map(assets.map((a) => [a.id, a]));
+
+  const investmentOperations = invOps.map((o) => {
+    const a = assetMap.get(o.assetId);
+    return {
+      id: o.id,
+      date: toIso(o.date) ?? "", // si prefieres, cambia a null y ajusta el tipo
+      type: String(o.type),
+      amount: Number(o.amount || 0),
+      fee: Number(o.fee || 0),
+      transactionId: o.transactionId ?? null,
+      swapGroupId: o.swapGroupId ?? null,
+      asset: {
+        id: o.assetId,
+        name: a?.name ?? `Asset #${o.assetId}`,
+        type: a?.type ?? "unknown",
+        identificator: a?.identificator ?? null,
+        currency: a?.currency ?? null,
+      },
+    };
+  });
+
+  return {
+    period: { type: "monthly", month: opts.month },
+    walletId: opts.walletId ?? null,
+
+    totals: { income, expense, savings, savingsRate },
+
+    trends: {
+      vsPreviousMonth: {
+        income: this.delta(income, pIncome),
+        expense: this.delta(expense, pExpense),
+        savings: this.delta(savings, pSavings),
+      },
+      previousMonth: { month: prev, income: pIncome, expense: pExpense, savings: pSavings },
+    },
+
+    netWorthTotal,
+
+    investments: {
+      operations: investmentOperations,
+    },
+
+    topCategories,
+
+    categoriesBreakdown: {
+      expense: expenseCategories,
+      income: incomeCategories,
+    },
+
+    subcategoriesBreakdown: {
+      expense: expenseSubcategories,
+      income: incomeSubcategories,
+    },
+
+    categoriesWithSubcategories,
+
+    series: { dailyExpense },
+  };
+}
 
   // ======================================================================
   // YEARLY
