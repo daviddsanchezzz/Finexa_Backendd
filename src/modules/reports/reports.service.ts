@@ -1,6 +1,7 @@
 // src/reports/reports.service.ts
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "src/common/prisma/prisma.service";
+import { InvestmentAssetMini } from "./monthly-report.pdf";
 
 function monthRange(month: string) {
   const m = month?.trim();
@@ -41,6 +42,7 @@ type CategoryAmount = {
   emoji: string | null;
   color: string | null;
 };
+
 
 type InvestmentOpRow = {
   id: number;
@@ -171,6 +173,160 @@ export class ReportsService {
       })
       .filter((x) => x.amount !== 0);
   }
+
+private async getAssetMonthlyPerformance(userId: number, start: Date, end: Date) {
+  // 1) assets activos del usuario
+  const assets = await this.prisma.investmentAsset.findMany({
+    where: { userId, active: true },
+    select: { id: true, name: true, type: true, identificator: true, currency: true },
+  });
+  const assetIds = assets.map(a => a.id);
+  if (assetIds.length === 0) return [];
+
+  // 2) operaciones del mes (cashflow por asset)
+  const ops = await this.prisma.investmentOperation.findMany({
+    where: {
+      userId,
+      active: true,
+      assetId: { in: assetIds },
+      date: { gte: start, lt: end },
+      type: { in: ['transfer_in','buy','transfer_out','sell','swap_in','swap_out'] as any },
+    },
+    select: { assetId: true, type: true, amount: true, fee: true },
+  });
+
+  /**
+   * SIGNO CORREGIDO (esto es lo clave)
+   * - Aportaciones / compras => + (cashflow positivo)
+   * - Retiros / ventas      => - (cashflow negativo)
+   * - Fees siempre restan
+   *
+   * Así tu fórmula profit = end - start - cashflow funciona:
+   * Ej: start=0, end=509, cashflow=+497 => profit=12 ✅
+   */
+  const inflow = new Set(['transfer_in', 'buy', 'swap_in']);
+  const outflow = new Set(['transfer_out', 'sell', 'swap_out']);
+
+  const cashflowByAsset = new Map<number, number>();
+  for (const a of assets) cashflowByAsset.set(a.id, 0);
+
+  for (const o of ops) {
+    const t = String(o.type);
+    const amt = Number(o.amount ?? 0);
+    const fee = Number(o.fee ?? 0);
+
+    let delta = 0;
+    if (inflow.has(t)) delta = +amt;
+    else if (outflow.has(t)) delta = -amt;
+
+    delta -= fee; // fees siempre restan
+
+    cashflowByAsset.set(o.assetId, (cashflowByAsset.get(o.assetId) ?? 0) + delta);
+  }
+
+  // 3) última valoración <= start por asset
+  const startMax = await this.prisma.investmentValuationSnapshot.groupBy({
+    by: ['assetId'],
+    where: { userId, active: true, assetId: { in: assetIds }, date: { lte: start } },
+    _max: { date: true },
+  });
+
+  const startPairs = startMax
+    .filter(r => r._max.date)
+    .map(r => ({ assetId: r.assetId, date: r._max.date! }));
+
+  const startSnaps = startPairs.length
+    ? await this.prisma.investmentValuationSnapshot.findMany({
+        where: { userId, active: true, OR: startPairs },
+        select: { assetId: true, date: true, value: true },
+      })
+    : [];
+
+  // 4) última valoración <= end por asset
+  const endMax = await this.prisma.investmentValuationSnapshot.groupBy({
+    by: ['assetId'],
+    where: { userId, active: true, assetId: { in: assetIds }, date: { lte: end } },
+    _max: { date: true },
+  });
+
+  const endPairs = endMax
+    .filter(r => r._max.date)
+    .map(r => ({ assetId: r.assetId, date: r._max.date! }));
+
+  const endSnaps = endPairs.length
+    ? await this.prisma.investmentValuationSnapshot.findMany({
+        where: { userId, active: true, OR: endPairs },
+        select: { assetId: true, date: true, value: true },
+      })
+    : [];
+
+  const startMap = new Map<number, { date: Date; value: number }>();
+  for (const s of startSnaps) startMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
+
+  const endMap = new Map<number, { date: Date; value: number }>();
+  for (const s of endSnaps) endMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
+
+  // 5) construir rows
+  return assets
+    .map((a) => {
+      const s = startMap.get(a.id);
+      const e = endMap.get(a.id);
+
+      const rawStart = s ? s.value : null;
+      const endValue = e ? e.value : null;
+
+      const cashflowNet = cashflowByAsset.get(a.id) ?? 0;
+
+      /**
+       * REGLA NUEVA:
+       * - si no hay start snapshot, asumimos start=0 (asset “no existía” antes)
+       * - así profit = end - 0 - cashflow
+       */
+      const startValue = rawStart == null ? 0 : rawStart;
+
+      // Profit sólo si hay end snapshot (sin end no hay “cierre” del mes)
+      const profit =
+        endValue != null
+          ? endValue - startValue - cashflowNet
+          : null;
+
+      /**
+       * % coherente para assets nuevos:
+       * - si startValue=0 y cashflowNet>0 (aportación), usa esa aportación como base.
+       * - si startValue>0, base = startValue (o podrías usar start+max(0,cashflow) si prefieres “capital desplegado”).
+       */
+      const base =
+        startValue > 0 ? startValue : Math.max(0, cashflowNet);
+
+      const returnPct =
+        profit != null && base > 0
+          ? profit / base
+          : null;
+
+      return {
+        asset: {
+          id: a.id,
+          name: a.name,
+          type: a.type,
+          identificator: a.identificator ?? null,
+          currency: a.currency ?? null,
+        },
+        startValue: rawStart, // si quieres seguir mostrando “—” cuando no haya snapshot, deja rawStart aquí
+        endValue,
+        cashflowNet,
+        profit,
+        returnPct,
+        startSnapAt: s?.date?.toISOString?.() ?? null,
+        endSnapAt: e?.date?.toISOString?.() ?? null,
+      };
+    })
+    .filter(r =>
+      r.startValue != null ||
+      r.endValue != null ||
+      Math.abs(r.cashflowNet) > 0.000001
+    );
+}
+
 
   private buildCategoriesWithSubcategories(
     categories: CategoryAmount[],
@@ -429,6 +585,8 @@ async getMonthlyReport(userId: number, opts: { month: string; walletId?: number 
     };
   });
 
+  const perfByAsset = await this.getAssetMonthlyPerformance(userId, start, end);
+
   return {
     period: { type: "monthly", month: opts.month },
     walletId: opts.walletId ?? null,
@@ -448,6 +606,7 @@ async getMonthlyReport(userId: number, opts: { month: string; walletId?: number 
 
     investments: {
       operations: investmentOperations,
+      performanceByAsset: perfByAsset,
     },
 
     topCategories,

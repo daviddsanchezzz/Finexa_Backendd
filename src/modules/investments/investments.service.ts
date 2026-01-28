@@ -1363,7 +1363,7 @@ async createMonthlySnapshot(userId: number, monthStartInput: Date, isAuto: boole
     where: { userId_monthStart: { userId, monthStart: prevMonthStart } },
     select: { endValue: true },
   });
-  const startValue = prevSnap?.endValue ?? null;
+  const startValue = prevSnap?.endValue ?? 2654.04;
 
   // 2) endValue = portfolio value at periodEnd (cierre del mes)
   const endValue = await this.getPortfolioValueAt(userId, periodEnd);

@@ -84,13 +84,25 @@ function assetTypeLabel(t: InvestmentAssetType) {
   }
 }
 
-type InvestmentAssetMini = {
+export type InvestmentAssetMini = {
   id: number;
   name: string;
   type: string;
   identificator?: string | null;
   currency?: string | null;
 };
+
+type AssetMonthlyPerformanceRow = {
+  asset: InvestmentAssetMini;
+  startValue: number | null;
+  endValue: number | null;
+  cashflowNet: number;   // neto del mes para ese asset
+  profit: number | null; // end - start - cashflow
+  returnPct: number | null;
+  startSnapAt?: string | null;
+  endSnapAt?: string | null;
+};
+
 
 type InvestmentOperationRow = {
   id: number;
@@ -128,9 +140,11 @@ export type MonthlyParams = {
     expense: CategoryWithSubs[];
   };
     netWorthTotal?: number | null; // <-- NUEVO (patrimonio total)
-  investments?: {
-    operations: InvestmentOperationRow[];
-  };
+investments?: {
+  operations: InvestmentOperationRow[];
+  performanceByAsset?: AssetMonthlyPerformanceRow[];
+};
+
 
 
   // opcional: si también lo guardas flat
@@ -273,6 +287,19 @@ lrAmt: { width: 86, textAlign: "right", fontSize: 10.5, fontWeight: 700, color: 
   lineFooter: { marginTop: 8, flexDirection: "row", justifyContent: "space-between" },
   smallMuted: { fontSize: 9.5, color: palette.muted },
 
+  invPerfTable: { borderWidth: 1, borderColor: palette.border, borderRadius: 12, overflow: "hidden", marginTop: 12 },
+invPerfHead: { flexDirection: "row", backgroundColor: "#F8FAFC", paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: palette.border },
+invPerfRow: { flexDirection: "row", paddingVertical: 7, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: "#F1F5F9" },
+invPerfLast: { borderBottomWidth: 0 },
+
+invPerfColAsset: { flex: 1 },
+invPerfColNum: { width: 78, textAlign: "right" },
+invPerfColPct: { width: 58, textAlign: "right" },
+
+invPerfName: { fontSize: 10.5, fontWeight: 700, color: palette.ink },
+invPerfSub: { fontSize: 9, color: palette.muted, marginTop: 1 },
+
+
   footer: {
     position: "absolute",
     left: 26,
@@ -383,6 +410,13 @@ function sortByAmountDesc<T extends { amount: number }>(rows: T[]) {
   return [...rows].sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
 }
 
+function fmtMoneyOrDash(v: number | null | undefined, currency: string) {
+  return v == null ? "—" : formatMoney(Number(v), currency);
+}
+
+function fmtPctOrDash(v: number | null | undefined) {
+  return v == null ? "—" : fmtPct1(Number(v));
+}
 
 
 function normalizePct(pct: any): number | null {
@@ -689,11 +723,15 @@ function PageExpense({ p }: { p: MonthlyParams }) {
 }
 
 function PageInvestments({ p }: { p: MonthlyParams }) {
+  const currency = p.currency;
+
+  // -----------------------------
+  // Ops
+  // -----------------------------
   const ops = (p.investments?.operations || [])
     .slice()
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
-  // ---- Totales ----
   const opsCount = ops.length;
 
   const totalBuys = ops.reduce(
@@ -708,25 +746,102 @@ function PageInvestments({ p }: { p: MonthlyParams }) {
 
   const totalFees = ops.reduce((acc, o) => acc + Number(o.fee || 0), 0);
 
-  // Neto del mes (interpretación simple): entradas por ventas - salidas por compras - fees
-  // Si prefieres “compras - ventas”, invierte el signo.
+  // Neto del mes: ventas - compras - comisiones
   const net = totalSells - totalBuys - totalFees;
+
+  // -----------------------------
+  // Performance (por activo)
+  // - Calculables primero
+  // - Luego los "null" (faltan valoraciones)
+  // - Orden por abs(profit)
+  // -----------------------------
+  const perfRaw = p.investments?.performanceByAsset || [];
+
+  const perf = perfRaw
+    .slice()
+    .sort((a, b) => {
+      const aOk = a.profit != null;
+      const bOk = b.profit != null;
+      if (aOk !== bOk) return aOk ? -1 : 1;
+      return (
+        Math.abs(Number(b.profit ?? 0)) - Math.abs(Number(a.profit ?? 0))
+      );
+    });
+
+  const hasPerf = perf.length > 0;
+  const hasPerfCalculable = perf.some((r) => r.profit != null);
+
+  const perfCalculable = perf.filter((r) => r.profit != null && r.startValue != null && r.startValue > 0);
+
+  
+  // (Opcional útil) total profit calculable
+  const totalProfitCalculable = perf.reduce(
+    (acc, r) => acc + (r.profit == null ? 0 : Number(r.profit)),
+    0
+  );
+
+  // start "efectivo": si no hay snapshot inicial, usa cashflow (tu regla)
+function effectiveStart(r: AssetMonthlyPerformanceRow) {
+  if (r.startValue != null && r.startValue > 0) return Number(r.startValue);
+
+  // Si tu cashflow es "aportaciones" (compras/transfer_in en positivo), esto cuadra:
+  const cf = Number(r.cashflowNet ?? 0);
+  if (cf > 0) return cf;
+
+  return null;
+}
+
+const rowsOk = perf
+  .map((r) => {
+    const startReal = r.startValue != null ? Number(r.startValue) : null; // SOLO snapshot
+    const end = r.endValue != null ? Number(r.endValue) : null;
+    const cash = Number(r.cashflowNet ?? 0);
+
+    const sEff = effectiveStart(r); // para calcular profit aunque no haya startReal
+
+    const profitEff =
+      r.profit != null
+        ? Number(r.profit)
+        : (sEff != null && end != null ? end - sEff : null);
+
+    // "calculable": puedo obtener profit
+    const calculable = profitEff != null && end != null && sEff != null && sEff > 0;
+
+    return calculable ? { startReal, end, cash, profitEff } : null;
+  })
+  .filter(Boolean) as Array<{ startReal: number | null; end: number; cash: number; profitEff: number }>;
+
+// Totales
+const totalStart = rowsOk.reduce((acc, x) => acc + (x.startReal ?? 0), 0); // 👈 SOLO starts reales
+const totalEnd = rowsOk.reduce((acc, x) => acc + x.end, 0);
+const totalCashflow = rowsOk.reduce((acc, x) => acc + x.cash, 0);
+const totalProfit = rowsOk.reduce((acc, x) => acc + x.profitEff, 0);
+
+// % total: aquí hay 2 opciones
+// A) coherente con "Inicio total" (solo snapshot): ojo, puede infra-representar activos nuevos
+const totalReturnPct = totalStart > 0 ? totalProfit / totalStart : null;
+
 
   return (
     <Page size="A4" style={styles.page}>
       <Text style={styles.sectionTitle}>Inversiones</Text>
       <Text style={styles.sectionSub}>
-        Operaciones del mes · {p.monthLabel}
+        {p.monthLabel}
         {p.walletName ? ` · Cartera: ${p.walletName}` : ""}
       </Text>
 
+      {/* =========================
+          OPERACIONES + RESUMEN
+         ========================= */}
       {ops.length === 0 ? (
-        <Text style={{ color: palette.muted }}>
-          No hay operaciones de inversión en este periodo.
-        </Text>
+        <View style={{ marginTop: 4 }}>
+          <Text style={{ color: palette.muted }}>
+            No hay operaciones de inversión en este periodo.
+          </Text>
+        </View>
       ) : (
         <>
-          {/* Tabla */}
+          {/* Tabla ops */}
           <View style={styles.invTable}>
             <View style={styles.invHead}>
               <Text style={[styles.th, styles.invColDate]}>Fecha</Text>
@@ -741,25 +856,30 @@ function PageInvestments({ p }: { p: MonthlyParams }) {
               const isBuy = o.type === "buy";
               const isSell = o.type === "sell";
 
+              const assetSub = [assetTypeLabel(o.asset?.type), o.asset?.identificator]
+                .filter(Boolean)
+                .join(" · ");
+
               return (
                 <View
                   key={o.id}
                   style={[styles.invRow, ...(isLast ? [styles.invLast] : [])]}
                 >
-                  <Text style={[styles.small, styles.invColDate]}>
+                  <Text style={[styles.small, styles.invColDate]} wrap={false}>
                     {fmtShortDate(o.date)}
                   </Text>
 
                   <View style={styles.invColAsset}>
-                    <Text style={{ fontSize: 10.5, fontWeight: 700 }}>
+                    <Text
+                      style={{ fontSize: 10.5, fontWeight: 700 }}
+                      wrap={false}
+                    >
                       {o.asset?.name ?? "—"}
                     </Text>
 
-                    {(o.asset?.identificator || o.asset?.type) ? (
-                      <Text style={styles.invAssetSub}>
-                        {[assetTypeLabel(o.asset?.type), o.asset?.identificator]
-                          .filter(Boolean)
-                          .join(" · ")}
+                    {!!assetSub ? (
+                      <Text style={styles.invAssetSub} wrap={false}>
+                        {assetSub}
                       </Text>
                     ) : null}
                   </View>
@@ -771,70 +891,197 @@ function PageInvestments({ p }: { p: MonthlyParams }) {
                       ...(isBuy ? [styles.invTypeBuy] : []),
                       ...(isSell ? [styles.invTypeSell] : []),
                     ]}
+                    wrap={false}
                   >
                     {opLabel(o.type)}
                   </Text>
 
-                  <Text style={[styles.small, styles.invColAmt]}>
-                    {formatMoney(Number(o.amount || 0), p.currency)}
+                  <Text style={[styles.small, styles.invColAmt]} wrap={false}>
+                    {formatMoney(Number(o.amount || 0), currency)}
                   </Text>
 
-                  <Text style={[styles.small, styles.invColFee]}>
-                    {formatMoney(Number(o.fee || 0), p.currency)}
+                  <Text style={[styles.small, styles.invColFee]} wrap={false}>
+                    {formatMoney(Number(o.fee || 0), currency)}
                   </Text>
                 </View>
               );
             })}
           </View>
-
-          {/* Resumen debajo */}
-          <View style={styles.invSummary}>
-            <Text style={{ fontSize: 10.5, fontWeight: 700, marginBottom: 2 }}>
-              Resumen del mes
-            </Text>
-
-            <View style={styles.invSummaryRow}>
-              <Text style={styles.invSummaryLabel}>Operaciones</Text>
-              <Text style={styles.invSummaryValue}>{opsCount}</Text>
-            </View>
-
-            <View style={styles.invSummaryRow}>
-              <Text style={styles.invSummaryLabel}>Total compras</Text>
-              <Text style={styles.invSummaryValue}>
-                {formatMoney(totalBuys, p.currency)}
-              </Text>
-            </View>
-
-            <View style={styles.invSummaryRow}>
-              <Text style={styles.invSummaryLabel}>Total ventas</Text>
-              <Text style={styles.invSummaryValue}>
-                {formatMoney(totalSells, p.currency)}
-              </Text>
-            </View>
-
-            <View style={styles.invSummaryRow}>
-              <Text style={styles.invSummaryLabel}>Total comisiones</Text>
-              <Text style={styles.invSummaryValue}>
-                {formatMoney(totalFees, p.currency)}
-              </Text>
-            </View>
-
-            <View style={[styles.invSummaryRow, { marginTop: 6 }]}>
-              <Text style={[styles.invSummaryLabel, { color: palette.ink }]}>
-                Neto (ventas - compras - comisiones)
-              </Text>
-              <Text
-                style={[
-                  styles.invSummaryValue,
-                  net >= 0 ? { color: palette.good } : { color: palette.bad },
-                ]}
-              >
-                {formatSignedMoney(net, p.currency)}
-              </Text>
-            </View>
-          </View>
         </>
       )}
+
+      {/* =========================
+          RENTABILIDAD POR ACTIVO
+         ========================= */}
+      <View style={{ marginTop: 14 }}>
+        <Text style={styles.sectionTitle}>Rentabilidad por activo</Text>
+        <Text style={styles.sectionSub}>
+          Inicio/fin de mes + cashflow neto (sin swaps)
+        </Text>
+
+        {hasPerf ? (
+          <>
+            <View style={styles.invPerfTable}>
+              <View style={styles.invPerfHead}>
+                <Text style={[styles.th, styles.invPerfColAsset]}>Activo</Text>
+                <Text style={[styles.th, styles.invPerfColNum]}>Inicio</Text>
+                <Text style={[styles.th, styles.invPerfColNum]}>Fin</Text>
+                <Text style={[styles.th, styles.invPerfColNum]}>Cashflow</Text>
+                <Text style={[styles.th, styles.invPerfColNum]}>Rentab.</Text>
+                <Text style={[styles.th, styles.invPerfColPct]}>%</Text>
+              </View>
+
+              {perf.map((r, idx) => {
+                const isLast = idx === perf.length - 1;
+
+                const profit = r.profit == null ? null : Number(r.profit);
+                const profitColor =
+                  profit == null
+                    ? palette.muted
+                    : profit > 0
+                    ? palette.good
+                    : profit < 0
+                    ? palette.bad
+                    : palette.muted;
+
+                const cash = Number(r.cashflowNet ?? 0);
+                const cashColor =
+                  cash > 0 ? palette.good : cash < 0 ? palette.bad : palette.muted;
+
+                const assetLabel = r.asset?.name ?? "—";
+                const assetSub = [
+                  assetTypeLabel(r.asset?.type),
+                  r.asset?.identificator,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+
+                return (
+                  <View
+                    key={`perf-${r.asset?.id}-${idx}`}
+                    style={[
+                      styles.invPerfRow,
+                      ...(isLast ? [styles.invPerfLast] : []),
+                    ]}
+                  >
+                    <View style={styles.invPerfColAsset}>
+                      <Text style={styles.invPerfName} wrap={false}>
+                        {assetLabel}
+                      </Text>
+                      {!!assetSub && (
+                        <Text style={styles.invPerfSub} wrap={false}>
+                          {assetSub}
+                        </Text>
+                      )}
+                    </View>
+
+                    <Text style={[styles.small, styles.invPerfColNum]} wrap={false}>
+                      {fmtMoneyOrDash(r.startValue, currency)}
+                    </Text>
+
+                    <Text style={[styles.small, styles.invPerfColNum]} wrap={false}>
+                      {fmtMoneyOrDash(r.endValue, currency)}
+                    </Text>
+
+                    <Text
+                      style={[
+                        styles.small,
+                        styles.invPerfColNum,
+                        { color: cashColor },
+                      ]}
+                      wrap={false}
+                    >
+                      {formatSignedMoney(cash, currency)}
+                    </Text>
+
+                    <Text
+                      style={[
+                        styles.small,
+                        styles.invPerfColNum,
+                        { color: profitColor, fontWeight: 700 },
+                      ]}
+                      wrap={false}
+                    >
+                      {profit == null ? "—" : formatSignedMoney(profit, currency)}
+                    </Text>
+
+                    <Text
+                      style={[
+                        styles.small,
+                        styles.invPerfColPct,
+                        { color: profitColor, fontWeight: 700 },
+                      ]}
+                      wrap={false}
+                    >
+                      {fmtPctOrDash(r.returnPct)}
+                    </Text>
+                  </View>
+                );
+              })}
+
+                          {perfCalculable.length > 0 ? (
+  <View
+    style={[
+      styles.invPerfRow,
+      {
+        borderTopWidth: 1,
+        borderTopColor: palette.border,
+        backgroundColor: "#F8FAFC",
+      },
+    ]}
+  >
+    <View style={styles.invPerfColAsset}>
+      <Text style={[styles.invPerfName, { fontWeight: 800 }]}>Total</Text>
+      <Text style={styles.invPerfSub}>Activos calculables</Text>
+    </View>
+
+    <Text style={[styles.small, styles.invPerfColNum]} wrap={false}>
+      {formatMoney(totalStart, currency)}
+    </Text>
+
+<Text style={[styles.small, styles.invPerfColNum]} wrap={false}>
+  {formatMoney(totalEnd, currency)}
+</Text>
+
+<Text style={[styles.small, styles.invPerfColNum]} wrap={false}>
+  {formatSignedMoney(totalCashflow, currency)}
+</Text>
+    <Text
+      style={[
+        styles.small,
+        styles.invPerfColNum,
+        { fontWeight: 800, color: totalProfit >= 0 ? palette.good : palette.bad },
+      ]}
+      wrap={false}
+    >
+      {formatSignedMoney(totalProfit, currency)}
+    </Text>
+
+    <Text
+      style={[
+        styles.small,
+        styles.invPerfColPct,
+        { fontWeight: 800, color: totalProfit >= 0 ? palette.good : palette.bad },
+      ]}
+      wrap={false}
+    >
+      {totalReturnPct == null ? "—" : fmtPct1(totalReturnPct)}
+    </Text>
+  </View>
+) : null}
+
+            </View>
+
+
+          </>
+        ) : (
+          <View style={{ marginTop: 6 }}>
+            <Text style={{ color: palette.muted }}>
+              No hay datos de rentabilidad por activo (faltan valoraciones).
+            </Text>
+          </View>
+        )}
+      </View>
 
       <View style={styles.footer} fixed>
         <Text>Finexa · Reportes</Text>

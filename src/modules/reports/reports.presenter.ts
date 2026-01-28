@@ -9,6 +9,22 @@ export function formatMonthLabel(month: string) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+export type AssetMonthlyPerformanceRow = {
+  asset: {
+    id: number;
+    name: string;
+    type: string;
+    identificator: string | null;
+    currency: string | null;
+  };
+  startValue: number | null;
+  endValue: number | null;
+  cashflowNet: number;
+  profit: number | null;
+  returnPct: number | null;
+  startSnapAt?: string | null;
+  endSnapAt?: string | null;
+};
 
 
 export type Delta = { value: number; pct: number | null };
@@ -84,6 +100,8 @@ export type MonthlyTemplateParams = {
 
     investments?: {
     operations: InvestmentOpRow[];
+    performanceByAsset?: AssetMonthlyPerformanceRow[]; // ✅ AÑADIR
+
   };
 
   trends: {
@@ -209,6 +227,23 @@ export function toMonthlyTemplateParams(report: any, currency: string): MonthlyT
               currency: o.asset?.currency ?? null,
             },
           })),
+                performanceByAsset: (report.investments.performanceByAsset || []).map((r: any) => ({
+        asset: {
+          id: Number(r.asset?.id),
+          name: String(r.asset?.name ?? "—"),
+          type: String(r.asset?.type ?? "unknown"),
+          identificator: r.asset?.identificator ?? null,
+          currency: r.asset?.currency ?? null,
+        },
+        startValue: r.startValue == null ? null : Number(r.startValue),
+        endValue: r.endValue == null ? null : Number(r.endValue),
+        cashflowNet: Number(r.cashflowNet || 0),
+        profit: r.profit == null ? null : Number(r.profit),
+        returnPct: r.returnPct == null ? null : Number(r.returnPct),
+        startSnapAt: r.startSnapAt ?? null,
+        endSnapAt: r.endSnapAt ?? null,
+      })),
+
         }
       : undefined,
 
