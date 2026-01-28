@@ -15,6 +15,10 @@ export class SellAssetDto {
   @IsOptional()
   date?: string; // ISO
 
+    @IsOptional()
+  @IsNumber()
+  quantity?: number;
+
   @IsInt()
   toWalletId: number; // wallet cash destino
 

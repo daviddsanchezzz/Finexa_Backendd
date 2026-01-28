@@ -60,6 +60,48 @@ export class InvestmentsService {
     return this.parseNonNegative(x ?? 0, 'fee');
   }
 
+private parseQuantity(x: any) {
+  if (x === undefined || x === null || x === "") return null; // opcional
+  const n = Number(x);
+  if (!Number.isFinite(n) || n <= 0) throw new BadRequestException("Invalid quantity");
+  return new Prisma.Decimal(n);
+}
+
+private async adjustAssetQuantityTx(
+  tx: Tx,
+  userId: number,
+  assetId: number,
+  delta: Prisma.Decimal, // puede ser + o -
+) {
+  // Si delta es negativo, protege contra quedar en negativo
+  const isNeg = delta.isNegative?.() ? delta.isNegative() : delta.lessThan(0);
+
+  if (isNeg) {
+    const updated = await tx.investmentAsset.updateMany({
+      where: {
+        id: assetId,
+        userId,
+        active: true,
+        // quantity >= abs(delta)
+        quantity: { gte: delta.abs() },
+      },
+      data: { quantity: { decrement: delta.abs() } },
+    });
+
+    if (updated.count !== 1) {
+      throw new BadRequestException("Insufficient quantity");
+    }
+    return;
+  }
+
+  // delta positivo => incrementa
+  await tx.investmentAsset.updateMany({
+    where: { id: assetId, userId, active: true },
+    data: { quantity: { increment: delta } },
+  });
+}
+
+
   private parseDate(x: any) {
     const d = x ? new Date(x) : new Date();
     if (Number.isNaN(d.getTime())) throw new BadRequestException('Invalid date');
@@ -899,7 +941,8 @@ async depositAsset(userId: number, assetId: number, dto: any) {
 
   // 2) Parseos/validaciones
   const amount = this.parseAmount(dto.amount, 'amount'); // principal invertido
-  const fee = this.parseFee(dto.fee);                    // comisión (>= 0)
+  const fee = this.parseFee(dto.fee);                    // comisión (>= 
+  const quantity = this.parseQuantity(dto.quantity)
   const date = this.parseDate(dto.date);                 // fecha válida
 
   // 3) Origen: wallet de cash (de dónde sale el dinero)
@@ -945,17 +988,25 @@ async depositAsset(userId: number, assetId: number, dto: any) {
         type: 'transfer_in' as any,    // entrada a inversión
         date,
         amount,                        // SOLO principal
+        quantity,
         fee,                           // comisión
         transactionId: createdTx.id,   // enlace con Transaction
         active: true,
       },
     });
 
+    if (quantity) {
+      await this.adjustAssetQuantityTx(tx, userId, assetId, quantity); // +quantity
+    }
+
+
     return { transaction: createdTx, operation: op };
   });
 
   // 7) Recalcular la wallet de inversión (para reflejar el valor total)
   await this.recalcInvestmentWalletBalance(userId);
+
+
   return result;
 }
 
@@ -972,6 +1023,7 @@ async withdrawAsset(userId: number, assetId: number, dto: any) {
   const amountNet = this.parseAmount(dto.amount, 'amount'); // neto recibido
   const fee = this.parseFee(dto.fee);                       // informativo (si no modelas bruto)
   const date = this.parseDate(dto.date);
+  const quantity = this.parseQuantity(dto.quantity)
 
   // Wallet destino: cash
   const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
@@ -1006,6 +1058,7 @@ async withdrawAsset(userId: number, assetId: number, dto: any) {
         assetId,
         type: 'transfer_out' as any,   // salida de inversión
         date,
+        quantity,
         amount: amountNet,             // guardas neto
         fee,                           // informativo
         transactionId: createdTx.id,
@@ -1018,6 +1071,11 @@ async withdrawAsset(userId: number, assetId: number, dto: any) {
       where: { id: toWalletId },
       data: { balance: { increment: amountNet } },
     });
+
+    if (quantity) {
+      await this.adjustAssetQuantityTx(tx, userId, assetId, quantity.neg()); // -quantity
+    }
+
 
     return { transaction: createdTx, operation: op };
   });
@@ -1040,6 +1098,7 @@ async buyAsset(userId: number, assetId: number, dto: any) {
   const amount = this.parseAmount(dto.amount, 'amount'); // principal
   const fee = this.parseFee(dto.fee);
   const date = this.parseDate(dto.date);
+  const quantity = this.parseQuantity(dto.quantity)
 
   const fromWalletId = this.requireInt(dto.fromWalletId, 'fromWalletId');
   await this.assertWalletKind(userId, fromWalletId, 'cash');
@@ -1078,12 +1137,18 @@ async buyAsset(userId: number, assetId: number, dto: any) {
         assetId,
         type: 'buy' as any,
         date,
+        quantity,
         amount,                      // principal
         fee,                         // comisión
         transactionId: createdTx.id,
         active: true,
       },
     });
+
+        if (quantity) {
+      await this.adjustAssetQuantityTx(tx, userId, assetId, quantity); // +quantity
+    }
+
 
     return { transaction: createdTx, operation: op };
   });
@@ -1106,6 +1171,7 @@ async sellAsset(userId: number, assetId: number, dto: any) {
   const amountNet = this.parseAmount(dto.amount, 'amount');
   const fee = this.parseFee(dto.fee); // informativo a menos que modeles bruto
   const date = this.parseDate(dto.date);
+  const quantity = this.parseQuantity(dto.quantity)
 
   const toWalletId = this.requireInt(dto.toWalletId, 'toWalletId');
   await this.assertWalletKind(userId, toWalletId, 'cash');
@@ -1138,6 +1204,7 @@ async sellAsset(userId: number, assetId: number, dto: any) {
         assetId,
         type: 'sell' as any,
         date,
+        quantity,
         amount: amountNet,
         fee,
         transactionId: createdTx.id,
@@ -1150,6 +1217,11 @@ async sellAsset(userId: number, assetId: number, dto: any) {
       where: { id: toWalletId },
       data: { balance: { increment: amountNet } },
     });
+
+    if (quantity) {
+      await this.adjustAssetQuantityTx(tx, userId, assetId, quantity.neg()); // -quantity
+    }
+
 
     return { transaction: createdTx, operation: op };
   });

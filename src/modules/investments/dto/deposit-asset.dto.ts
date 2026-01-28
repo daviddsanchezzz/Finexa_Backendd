@@ -15,6 +15,10 @@ export class DepositAssetDto {
   @IsNumber()
   fee?: number;
 
+    @IsOptional()
+    @IsNumber()
+    quantity?: number;
+
   @IsOptional()
   @IsString()
   description?: string;

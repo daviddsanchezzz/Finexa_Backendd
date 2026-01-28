@@ -17,6 +17,10 @@ export class BuyAssetDto {
   fee?: number;
 
   @IsOptional()
+  @IsNumber()
+  quantity?: number;
+
+  @IsOptional()
   @IsString()
   date?: string;
 

@@ -809,6 +809,7 @@ model InvestmentOperation {
   date      DateTime @default(now())
 
   amount    Float
+  quantity  Decimal?
   fee       Float?   @default(0)
 
   // Link opcional a Transaction (para ventas/aportes con movimiento de wallet)

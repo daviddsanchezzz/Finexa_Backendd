@@ -15,6 +15,10 @@ export class WithdrawAssetDto {
   @IsNumber()
   fee?: number;
 
+    @IsOptional()
+  @IsNumber()
+  quantity?: number;
+
   @IsOptional()
   @IsString()
   description?: string;
