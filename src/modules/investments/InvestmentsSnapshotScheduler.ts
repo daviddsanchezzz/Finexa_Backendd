@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from 'src/common/prisma/prisma.service';
 import { InvestmentsService } from './investments.service';
+import { ManualMonthData } from '@prisma/client';
+import { MonthDataService } from '../monthData/month-data.service';
 
 @Injectable()
 export class InvestmentsSnapshotScheduler {
@@ -10,10 +12,11 @@ export class InvestmentsSnapshotScheduler {
   constructor(
     private prisma: PrismaService,
     private investments: InvestmentsService,
+    private monthData: MonthDataService
   ) {}
 
 // Día 1 a las 00:05 (Europa/Madrid)
-@Cron('5 0 1 * *', { timeZone: 'Europe/Madrid' })
+@Cron('0 4 1 * *', { timeZone: 'Europe/Madrid' })
 async closePreviousMonth() {
   const users = await this.prisma.user.findMany({
     where: { active: true },

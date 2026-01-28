@@ -2,6 +2,17 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "src/common/prisma/prisma.service";
 import { MonthDataDto } from "./dto/month-data.dto";
 
+
+function monthRangeUTC(monthStart: Date) {
+  const start = new Date(monthStart);
+  const end = new Date(Date.UTC(
+    monthStart.getUTCFullYear(),
+    monthStart.getUTCMonth() + 1,
+    1,
+  ));
+  return { start, end };
+}
+
 @Injectable()
 export class MonthDataService {
   constructor(private prisma: PrismaService) {}
@@ -79,4 +90,101 @@ export class MonthDataService {
     //   where: { userId_year_month: { userId, year, month } }
     // });
   }
+
+async calculateIncome(
+  userId: number,
+  start: Date,
+  end: Date,
+): Promise<number> {
+  const res = await this.prisma.transaction.aggregate({
+    where: {
+      userId,
+      type: "income",
+      date: { gte: start, lt: end },
+
+      // filtros equivalentes al frontend
+      isRecurring: false,
+      OR: [
+        { excludeFromStats: false },
+      ],
+    },
+    _sum: { amount: true },
+  });
+
+  return res._sum.amount ?? 0;
+}
+
+async calculateExpense(
+  userId: number,
+  start: Date,
+  end: Date,
+): Promise<number> {
+  const res = await this.prisma.transaction.aggregate({
+    where: {
+      userId,
+      type: "expense",
+      date: { gte: start, lt: end },
+
+      // filtros equivalentes al frontend
+      isRecurring: false,
+      OR: [
+        { excludeFromStats: false },
+      ],
+    },
+    _sum: { amount: true },
+  });
+
+  return res._sum.amount ?? 0;
+}
+
+async calculateFinalBalance(
+  userId: number,
+  end: Date,
+): Promise<number> {
+  const res = await this.prisma.wallet.aggregate({
+    where: {
+      userId,
+      active: true,
+    },
+    _sum: {
+      balance: true,
+    },
+  });
+
+  return res._sum.balance ?? 0;
+}
+
+
+async closeMonthWithCron(userId: number, monthStart: Date) {
+  const year = monthStart.getUTCFullYear();
+  const month = monthStart.getUTCMonth() + 1;
+
+  const existing = await this.prisma.manualMonthData.findUnique({
+    where: { userId_year_month: { userId, year, month } },
+  });
+
+  if (existing) {
+    return existing; // 🔁 idempotente
+  }
+
+  const { start, end } = monthRangeUTC(monthStart);
+
+  const [income, expense, finalBalance] = await Promise.all([
+    this.calculateIncome(userId, start, end),
+    this.calculateExpense(userId, start, end),
+    this.calculateFinalBalance(userId, end),
+  ]);
+
+  return this.prisma.manualMonthData.create({
+    data: {
+      userId,
+      year,
+      month,
+      income,
+      expense,
+      finalBalance,
+    },
+  });
+}
+
 }
