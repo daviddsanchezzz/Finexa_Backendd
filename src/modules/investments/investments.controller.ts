@@ -22,11 +22,17 @@ import { SwapAssetsDto } from './dto/swap-assets.dto';
 import { DepositAssetDto } from './dto/deposit-asset.dto';
 import { WithdrawAssetDto } from './dto/withdraw-asset.dto';
 import { BuyAssetDto } from './dto/buy-asset.dto';
+import { ListPortfolioSnapshotsQueryDto } from './dto/portfolio-snapshot.dto';
 
 @Controller('investments')
 export class InvestmentsController {
   constructor(private readonly investmentsService: InvestmentsService) {}
 
+  
+  @Get('snapshots')
+  async listSnapshots(@Query() q: ListPortfolioSnapshotsQueryDto) {
+    return this.investmentsService.listMonthlySnapshots(q);
+  }
   // -----------------------------
   // Assets
   // -----------------------------
