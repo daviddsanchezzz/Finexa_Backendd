@@ -1,4 +1,4 @@
-﻿-- CreateEnum
+-- CreateEnum
 CREATE TYPE "ProjectStatus" AS ENUM ('idea', 'active', 'paused', 'completed', 'cancelled');
 
 -- CreateEnum
