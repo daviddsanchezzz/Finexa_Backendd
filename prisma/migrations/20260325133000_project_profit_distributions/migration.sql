@@ -1,4 +1,4 @@
-﻿-- CreateTable
+-- CreateTable
 CREATE TABLE "ProjectProfitDistribution" (
     "id" SERIAL NOT NULL,
     "projectId" INTEGER NOT NULL,
