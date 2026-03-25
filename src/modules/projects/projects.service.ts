@@ -63,6 +63,7 @@ export class ProjectsService {
         by: ['projectId', 'type'],
         where: {
           projectId: { in: projectIds },
+          entryKind: 'standard',
         },
         _sum: { amount: true },
       }),
@@ -120,10 +121,10 @@ export class ProjectsService {
     for (const [, data] of map) {
       data.totalIncome = data.transactionsIncome + data.manualIncome;
       data.totalExpense = data.transactionsExpense + data.manualExpense;
-      data.balance = data.totalIncome - data.totalExpense;
-      data.operatingExpense = Math.max(0, data.totalExpense - data.withdrawalsTotal);
+      data.operatingExpense = data.totalExpense;
       data.operatingBalance = data.totalIncome - data.operatingExpense;
-      data.cashInBox = data.operatingBalance - data.withdrawalsTotal;
+      data.balance = data.operatingBalance - data.withdrawalsTotal;
+      data.cashInBox = data.balance;
     }
 
     return map;
