@@ -11,6 +11,10 @@ import {
   CreateProjectManualEntryDto,
   UpdateProjectManualEntryDto,
 } from './dto/project-manual-entry.dto';
+import {
+  CreateProjectProfitDistributionDto,
+  UpdateProjectProfitDistributionDto,
+} from './dto/project-profit-distribution.dto';
 
 @Injectable()
 export class ProjectsService {
@@ -99,6 +103,25 @@ export class ProjectsService {
     return map;
   }
 
+  private validateDistributionLines(
+    totalAmount: number,
+    lines: { partnerName: string; amount: number }[],
+  ) {
+    if (!lines?.length) {
+      throw new BadRequestException('Debes añadir al menos un socio en el reparto');
+    }
+
+    const sum = lines.reduce((acc, line) => acc + Number(line.amount || 0), 0);
+    const roundedTotal = Math.round(totalAmount * 100);
+    const roundedSum = Math.round(sum * 100);
+
+    if (roundedTotal !== roundedSum) {
+      throw new BadRequestException(
+        `La suma de líneas (${sum.toFixed(2)}) debe coincidir con el total (${totalAmount.toFixed(2)})`,
+      );
+    }
+  }
+
   async create(userId: number, dto: CreateProjectDto) {
     const startDate = this.toDate(dto.startDate, 'startDate');
     const endDate = dto.endDate ? this.toDate(dto.endDate, 'endDate') : null;
@@ -169,6 +192,12 @@ export class ProjectsService {
         manualEntries: {
           orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
         },
+        profitDistributions: {
+          include: {
+            lines: true,
+          },
+          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        },
       },
     });
 
@@ -178,9 +207,20 @@ export class ProjectsService {
 
     const financialsMap = await this.buildFinancialsMap(userId, [projectId]);
 
+    const baseFinancials = financialsMap.get(projectId);
+    const totalDistributed = project.profitDistributions.reduce(
+      (acc, item) => acc + Number(item.totalAmount || 0),
+      0,
+    );
+    const retainedProfit = Number(baseFinancials.balance || 0) - totalDistributed;
+
     return {
       ...project,
-      financials: financialsMap.get(projectId),
+      financials: {
+        ...baseFinancials,
+        totalDistributed,
+        retainedProfit,
+      },
     };
   }
 
@@ -345,6 +385,141 @@ export class ProjectsService {
     }
 
     await this.prisma.projectManualEntry.delete({ where: { id: entryId } });
+
+    return { success: true };
+  }
+
+  async createProfitDistribution(
+    userId: number,
+    projectId: number,
+    dto: CreateProjectProfitDistributionDto,
+  ) {
+    await this.assertOwnership(userId, projectId);
+    this.validateDistributionLines(dto.totalAmount, dto.lines);
+
+    const totalAmount = Number(dto.totalAmount);
+    const linesData = dto.lines.map((line) => {
+      const amount = Number(line.amount);
+      const percentage = totalAmount > 0 ? Number(((amount / totalAmount) * 100).toFixed(4)) : null;
+      return {
+        partnerName: line.partnerName.trim(),
+        amount,
+        percentage,
+        notes: line.notes?.trim() || null,
+      };
+    });
+
+    return this.prisma.projectProfitDistribution.create({
+      data: {
+        projectId,
+        title: dto.title?.trim() || null,
+        totalAmount,
+        date: this.toDate(dto.date, 'date'),
+        notes: dto.notes?.trim() || null,
+        lines: {
+          create: linesData,
+        },
+      },
+      include: {
+        lines: true,
+      },
+    });
+  }
+
+  async updateProfitDistribution(
+    userId: number,
+    projectId: number,
+    distributionId: number,
+    dto: UpdateProjectProfitDistributionDto,
+  ) {
+    await this.assertOwnership(userId, projectId);
+
+    const existing = await this.prisma.projectProfitDistribution.findFirst({
+      where: { id: distributionId, projectId },
+      include: { lines: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Reparto de beneficios no encontrado');
+    }
+
+    const nextTotalAmount =
+      dto.totalAmount !== undefined ? Number(dto.totalAmount) : Number(existing.totalAmount);
+    const nextLines =
+      dto.lines !== undefined
+        ? dto.lines
+        : existing.lines.map((line) => ({
+            partnerName: line.partnerName,
+            amount: Number(line.amount),
+            notes: line.notes || undefined,
+          }));
+
+    this.validateDistributionLines(nextTotalAmount, nextLines);
+
+    const linesData = nextLines.map((line) => {
+      const amount = Number(line.amount);
+      const percentage = nextTotalAmount > 0 ? Number(((amount / nextTotalAmount) * 100).toFixed(4)) : null;
+      return {
+        partnerName: line.partnerName.trim(),
+        amount,
+        percentage,
+        notes: line.notes?.trim() || null,
+      };
+    });
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.projectProfitDistribution.update({
+        where: { id: distributionId },
+        data: {
+          title: dto.title !== undefined ? dto.title?.trim() || null : undefined,
+          totalAmount: dto.totalAmount !== undefined ? nextTotalAmount : undefined,
+          date: dto.date ? this.toDate(dto.date, 'date') : undefined,
+          notes: dto.notes !== undefined ? dto.notes?.trim() || null : undefined,
+        },
+      });
+
+      if (dto.lines !== undefined) {
+        await tx.projectProfitDistributionLine.deleteMany({
+          where: { distributionId },
+        });
+
+        await tx.projectProfitDistributionLine.createMany({
+          data: linesData.map((line) => ({
+            distributionId,
+            partnerName: line.partnerName,
+            amount: line.amount,
+            percentage: line.percentage,
+            notes: line.notes,
+          })),
+        });
+      }
+
+      return tx.projectProfitDistribution.findUnique({
+        where: { id: updated.id },
+        include: { lines: true },
+      });
+    });
+  }
+
+  async removeProfitDistribution(
+    userId: number,
+    projectId: number,
+    distributionId: number,
+  ) {
+    await this.assertOwnership(userId, projectId);
+
+    const existing = await this.prisma.projectProfitDistribution.findFirst({
+      where: { id: distributionId, projectId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Reparto de beneficios no encontrado');
+    }
+
+    await this.prisma.projectProfitDistribution.delete({
+      where: { id: distributionId },
+    });
 
     return { success: true };
   }

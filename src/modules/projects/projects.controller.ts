@@ -15,6 +15,10 @@ import {
   CreateProjectManualEntryDto,
   UpdateProjectManualEntryDto,
 } from './dto/project-manual-entry.dto';
+import {
+  CreateProjectProfitDistributionDto,
+  UpdateProjectProfitDistributionDto,
+} from './dto/project-profit-distribution.dto';
 import { ProjectsService } from './projects.service';
 
 @Controller('projects')
@@ -94,6 +98,39 @@ export class ProjectsController {
     @Param('entryId', ParseIntPipe) entryId: number,
   ) {
     return this.projectsService.removeManualEntry(userId, id, entryId);
+  }
+
+  @Post(':id/profit-distributions')
+  createProfitDistribution(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateProjectProfitDistributionDto,
+  ) {
+    return this.projectsService.createProfitDistribution(userId, id, dto);
+  }
+
+  @Patch(':id/profit-distributions/:distributionId')
+  updateProfitDistribution(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('distributionId', ParseIntPipe) distributionId: number,
+    @Body() dto: UpdateProjectProfitDistributionDto,
+  ) {
+    return this.projectsService.updateProfitDistribution(
+      userId,
+      id,
+      distributionId,
+      dto,
+    );
+  }
+
+  @Delete(':id/profit-distributions/:distributionId')
+  removeProfitDistribution(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('distributionId', ParseIntPipe) distributionId: number,
+  ) {
+    return this.projectsService.removeProfitDistribution(userId, id, distributionId);
   }
 }
 
