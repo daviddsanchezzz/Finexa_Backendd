@@ -119,6 +119,7 @@ export class TransactionsService {
         categoryId: transaction.categoryId,
         subcategoryId: transaction.subcategoryId,
         tripId: transaction.tripId,
+        projectId: (transaction as any).projectId ?? null,
 
         userId: transaction.userId,
         active: true,
@@ -153,6 +154,7 @@ export class TransactionsService {
       subcategoryId?: number;
       isRecurring?: boolean;
       investmentAssetId?: number;
+      projectId?: number;
     },
   ) {
     try {
@@ -204,8 +206,18 @@ export class TransactionsService {
         );
       }
 
+      if (filters?.projectId && isNaN(Number(filters.projectId))) {
+        throw new BadRequestException(
+          'El parámetro projectId debe ser un número válido.',
+        );
+      }
+
       if (filters?.investmentAssetId) {
         where.investmentAssetId = filters.investmentAssetId;
+      }
+
+      if (filters?.projectId) {
+        where.projectId = filters.projectId;
       }
 
       if (filters?.walletId) {
@@ -250,6 +262,7 @@ if (filters?.dateFrom || filters?.dateTo) {
           wallet: true,
           fromWallet: true,
           toWallet: true,
+          project: true,
         },
         orderBy: { date: 'desc' },
       });
@@ -446,6 +459,7 @@ if (filters?.dateFrom || filters?.dateTo) {
         categoryId: t.categoryId ?? undefined,
         subcategoryId: t.subcategoryId ?? undefined,
         tripId: t.tripId ?? undefined,
+        projectId: (t as any).projectId ?? undefined,
         // la ocurrencia NO es recurrente
         isRecurring: false,
         recurrence: null,
@@ -549,6 +563,10 @@ if (filters?.dateFrom || filters?.dateTo) {
         typeof (dto as any).investmentAssetId !== 'undefined'
           ? (dto as any).investmentAssetId
           : (baseTx as any).investmentAssetId,
+      projectId:
+        typeof (dto as any).projectId !== 'undefined'
+          ? (dto as any).projectId
+          : (baseTx as any).projectId,
     };
 
     // isRecurring + recurrence para la plantilla

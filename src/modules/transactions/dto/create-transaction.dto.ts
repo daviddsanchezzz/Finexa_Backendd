@@ -60,5 +60,9 @@ export class CreateTransactionDto {
 
   @IsOptional()
   @IsInt()
+  projectId?: number;
+
+  @IsOptional()
+  @IsInt()
   parentId?: number;
 }

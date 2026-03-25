@@ -33,6 +33,7 @@ export class TransactionsController {
       subcategoryId: query.subcategoryId ? Number(query.subcategoryId) : undefined,
       isRecurring: query.isRecurring ? query.isRecurring === 'true' : undefined,
       investmentAssetId: query.investmentAssetId ? Number(query.investmentAssetId) : undefined,
+      projectId: query.projectId ? Number(query.projectId) : undefined,
     };
   
     return this.transactionsService.findAll(userId, filters);

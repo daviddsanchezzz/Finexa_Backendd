@@ -70,6 +70,19 @@ enum InvestmentOperationType {
   swap_out
 }
 
+enum ProjectStatus {
+  idea
+  active
+  paused
+  completed
+  cancelled
+}
+
+enum ProjectEntryType {
+  income
+  expense
+}
+
 
 
 
@@ -95,6 +108,7 @@ model User {
   debts         Debt[]         // 👈 RELACIÓN INVERSA A Debt.user
 
   trips         Trip[]
+  projects      Project[]
 
   refreshToken  String?
 
@@ -296,6 +310,9 @@ model Transaction {
   tripId        Int?
   trip          Trip?        @relation(fields: [tripId], references: [id])
 
+  projectId     Int?
+  project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
   investmentAssetId Int?
   investmentAsset   InvestmentAsset? @relation(fields: [investmentAssetId], references: [id])
   investmentOperation InvestmentOperation?
@@ -312,6 +329,49 @@ model Transaction {
   active        Boolean      @default(true)
 
   @@index([subcategoryId])
+  @@index([projectId])
+}
+
+model Project {
+  id           Int             @id @default(autoincrement())
+  userId       Int
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name         String
+  description  String?
+  type         String?
+  status       ProjectStatus   @default(idea)
+  startDate    DateTime
+  endDate      DateTime?
+  notes        String?
+
+  transactions Transaction[]
+  manualEntries ProjectManualEntry[]
+
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, startDate])
+}
+
+model ProjectManualEntry {
+  id          Int              @id @default(autoincrement())
+  projectId   Int
+  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  type        ProjectEntryType
+  title       String
+  description String?
+  amount      Float
+  date        DateTime         @default(now())
+  category    String?
+  notes       String?
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([projectId, date])
 }
 
 
