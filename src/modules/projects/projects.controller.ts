@@ -19,6 +19,10 @@ import {
   CreateProjectProfitDistributionDto,
   UpdateProjectProfitDistributionDto,
 } from './dto/project-profit-distribution.dto';
+import {
+  DistributeProjectProfitDto,
+  UpsertProjectPartnersDto,
+} from './dto/project-partners.dto';
 import { ProjectsService } from './projects.service';
 
 @Controller('projects')
@@ -98,6 +102,24 @@ export class ProjectsController {
     @Param('entryId', ParseIntPipe) entryId: number,
   ) {
     return this.projectsService.removeManualEntry(userId, id, entryId);
+  }
+
+  @Patch(':id/partners')
+  upsertPartners(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpsertProjectPartnersDto,
+  ) {
+    return this.projectsService.upsertPartners(userId, id, dto);
+  }
+
+  @Post(':id/distribute-profit')
+  distributeProfit(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DistributeProjectProfitDto,
+  ) {
+    return this.projectsService.distributeProfit(userId, id, dto);
   }
 
   @Post(':id/profit-distributions')

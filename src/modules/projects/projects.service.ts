@@ -15,6 +15,10 @@ import {
   CreateProjectProfitDistributionDto,
   UpdateProjectProfitDistributionDto,
 } from './dto/project-profit-distribution.dto';
+import {
+  DistributeProjectProfitDto,
+  UpsertProjectPartnersDto,
+} from './dto/project-partners.dto';
 
 @Injectable()
 export class ProjectsService {
@@ -44,7 +48,7 @@ export class ProjectsService {
   private async buildFinancialsMap(userId: number, projectIds: number[]) {
     if (!projectIds.length) return new Map<number, any>();
 
-    const [txGrouped, manualGrouped] = await Promise.all([
+    const [txGrouped, manualGrouped, withdrawalsGrouped] = await Promise.all([
       this.prisma.transaction.groupBy({
         by: ['projectId', 'type'],
         where: {
@@ -62,6 +66,15 @@ export class ProjectsService {
         },
         _sum: { amount: true },
       }),
+      this.prisma.projectManualEntry.groupBy({
+        by: ['projectId'],
+        where: {
+          projectId: { in: projectIds },
+          type: 'expense',
+          entryKind: 'profit_distribution',
+        },
+        _sum: { amount: true },
+      }),
     ]);
 
     const map = new Map<number, any>();
@@ -75,6 +88,10 @@ export class ProjectsService {
         totalIncome: 0,
         totalExpense: 0,
         balance: 0,
+        withdrawalsTotal: 0,
+        operatingExpense: 0,
+        operatingBalance: 0,
+        cashInBox: 0,
       });
     }
 
@@ -94,10 +111,19 @@ export class ProjectsService {
       if (row.type === 'expense') data.manualExpense = value;
     }
 
+    for (const row of withdrawalsGrouped) {
+      const data = map.get(row.projectId);
+      if (!data) continue;
+      data.withdrawalsTotal = Number(row._sum.amount || 0);
+    }
+
     for (const [, data] of map) {
       data.totalIncome = data.transactionsIncome + data.manualIncome;
       data.totalExpense = data.transactionsExpense + data.manualExpense;
       data.balance = data.totalIncome - data.totalExpense;
+      data.operatingExpense = Math.max(0, data.totalExpense - data.withdrawalsTotal);
+      data.operatingBalance = data.totalIncome - data.operatingExpense;
+      data.cashInBox = data.operatingBalance - data.withdrawalsTotal;
     }
 
     return map;
@@ -192,6 +218,9 @@ export class ProjectsService {
         manualEntries: {
           orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
         },
+        partners: {
+          orderBy: [{ isMe: 'desc' }, { name: 'asc' }],
+        },
         profitDistributions: {
           include: {
             lines: true,
@@ -212,14 +241,14 @@ export class ProjectsService {
       (acc, item) => acc + Number(item.totalAmount || 0),
       0,
     );
-    const retainedProfit = Number(baseFinancials.balance || 0) - totalDistributed;
+    const retainedProfit = Number(baseFinancials.operatingBalance || 0) - totalDistributed;
 
     return {
       ...project,
       financials: {
         ...baseFinancials,
         totalDistributed,
-        retainedProfit,
+        retainedProfit: Number(retainedProfit.toFixed(2)),
       },
     };
   }
@@ -336,6 +365,8 @@ export class ProjectsService {
         date: this.toDate(dto.date, 'date'),
         category: dto.category?.trim() || null,
         notes: dto.notes?.trim() || null,
+        entryKind: 'standard',
+        partnerName: null,
       },
     });
   }
@@ -387,6 +418,113 @@ export class ProjectsService {
     await this.prisma.projectManualEntry.delete({ where: { id: entryId } });
 
     return { success: true };
+  }
+
+  async upsertPartners(
+    userId: number,
+    projectId: number,
+    dto: UpsertProjectPartnersDto,
+  ) {
+    await this.assertOwnership(userId, projectId);
+
+    const normalized = dto.partners.map((partner) => ({
+      name: partner.name.trim(),
+      percentage: Number(partner.percentage),
+      isMe: !!partner.isMe,
+    }));
+
+    if (normalized.some((partner) => !partner.name)) {
+      throw new BadRequestException('Todos los socios deben tener nombre');
+    }
+
+    const totalPercentage = normalized.reduce(
+      (acc, partner) => acc + Number(partner.percentage || 0),
+      0,
+    );
+    if (Math.round(totalPercentage * 100) !== 10000) {
+      throw new BadRequestException(
+        `El porcentaje total debe ser 100%. Actual: ${totalPercentage.toFixed(2)}%`,
+      );
+    }
+
+    const meCount = normalized.filter((partner) => partner.isMe).length;
+    if (meCount !== 1) {
+      throw new BadRequestException('Debe existir exactamente un socio marcado como tú');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.projectPartner.deleteMany({ where: { projectId } });
+      await tx.projectPartner.createMany({
+        data: normalized.map((partner) => ({
+          projectId,
+          name: partner.name,
+          percentage: partner.percentage,
+          isMe: partner.isMe,
+        })),
+      });
+    });
+
+    return this.prisma.projectPartner.findMany({
+      where: { projectId },
+      orderBy: [{ isMe: 'desc' }, { name: 'asc' }],
+    });
+  }
+
+  async distributeProfit(
+    userId: number,
+    projectId: number,
+    dto: DistributeProjectProfitDto,
+  ) {
+    await this.assertOwnership(userId, projectId);
+
+    const partners = await this.prisma.projectPartner.findMany({
+      where: { projectId },
+      orderBy: [{ isMe: 'desc' }, { name: 'asc' }],
+    });
+
+    if (!partners.length) {
+      throw new BadRequestException(
+        'Define primero los socios y sus porcentajes para repartir beneficios',
+      );
+    }
+
+    const totalAmount = Number(dto.totalAmount);
+    const lines = dto.lines.map((line) => ({
+      partnerName: line.partnerName.trim(),
+      amount: Number(line.amount),
+    }));
+
+    this.validateDistributionLines(totalAmount, lines);
+
+    const partnerNames = new Set(partners.map((partner) => partner.name.toLowerCase()));
+    for (const line of lines) {
+      if (!partnerNames.has(line.partnerName.toLowerCase())) {
+        throw new BadRequestException(
+          `El socio "${line.partnerName}" no existe en la configuración del proyecto`,
+        );
+      }
+    }
+
+    const date = this.toDate(dto.date, 'date');
+    const baseTitle = dto.title?.trim() || 'Reparto de beneficios';
+    const commonNotes = dto.notes?.trim() || null;
+
+    await this.prisma.projectManualEntry.createMany({
+      data: lines.map((line) => ({
+        projectId,
+        type: 'expense',
+        title: `${baseTitle} · ${line.partnerName}`,
+        description: `Reparto de beneficios para ${line.partnerName}`,
+        amount: line.amount,
+        date,
+        category: 'profit_distribution',
+        notes: commonNotes,
+        entryKind: 'profit_distribution',
+        partnerName: line.partnerName,
+      })),
+    });
+
+    return { success: true, created: lines.length };
   }
 
   async createProfitDistribution(
