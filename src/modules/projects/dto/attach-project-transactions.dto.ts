@@ -1,4 +1,4 @@
-import { IsArray, ArrayNotEmpty, IsInt } from 'class-validator';
+﻿import { IsArray, ArrayNotEmpty, IsInt } from 'class-validator';
 
 export class AttachProjectTransactionsDto {
   @IsArray()
@@ -6,3 +6,4 @@ export class AttachProjectTransactionsDto {
   @IsInt({ each: true })
   transactionIds: number[];
 }
+

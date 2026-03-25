@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -96,3 +96,4 @@ export class ProjectsController {
     return this.projectsService.removeManualEntry(userId, id, entryId);
   }
 }
+

@@ -1,4 +1,4 @@
-import { PartialType } from '@nestjs/mapped-types';
+﻿import { PartialType } from '@nestjs/mapped-types';
 import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
 export enum ProjectEntryTypeDto {
@@ -35,3 +35,4 @@ export class CreateProjectManualEntryDto {
 }
 
 export class UpdateProjectManualEntryDto extends PartialType(CreateProjectManualEntryDto) {}
+

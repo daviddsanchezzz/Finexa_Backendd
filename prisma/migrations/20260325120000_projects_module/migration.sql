@@ -1,4 +1,4 @@
--- CreateEnum
+﻿-- CreateEnum
 CREATE TYPE "ProjectStatus" AS ENUM ('idea', 'active', 'paused', 'completed', 'cancelled');
 
 -- CreateEnum
@@ -59,3 +59,4 @@ ALTER TABLE "ProjectManualEntry" ADD CONSTRAINT "ProjectManualEntry_projectId_fk
 
 -- AddForeignKey
 ALTER TABLE "Transaction" ADD CONSTRAINT "Transaction_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
