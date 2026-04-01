@@ -80,7 +80,7 @@ async findOneByMonthAndYear(
   }
 
   /**
-   * Obtener overrides de un año
+   * Obtener overrides de un aÃƒÆ’Ã‚Â±o
    */
   async findByYear(userId: number, year: number) {
     return this.prisma.manualMonthData.findMany({
@@ -121,6 +121,7 @@ async calculateIncome(
   const res = await this.prisma.transaction.aggregate({
     where: {
       userId,
+      active: true,
       type: "income",
       date: { gte: start, lt: end },
 
@@ -144,6 +145,7 @@ async calculateExpense(
   const res = await this.prisma.transaction.aggregate({
     where: {
       userId,
+      active: true,
       type: "expense",
       date: { gte: start, lt: end },
 
@@ -179,16 +181,23 @@ async calculateFinalBalance(
 
 async closeMonthWithCron(userId: number, monthStart: Date) {
   const year = monthStart.getUTCFullYear();
-  const month = monthStart.getUTCMonth() + 1;
+  const month = monthStart.getUTCMonth(); // 0-11, coherente con frontend/DTO
 
   const existing = await this.prisma.manualMonthData.findUnique({
     where: { userId_year_month: { userId, year, month } },
   });
 
-  if (existing) {
-    return existing; // 🔁 idempotente
-  }
+  const canAutoRepairLegacy =
+    !!existing &&
+    existing.createdBy === null &&
+    existing.createdAt.getTime() === existing.updatedAt.getTime() &&
+    existing.createdAt.getUTCDate() === 1 &&
+    existing.createdAt.getUTCHours() === 4 &&
+    existing.createdAt.getUTCMonth() === month;
 
+  if (existing && !canAutoRepairLegacy) {
+    return existing; // idempotente en registros validos o editados manualmente
+  }
   const { start, end } = monthRangeUTC(monthStart);
 
   const [income, expense, finalBalance] = await Promise.all([
@@ -196,6 +205,18 @@ async closeMonthWithCron(userId: number, monthStart: Date) {
     this.calculateExpense(userId, start, end),
     this.calculateFinalBalance(userId, end),
   ]);
+
+  if (existing && canAutoRepairLegacy) {
+    return this.prisma.manualMonthData.update({
+      where: { id: existing.id },
+      data: {
+        income,
+        expense,
+        finalBalance,
+        active: true,
+      },
+    });
+  }
 
   return this.prisma.manualMonthData.create({
     data: {
