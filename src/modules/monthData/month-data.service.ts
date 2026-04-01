@@ -21,6 +21,60 @@ export class MonthDataService {
     return v === undefined || v === null ? null : Number(v);
   }
 
+  private isUntouchedLegacyCronRow(row: {
+    month: number;
+    createdBy: number | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    if (row.createdBy !== null) return false;
+    if (row.createdAt.getTime() !== row.updatedAt.getTime()) return false;
+    if (row.createdAt.getUTCDate() !== 1 || row.createdAt.getUTCHours() !== 4) return false;
+
+    // Legacy guardado por cron con +1:
+    // month 1..11 creado en ese mismo month (UTC), o month 12 creado en enero (0).
+    if (row.month >= 1 && row.month <= 11) {
+      return row.createdAt.getUTCMonth() === row.month;
+    }
+    if (row.month === 12) {
+      return row.createdAt.getUTCMonth() === 0;
+    }
+
+    return false;
+  }
+
+  private normalizeMonthForRead(row: { month: number; createdBy: number | null; createdAt: Date; updatedAt: Date }) {
+    if (!this.isUntouchedLegacyCronRow(row)) return row.month;
+    return row.month === 12 ? 11 : row.month - 1;
+  }
+
+  private normalizeRowsForRead<T extends { year: number; month: number; createdBy: number | null; createdAt: Date; updatedAt: Date }>(rows: T[]) {
+    const byKey = new Map<string, T & { month: number }>();
+
+    for (const row of rows) {
+      const normalizedMonth = this.normalizeMonthForRead(row);
+      if (normalizedMonth < 0 || normalizedMonth > 11) continue;
+
+      const key = `${row.year}-${normalizedMonth}`;
+      const candidate = { ...row, month: normalizedMonth };
+      const current = byKey.get(key);
+
+      if (!current) {
+        byKey.set(key, candidate);
+        continue;
+      }
+
+      // Preferimos el más recientemente actualizado para resolver conflictos.
+      if (candidate.updatedAt.getTime() >= current.updatedAt.getTime()) {
+        byKey.set(key, candidate);
+      }
+    }
+
+    return Array.from(byKey.values()).sort(
+      (a, b) => a.year - b.year || a.month - b.month,
+    );
+  }
+
 async findOneByMonthAndYear(
   userId: number,
   year: number,
@@ -73,20 +127,22 @@ async findOneByMonthAndYear(
    * Obtener todos los overrides activos del usuario
    */
   async findAll(userId: number) {
-    return this.prisma.manualMonthData.findMany({
+    const rows = await this.prisma.manualMonthData.findMany({
       where: { userId, active: true },
       orderBy: [{ year: "asc" }, { month: "asc" }],
     });
+    return this.normalizeRowsForRead(rows);
   }
 
   /**
    * Obtener overrides de un aÃƒÆ’Ã‚Â±o
    */
   async findByYear(userId: number, year: number) {
-    return this.prisma.manualMonthData.findMany({
+    const rows = await this.prisma.manualMonthData.findMany({
       where: { userId, year, active: true },
       orderBy: { month: "asc" },
     });
+    return this.normalizeRowsForRead(rows);
   }
 
   /**
