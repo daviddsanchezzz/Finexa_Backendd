@@ -503,7 +503,7 @@ model NotificationPreference {
   userId                Int     @unique
   user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  recurringTransactions Boolean @default(true)
+  recurringTransactions Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

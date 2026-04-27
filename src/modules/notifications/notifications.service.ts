@@ -62,7 +62,7 @@ export class NotificationsService {
       where: { userId },
     });
     if (!prefs) {
-      return { recurringTransactions: true };
+      return { recurringTransactions: false };
     }
     return { recurringTransactions: prefs.recurringTransactions };
   }
