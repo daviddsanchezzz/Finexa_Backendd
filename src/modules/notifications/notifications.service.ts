@@ -103,6 +103,39 @@ export class NotificationsService {
   }
 
   // ──────────────────────────────────────────
+  // TEST: dispara notificación real al usuario
+  // ──────────────────────────────────────────
+
+  async sendTestNotification(userId: number) {
+    const tokens = await this.prisma.deviceToken.findMany({ where: { userId } });
+
+    if (!tokens.length) {
+      return {
+        ok: false,
+        message: 'No hay tokens registrados para este usuario. Activa las notificaciones en la app primero.',
+      };
+    }
+
+    const title = '🔔 Notificación de prueba';
+    const body = 'Si ves esto, el sistema de push notifications funciona correctamente.';
+
+    await this.prisma.notification.create({
+      data: { userId, title, message: body, type: 'test' },
+    });
+
+    const nativeTokens = tokens.filter((t) => t.platform !== 'web').map((t) => t.token);
+    const webTokens = tokens.filter((t) => t.platform === 'web').map((t) => t.token);
+
+    if (nativeTokens.length) await this.sendExpoNotifications(nativeTokens, title, body);
+    if (webTokens.length) await this.sendWebPushNotifications(webTokens, title, body);
+
+    return {
+      ok: true,
+      sent: { native: nativeTokens.length, web: webTokens.length },
+    };
+  }
+
+  // ──────────────────────────────────────────
   // SEND: RECURRING TRANSACTION EXECUTED
   // Llamado por TransactionsService tras el cron
   // ──────────────────────────────────────────

@@ -55,6 +55,14 @@ export class NotificationsController {
     return this.notificationsService.updatePreferences(userId, dto);
   }
 
+  // ── Test (dispara una notificación real al usuario autenticado) ──
+
+  @Post('test')
+  @HttpCode(200)
+  sendTest(@User('id') userId: number) {
+    return this.notificationsService.sendTestNotification(userId);
+  }
+
   // ── Historial in-app ─────────────────────────
 
   @Get()
