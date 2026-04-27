@@ -18,10 +18,11 @@ import { AllocationPlanModule } from './modules/monthly-allocations/monthly-allo
 import { HealthModule } from './modules/health/health.module';
 import { CronModule } from './modules/cron/cron.module';
 import { ProjectsModule } from './modules/projects/projects.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [PrismaModule,CronModule, HealthModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule, ProjectsModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule,
     DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
-    ScheduleModule.forRoot()],
+    NotificationsModule, ScheduleModule.forRoot()],
 })
 export class AppModule {}

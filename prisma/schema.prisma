@@ -104,13 +104,15 @@ model User {
   currency      String?        @default("EUR")
   theme         String?        @default("light")
 
-  wallets       Wallet[]       @relation("UserWallets")
-  walletShares  WalletShare[]
-  budgets       Budget[]
-  notifications Notification[]
-  categories    Category[]
-  transactions  Transaction[]
-  debts         Debt[]         // 👈 RELACIÓN INVERSA A Debt.user
+  wallets                Wallet[]                @relation("UserWallets")
+  walletShares           WalletShare[]
+  budgets                Budget[]
+  notifications          Notification[]
+  deviceTokens           DeviceToken[]
+  notificationPreference NotificationPreference?
+  categories             Category[]
+  transactions           Transaction[]
+  debts                  Debt[]                  // 👈 RELACIÓN INVERSA A Debt.user
 
   trips         Trip[]
   projects      Project[]
@@ -479,6 +481,32 @@ model Notification {
   updatedAt DateTime @updatedAt
   createdBy Int?
   active    Boolean  @default(true)
+}
+
+model DeviceToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token     String
+  platform  String   // 'ios' | 'android' | 'web'
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, token])
+  @@index([userId])
+}
+
+model NotificationPreference {
+  id                    Int     @id @default(autoincrement())
+  userId                Int     @unique
+  user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  recurringTransactions Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 //////////////////////////////////////////////////////////////

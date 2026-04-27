@@ -8,10 +8,14 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import { PrismaDateTransformer } from 'src/common/prisma/prisma.transformer';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class TransactionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService,
+  ) {}
 
   // ============================================================
   // CREATE
@@ -469,6 +473,17 @@ if (filters?.dateFrom || filters?.dateTo) {
 
       // 2) crear la transacción pasando por la lógica normal (balances, validaciones, etc.)
       await this.create(t.userId, dto);
+
+      // 2b) disparar notificación push (no bloqueante)
+      this.notifications
+        .notifyRecurringTransactionExecuted({
+          userId: t.userId,
+          description: t.description ?? '',
+          amount: t.amount,
+          type: t.type as 'income' | 'expense' | 'transfer',
+          recurrence: t.recurrence ?? 'monthly',
+        })
+        .catch(() => null);
 
       // 3) calcular siguiente fecha para la plantilla
       const nextDate = this.getNextDate(t.date, t.recurrence);
