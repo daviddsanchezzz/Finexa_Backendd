@@ -443,6 +443,7 @@ if (filters?.dateFrom || filters?.dateTo) {
         date: { lte: now }, // ya toca ejecutarlas
         active: true,
       },
+      include: { category: true, subcategory: true },
     });
 
     for (const t of templates) {
@@ -478,10 +479,11 @@ if (filters?.dateFrom || filters?.dateTo) {
       this.notifications
         .notifyRecurringTransactionExecuted({
           userId: t.userId,
-          description: t.description ?? '',
+          note: t.description ?? undefined,
+          category: t.category?.name ?? undefined,
+          subcategory: t.subcategory?.name ?? undefined,
           amount: t.amount,
           type: t.type as 'income' | 'expense' | 'transfer',
-          recurrence: t.recurrence ?? 'monthly',
         })
         .catch(() => null);
 

@@ -1473,8 +1473,8 @@ const returnPct =
   }
 }
 
-async listMonthlySnapshots(q: { from?: string; to?: string; limit?: number }) {
-  const where: any = { active: true };
+async listMonthlySnapshots(userId: number, q: { from?: string; to?: string; limit?: number }) {
+  const where: any = { active: true, userId };
 
   if (q.from || q.to) {
     where.monthStart = {};

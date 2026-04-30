@@ -6,10 +6,11 @@ import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 
 export interface RecurringNotificationPayload {
   userId: number;
-  description: string;
+  note?: string;
+  category?: string;
+  subcategory?: string;
   amount: number;
   type: 'income' | 'expense' | 'transfer';
-  recurrence: string;
 }
 
 @Injectable()
@@ -141,7 +142,7 @@ export class NotificationsService {
   // ──────────────────────────────────────────
 
   async notifyRecurringTransactionExecuted(payload: RecurringNotificationPayload) {
-    const { userId, description, amount, type, recurrence } = payload;
+    const { userId, note, category, subcategory, amount, type } = payload;
 
     // 1) Verificar que el usuario tiene esta preferencia activa
     const prefs = await this.getPreferences(userId);
@@ -150,17 +151,19 @@ export class NotificationsService {
     // 2) Construir el mensaje
     const sign = type === 'income' ? '+' : type === 'expense' ? '-' : '';
     const amountStr = `${sign}${amount.toFixed(2).replace('.', ',')} €`;
-    const recurrenceMap: Record<string, string> = {
-      daily: 'diaria',
-      weekly: 'semanal',
-      monthly: 'mensual',
-      yearly: 'anual',
-    };
-    const recurrenceLabel = recurrenceMap[recurrence] ?? recurrence;
     const title = '💸 Transacción recurrente ejecutada';
-    const body = description
-      ? `${description} · ${amountStr} (${recurrenceLabel})`
-      : `${amountStr} · frecuencia ${recurrenceLabel}`;
+
+    let contextLabel: string;
+    if (note && category) {
+      contextLabel = `${note} · ${category}`;
+    } else if (subcategory && category) {
+      contextLabel = `${subcategory} · ${category}`;
+    } else if (category) {
+      contextLabel = category;
+    } else {
+      contextLabel = '';
+    }
+    const body = contextLabel ? `${contextLabel} · ${amountStr}` : amountStr;
 
     // 3) Guardar notificación in-app
     await this.prisma.notification.create({

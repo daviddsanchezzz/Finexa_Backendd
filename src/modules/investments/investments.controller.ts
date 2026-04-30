@@ -30,8 +30,8 @@ export class InvestmentsController {
 
   
   @Get('snapshots')
-  async listSnapshots(@Query() q: ListPortfolioSnapshotsQueryDto) {
-    return this.investmentsService.listMonthlySnapshots(q);
+  async listSnapshots(@User('id') userId: number, @Query() q: ListPortfolioSnapshotsQueryDto) {
+    return this.investmentsService.listMonthlySnapshots(userId, q);
   }
   // -----------------------------
   // Assets
