@@ -915,6 +915,7 @@ model InvestmentAsset {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   active    Boolean  @default(true)
+  archived  Boolean  @default(false)
 
   @@unique([userId, name])
 }

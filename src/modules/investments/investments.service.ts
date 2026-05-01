@@ -211,7 +211,7 @@ private async adjustAssetQuantityTx(
    */
   private async getPortfolioValueAt(userId: number, target: Date): Promise<number> {
     const assets = await this.prisma.investmentAsset.findMany({
-      where: { userId, active: true },
+      where: { userId, active: true, archived: false },
       select: { id: true, initialInvested: true },
     });
 
@@ -286,7 +286,7 @@ private async adjustAssetQuantityTx(
     const investmentWalletId = await this.getSingleInvestmentWallet(userId);
 
     const assets = await this.prisma.investmentAsset.findMany({
-      where: { userId, active: true },
+      where: { userId, active: true, archived: false },
       select: { id: true, initialInvested: true },
     });
 
@@ -387,7 +387,14 @@ private async adjustAssetQuantityTx(
 
   async listAssets(userId: number) {
     return this.prisma.investmentAsset.findMany({
-      where: { userId, active: true },
+      where: { userId, active: true, archived: false },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async listArchivedAssets(userId: number) {
+    return this.prisma.investmentAsset.findMany({
+      where: { userId, active: true, archived: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -447,6 +454,30 @@ private async adjustAssetQuantityTx(
 
     await this.recalcInvestmentWalletBalance(userId);
     return deleted;
+  }
+
+  async archiveAsset(userId: number, id: number) {
+    await this.getAsset(userId, id);
+
+    const lastValuation = await this.prisma.investmentValuationSnapshot.findFirst({
+      where: { assetId: id, userId, active: true },
+      orderBy: { date: 'desc' },
+      select: { value: true },
+    });
+
+    if (!lastValuation || Number(lastValuation.value) !== 0) {
+      throw new BadRequestException(
+        'Para archivar esta inversión, su última valoración debe ser 0.',
+      );
+    }
+
+    const archived = await this.prisma.investmentAsset.update({
+      where: { id },
+      data: { archived: true },
+    });
+
+    await this.recalcInvestmentWalletBalance(userId);
+    return archived;
   }
 
   // =============================
@@ -598,7 +629,7 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
   // =============================
   async getSummary(userId: number) {
     const assets = await this.prisma.investmentAsset.findMany({
-      where: { userId, active: true },
+      where: { userId, active: true, archived: false },
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -768,7 +799,7 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
     const from = this.addUtcDays(this.startOfUtcDay(now), -n + 1);
 
     const assets = await this.prisma.investmentAsset.findMany({
-      where: { userId, active: true },
+      where: { userId, active: true, archived: false },
       select: { id: true, initialInvested: true },
     });
 

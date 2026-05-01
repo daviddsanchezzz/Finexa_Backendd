@@ -41,6 +41,11 @@ export class InvestmentsController {
     return this.investmentsService.listAssets(userId);
   }
 
+  @Get('assets/archived')
+  listArchivedAssets(@User('id') userId: number) {
+    return this.investmentsService.listArchivedAssets(userId);
+  }
+
   // -----------------------------
 // Operations (InvestmentOperation)
 // -----------------------------
@@ -91,6 +96,11 @@ listOperations(
   @Delete('assets/:id')
   deleteAsset(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     return this.investmentsService.deleteAsset(userId, id);
+  }
+
+  @Patch('assets/:id/archive')
+  archiveAsset(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.investmentsService.archiveAsset(userId, id);
   }
 
   // -----------------------------
