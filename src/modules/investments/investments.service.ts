@@ -456,6 +456,21 @@ private async adjustAssetQuantityTx(
     return deleted;
   }
 
+  async unarchiveAsset(userId: number, id: number) {
+    const asset = await this.prisma.investmentAsset.findFirst({
+      where: { id, userId, active: true, archived: true },
+    });
+    if (!asset) throw new NotFoundException('Investment asset not found');
+
+    const result = await this.prisma.investmentAsset.update({
+      where: { id },
+      data: { archived: false },
+    });
+
+    await this.recalcInvestmentWalletBalance(userId);
+    return result;
+  }
+
   async archiveAsset(userId: number, id: number) {
     await this.getAsset(userId, id);
 

@@ -103,6 +103,11 @@ listOperations(
     return this.investmentsService.archiveAsset(userId, id);
   }
 
+  @Patch('assets/:id/unarchive')
+  unarchiveAsset(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.investmentsService.unarchiveAsset(userId, id);
+  }
+
   // -----------------------------
   // Valuations
   // -----------------------------
