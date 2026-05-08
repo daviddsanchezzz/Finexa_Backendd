@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsDateString, IsEnum, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 export enum TaskStatus {
     to_do = "to_do",
@@ -47,7 +47,15 @@ export class CreateTripTaskDto {
 
   @IsOptional()
   @IsEnum(TaskStatus)
-  status?: TaskStatus; // to_do | done
+  status?: TaskStatus;
+
+  @IsOptional()
+  @IsIn(["low", "medium", "high"])
+  priority?: "low" | "medium" | "high";
+
+  @IsOptional()
+  @IsDateString()
+  dueDate?: string;
 }
 
 export class UpdateTripTaskDto {
@@ -60,4 +68,12 @@ export class UpdateTripTaskDto {
   @IsOptional()
   @IsEnum(TaskStatus)
   status?: TaskStatus;
+
+  @IsOptional()
+  @IsIn(["low", "medium", "high"])
+  priority?: "low" | "medium" | "high";
+
+  @IsOptional()
+  @IsDateString()
+  dueDate?: string;
 }

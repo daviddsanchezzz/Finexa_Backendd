@@ -870,6 +870,8 @@ model TripTask {
 
   title     String
   status    TaskStatus @default(to_do)
+  priority  String?
+  dueDate   DateTime?
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt

@@ -874,6 +874,8 @@ async createTripTask(tripId: number, dto: CreateTripTaskDto) {
       tripId,
       title,
       status: dto.status ?? TaskStatus.to_do,
+      priority: dto.priority ?? null,
+      dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
     },
   });
 }
@@ -892,6 +894,8 @@ async updateTripTask(tripId: number, taskId: number, dto: UpdateTripTaskDto) {
     data.title = title;
   }
   if (dto.status !== undefined) data.status = dto.status;
+  if (dto.priority !== undefined) data.priority = dto.priority ?? null;
+  if (dto.dueDate !== undefined) data.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
 
   return this.prisma.tripTask.update({
     where: { id: taskId },
