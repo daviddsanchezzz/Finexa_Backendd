@@ -7,25 +7,28 @@ import { UpdateWalletDto } from './dto/update-wallet.dto';
 export class WalletsService {
   constructor(private prisma: PrismaService) {}
 
-async create(userId: number, dto: CreateWalletDto) {
-  // 1. Obtener la última posición actual del usuario
-  const lastWallet = await this.prisma.wallet.findFirst({
-    where: { userId },
-    orderBy: { position: 'desc' },
-    select: { position: true },
-  });
+  async create(userId: number, dto: CreateWalletDto) {
+    if (dto.kind === 'investment') {
+      const existing = await this.prisma.wallet.findFirst({
+        where: { userId, kind: 'investment', active: true },
+      });
+      if (existing) {
+        throw new BadRequestException('Ya tienes una cartera de inversión. Solo puede haber una.');
+      }
+    }
 
-  const nextPosition = lastWallet ? lastWallet.position + 1 : 0;
+    const lastWallet = await this.prisma.wallet.findFirst({
+      where: { userId },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
 
-  // 2. Crear la wallet con position calculada
-  return this.prisma.wallet.create({
-    data: {
-      ...dto,
-      userId,
-      position: nextPosition,
-    },
-  });
-}
+    const nextPosition = lastWallet ? lastWallet.position + 1 : 0;
+
+    return this.prisma.wallet.create({
+      data: { ...dto, userId, position: nextPosition },
+    });
+  }
 
   async findAll(userId: number) {
     const wallets = await this.prisma.wallet.findMany({
@@ -50,11 +53,18 @@ async create(userId: number, dto: CreateWalletDto) {
   }
 
   async update(userId: number, id: number, dto: UpdateWalletDto) {
-    await this.findOne(userId, id);
-    return this.prisma.wallet.update({
-      where: { id },
-      data: dto,
-    });
+    const wallet = await this.findOne(userId, id);
+
+    if (dto.kind === 'investment' && wallet.kind !== 'investment') {
+      const existing = await this.prisma.wallet.findFirst({
+        where: { userId, kind: 'investment', active: true, id: { not: id } },
+      });
+      if (existing) {
+        throw new BadRequestException('Ya tienes una cartera de inversión. Solo puede haber una.');
+      }
+    }
+
+    return this.prisma.wallet.update({ where: { id }, data: dto });
   }
 
   async remove(userId: number, id: number) {

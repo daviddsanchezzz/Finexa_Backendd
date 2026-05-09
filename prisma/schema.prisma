@@ -36,6 +36,7 @@ enum DebtStatus {
 
 enum WalletKind {
   cash
+  savings
   investment
 }
 

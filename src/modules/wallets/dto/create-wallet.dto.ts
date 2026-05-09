@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsString, IsOptional, IsNumber, IsArray, ArrayNotEmpty, IsInt } from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsArray, ArrayNotEmpty, IsInt, IsEnum } from 'class-validator';
+import { WalletKind } from '@prisma/client';
 
 export class CreateWalletDto {
   @IsString()
@@ -23,6 +24,10 @@ export class CreateWalletDto {
   @IsNumber()
   @IsOptional()
   position?: number;
+
+  @IsEnum(WalletKind)
+  @IsOptional()
+  kind?: WalletKind;
 }
 
 export class ReorderWalletsDto {
