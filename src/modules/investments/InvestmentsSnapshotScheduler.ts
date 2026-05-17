@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InvestmentAssetType, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/common/prisma/prisma.service';
@@ -22,7 +22,7 @@ export class InvestmentsSnapshotScheduler {
     private pricesFetcher: PricesFetcherService,
   ) {}
 
-  // Día 1 a las 00:05 (Europa/Madrid)
+  // DÃ­a 1 a las 00:05 (Europa/Madrid)
   @Cron('0 4 1 * *', { timeZone: 'Europe/Madrid' })
   async closePreviousMonth() {
     const users = await this.prisma.user.findMany({
@@ -48,7 +48,9 @@ export class InvestmentsSnapshotScheduler {
     }
   }
 
-  // Cada noche a las 23:00 (Europa/Madrid) — actualiza precios automáticamente
+  // Cada noche a las 23:00 (Europa/Madrid) â€” actualiza precios automÃ¡ticamente
+  /*
+
   @Cron('0 23 * * *', { timeZone: 'Europe/Madrid' })
   async fetchNightlyPrices() {
     this.logger.log('Nightly price fetch started');
@@ -134,7 +136,7 @@ export class InvestmentsSnapshotScheduler {
         });
 
         affectedUsers.add(asset.userId);
-        this.logger.log(`asset=${asset.id} ${asset.identificator}: ${unitPrice} ${priceCurrency} × ${qty} = ${value}`);
+        this.logger.log(`asset=${asset.id} ${asset.identificator}: ${unitPrice} ${priceCurrency} Ã— ${qty} = ${value}`);
       } catch (e: any) {
         this.logger.error(`Failed asset ${asset.id}: ${e.message}`);
       }
@@ -148,6 +150,8 @@ export class InvestmentsSnapshotScheduler {
       }
     }
 
-    this.logger.log(`Nightly fetch done — updated ${affectedUsers.size} user(s)`);
+    this.logger.log(`Nightly fetch done â€” updated ${affectedUsers.size} user(s)`);
   }
+  */
 }
+
