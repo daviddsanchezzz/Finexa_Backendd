@@ -375,6 +375,7 @@ private async adjustAssetQuantityTx(
       data: {
         userId,
         name,
+        abbreviation: dto.abbreviation?.trim() || null,
         identificator: dto.identificator?.trim()?.toUpperCase() || null,
         quantity: this.parseNonNegative(dto.quantity ?? 0, 'quantity'),
         description: dto.description?.trim() || null,
@@ -450,6 +451,11 @@ private async adjustAssetQuantityTx(
     if ('identificator' in (dto as any)) {
       const raw = (dto as any).identificator;
       data.identificator = raw && String(raw).trim() ? String(raw).trim().toUpperCase() : null;
+    }
+
+    if ('abbreviation' in (dto as any)) {
+      const raw = (dto as any).abbreviation;
+      data.abbreviation = raw && String(raw).trim() ? String(raw).trim() : null;
     }
 
     if (dto.quantity !== undefined) {
@@ -672,6 +678,7 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
       select: {
         id: true,
         name: true,
+        abbreviation: true,
         identificator: true,
         description: true,
         type: true,
@@ -769,6 +776,7 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
       return {
         id: a.id,
         name: a.name,
+        abbreviation: (a as any).abbreviation ?? null,
         identificator: (a as any).identificator ?? null,
         description: a.description,
         type: a.type,

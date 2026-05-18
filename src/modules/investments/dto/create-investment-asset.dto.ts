@@ -24,6 +24,11 @@ export class CreateInvestmentAssetDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(24)
+  abbreviation?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(32)
   identificator?: string;
 

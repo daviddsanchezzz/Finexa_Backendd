@@ -901,7 +901,8 @@ model InvestmentAsset {
   userId    Int
   user      User                @relation(fields: [userId], references: [id])
 
-  name      String              // "Bitcoin", "Crypto genérico"
+  name      String              // "Bitcoin", "Crypto genÃ©rico"
+  abbreviation String?
   description    String?             // "BTC", opcional
   type      InvestmentAssetType @default(custom)
   riskType  InvestmentRiskType?
@@ -1086,3 +1087,4 @@ model AllocationItem {
 
   @@index([planId, category])
 }
+
