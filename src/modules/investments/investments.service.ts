@@ -375,7 +375,7 @@ private async adjustAssetQuantityTx(
       data: {
         userId,
         name,
-        symbol: dto.symbol?.trim()?.toUpperCase() || null,
+        identificator: dto.identificator?.trim()?.toUpperCase() || null,
         quantity: this.parseNonNegative(dto.quantity ?? 0, 'quantity'),
         description: dto.description?.trim() || null,
         type: dto.type ?? 'custom',
@@ -435,9 +435,9 @@ private async adjustAssetQuantityTx(
       data.initialInvested = this.parseNonNegative(dto.initialInvested, 'initialInvested');
     }
 
-    if ('symbol' in (dto as any)) {
-      const raw = (dto as any).symbol;
-      data.symbol = raw && String(raw).trim() ? String(raw).trim().toUpperCase() : null;
+    if ('identificator' in (dto as any)) {
+      const raw = (dto as any).identificator;
+      data.identificator = raw && String(raw).trim() ? String(raw).trim().toUpperCase() : null;
     }
 
     if (dto.quantity !== undefined) {
@@ -660,7 +660,7 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
       select: {
         id: true,
         name: true,
-        symbol: true,
+        identificator: true,
         description: true,
         type: true,
         riskType: true,
@@ -757,7 +757,7 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
       return {
         id: a.id,
         name: a.name,
-        symbol: (a as any).symbol ?? null,
+        identificator: (a as any).identificator ?? null,
         description: a.description,
         type: a.type,
         riskType: (a as any).riskType,

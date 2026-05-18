@@ -176,6 +176,11 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
     return this.investmentExposureService.syncMetadataForAsset(userId, id);
   }
 
+  @Post('metadata/sync-all')
+  syncAllMetadata(@User('id') userId: number) {
+    return this.investmentExposureService.syncMetadataForUser(userId);
+  }
+
   @Get('assets/:id/series')
   assetSeries(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     return this.investmentsService.getAssetSeries(userId, id);

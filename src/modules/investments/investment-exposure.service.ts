@@ -131,7 +131,7 @@ export class InvestmentExposureService {
   async syncMetadataForAsset(userId: number, assetId: number) {
     const asset = await this.prisma.investmentAsset.findFirst({
       where: { id: assetId, userId, active: true },
-      select: { id: true, name: true, type: true, symbol: true, identificator: true, currency: true },
+      select: { id: true, name: true, type: true, identificator: true, currency: true },
     });
 
     if (!asset) return null;
@@ -263,6 +263,28 @@ export class InvestmentExposureService {
         await this.syncMetadataForAsset(a.userId, a.id);
       } catch (e: any) {
         this.logger.warn(`syncMetadataForAllUsers failed asset=${a.id}: ${e?.message ?? e}`);
+      }
+    }
+
+    return { processed: assets.length };
+  }
+
+  async syncMetadataForUser(userId: number) {
+    const assets = await this.prisma.investmentAsset.findMany({
+      where: {
+        userId,
+        active: true,
+        archived: false,
+        type: { in: ['fund', 'etf', 'crypto'] },
+      },
+      select: { id: true },
+    });
+
+    for (const a of assets) {
+      try {
+        await this.syncMetadataForAsset(userId, a.id);
+      } catch (e: any) {
+        this.logger.warn(`syncMetadataForUser failed asset=${a.id}: ${e?.message ?? e}`);
       }
     }
 
