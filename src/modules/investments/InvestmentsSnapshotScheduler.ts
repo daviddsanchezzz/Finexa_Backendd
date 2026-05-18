@@ -4,6 +4,7 @@ import { InvestmentAssetType, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/common/prisma/prisma.service';
 import { InvestmentsService } from './investments.service';
 import { PricesFetcherService } from './prices-fetcher.service';
+import { InvestmentExposureService } from './investment-exposure.service';
 
 const AUTO_PRICED_TYPES: InvestmentAssetType[] = [
   InvestmentAssetType.crypto,
@@ -20,6 +21,7 @@ export class InvestmentsSnapshotScheduler {
     private prisma: PrismaService,
     private investments: InvestmentsService,
     private pricesFetcher: PricesFetcherService,
+    private exposure: InvestmentExposureService,
   ) {}
 
   // DÃ­a 1 a las 00:05 (Europa/Madrid)
@@ -45,6 +47,17 @@ export class InvestmentsSnapshotScheduler {
       } catch (e: any) {
         this.logger.error(`Snapshot failed user=${u.id}: ${e?.message ?? e}`);
       }
+    }
+  }
+
+  // Día 1 a las 04:20 (Europa/Madrid): sincroniza metadata de composición.
+  @Cron('20 4 1 * *', { timeZone: 'Europe/Madrid' })
+  async syncMonthlyAssetMetadata() {
+    try {
+      const result = await this.exposure.syncMetadataForAllUsers();
+      this.logger.log(`Asset metadata sync done. Processed=${result.processed}`);
+    } catch (e: any) {
+      this.logger.error(`Asset metadata sync failed: ${e?.message ?? e}`);
     }
   }
 

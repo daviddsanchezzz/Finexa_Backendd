@@ -907,10 +907,12 @@ model InvestmentAsset {
   riskType  InvestmentRiskType?
   currency  String              @default("EUR")
   quantity  Decimal             @default(0)
+  symbol    String?
   identificator String?
 
   initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
   operations InvestmentOperation[]
+  metadata   AssetMetadata?
 
   transactions Transaction[]   // transferencias que apuntan a este asset
   valuations   InvestmentValuationSnapshot[]
@@ -921,6 +923,32 @@ model InvestmentAsset {
   archived  Boolean  @default(false)
 
   @@unique([userId, name])
+}
+
+model AssetMetadata {
+  id             Int             @id @default(autoincrement())
+  assetId        Int             @unique
+  asset          InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  isin           String?
+  fmpSymbol      String?
+  provider       String          @default("fmp")
+  currency       String?
+
+  countriesJson  Json?           @db.JsonB
+  sectorsJson    Json?           @db.JsonB
+  topHoldingsJson Json?          @db.JsonB
+
+  cryptoCategory String?
+  source         String?
+  lastError      String?
+  syncedAt       DateTime?
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([fmpSymbol])
+  @@index([provider])
 }
 
 model InvestmentValuationSnapshot {

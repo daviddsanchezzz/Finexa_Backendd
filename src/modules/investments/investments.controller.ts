@@ -23,10 +23,14 @@ import { DepositAssetDto } from './dto/deposit-asset.dto';
 import { WithdrawAssetDto } from './dto/withdraw-asset.dto';
 import { BuyAssetDto } from './dto/buy-asset.dto';
 import { ListPortfolioSnapshotsQueryDto } from './dto/portfolio-snapshot.dto';
+import { InvestmentExposureService } from './investment-exposure.service';
 
 @Controller('investments')
 export class InvestmentsController {
-  constructor(private readonly investmentsService: InvestmentsService) {}
+  constructor(
+    private readonly investmentsService: InvestmentsService,
+    private readonly investmentExposureService: InvestmentExposureService,
+  ) {}
 
   
   @Get('snapshots')
@@ -155,6 +159,21 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
   @Get('summary')
   summary(@User('id') userId: number) {
     return this.investmentsService.getSummary(userId);
+  }
+
+  @Get('exposure')
+  exposure(@User('id') userId: number) {
+    return this.investmentExposureService.getExposure(userId);
+  }
+
+  @Get('assets/:id/metadata')
+  assetMetadata(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.investmentExposureService.getAssetMetadata(userId, id);
+  }
+
+  @Post('assets/:id/metadata/sync')
+  syncAssetMetadata(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.investmentExposureService.syncMetadataForAsset(userId, id);
   }
 
   @Get('assets/:id/series')

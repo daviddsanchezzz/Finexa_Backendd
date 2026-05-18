@@ -23,6 +23,16 @@ export class CreateInvestmentAssetDto {
   description: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  symbol?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  quantity?: number;
+
+  @IsOptional()
   @IsNumber()
   @Min(0)
   initialInvested?: number;

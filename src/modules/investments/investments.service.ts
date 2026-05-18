@@ -375,6 +375,8 @@ private async adjustAssetQuantityTx(
       data: {
         userId,
         name,
+        symbol: dto.symbol?.trim()?.toUpperCase() || null,
+        quantity: this.parseNonNegative(dto.quantity ?? 0, 'quantity'),
         description: dto.description?.trim() || null,
         type: dto.type ?? 'custom',
         riskType: (dto as any).riskType,
@@ -431,6 +433,15 @@ private async adjustAssetQuantityTx(
 
     if (dto.initialInvested !== undefined) {
       data.initialInvested = this.parseNonNegative(dto.initialInvested, 'initialInvested');
+    }
+
+    if ('symbol' in (dto as any)) {
+      const raw = (dto as any).symbol;
+      data.symbol = raw && String(raw).trim() ? String(raw).trim().toUpperCase() : null;
+    }
+
+    if (dto.quantity !== undefined) {
+      data.quantity = this.parseNonNegative(dto.quantity, 'quantity');
     }
 
     if ('description' in (dto as any)) {
@@ -649,10 +660,12 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
       select: {
         id: true,
         name: true,
+        symbol: true,
         description: true,
         type: true,
         riskType: true,
         currency: true,
+        quantity: true,
         initialInvested: true,
       },
     });
@@ -744,10 +757,12 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
       return {
         id: a.id,
         name: a.name,
+        symbol: (a as any).symbol ?? null,
         description: a.description,
         type: a.type,
         riskType: (a as any).riskType,
         currency: a.currency,
+        quantity: Number((a as any).quantity ?? 0),
 
         totalContributed,
         totalWithdrawn,
