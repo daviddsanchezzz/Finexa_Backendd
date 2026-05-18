@@ -50,16 +50,17 @@ export class InvestmentsSnapshotScheduler {
     }
   }
 
+  // Cron de metadata desactivado temporalmente (sync manual desde endpoint/UI).
   // Día 1 a las 04:20 (Europa/Madrid): sincroniza metadata de composición.
-  @Cron('20 4 1 * *', { timeZone: 'Europe/Madrid' })
-  async syncMonthlyAssetMetadata() {
-    try {
-      const result = await this.exposure.syncMetadataForAllUsers();
-      this.logger.log(`Asset metadata sync done. Processed=${result.processed}`);
-    } catch (e: any) {
-      this.logger.error(`Asset metadata sync failed: ${e?.message ?? e}`);
-    }
-  }
+  // @Cron('20 4 1 * *', { timeZone: 'Europe/Madrid' })
+  // async syncMonthlyAssetMetadata() {
+  //   try {
+  //     const result = await this.exposure.syncMetadataForAllUsers();
+  //     this.logger.log(`Asset metadata sync done. Processed=${result.processed}`);
+  //   } catch (e: any) {
+  //     this.logger.error(`Asset metadata sync failed: ${e?.message ?? e}`);
+  //   }
+  // }
 
   // Cada noche a las 23:00 (Europa/Madrid) â€” actualiza precios automÃ¡ticamente
   /*
