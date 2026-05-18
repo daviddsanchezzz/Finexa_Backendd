@@ -102,13 +102,19 @@ export class InvestmentExposureService {
       return { countries: [], sectors: [], indirectHoldings: [], totalPortfolioValue: 0 };
     }
 
+    // For geographic/sector exposure, exclude asset classes not comparable by region/sector.
+    const eligibleAssets = assets.filter((a) => a.type !== 'cash' && a.type !== 'crypto');
+    if (!eligibleAssets.length) {
+      return { countries: [], sectors: [], indirectHoldings: [], totalPortfolioValue: 0 };
+    }
+
     const metas = await this.prisma.assetMetadata.findMany({
-      where: { assetId: { in: assets.map((a) => a.id) } },
+      where: { assetId: { in: eligibleAssets.map((a) => a.id) } },
       select: { assetId: true, countriesJson: true, sectorsJson: true, topHoldingsJson: true },
     });
     const metaByAsset = new Map(metas.map((m) => [m.assetId, m]));
 
-    const rows = assets.map((a) => {
+    const rows = eligibleAssets.map((a) => {
       const m = metaByAsset.get(a.id);
       return {
         currentValue: a.currentValue,
