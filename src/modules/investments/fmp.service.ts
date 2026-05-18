@@ -81,24 +81,23 @@ export class FmpService {
   }
 
   normalizeHoldings(rows: any[]): HoldingRow[] {
-    return (rows ?? [])
-      .map((row) => {
-        const name = String(row?.name ?? row?.asset ?? row?.company ?? '').trim();
-        const ticker = String(row?.symbol ?? row?.ticker ?? '').trim();
-        const weight = Number(row?.weight ?? row?.percentage ?? row?.percent ?? 0);
-        const country = String(row?.country ?? '').trim();
-        const sector = String(row?.sector ?? '').trim();
-        if (!name || !Number.isFinite(weight) || weight <= 0) return null;
-        return {
-          name,
-          ticker: ticker || null,
-          weight,
-          country: country || null,
-          sector: sector || null,
-        };
-      })
-      .filter((x): x is HoldingRow => !!x)
-      .sort((a, b) => b.weight - a.weight);
+    const out: HoldingRow[] = [];
+    for (const row of rows ?? []) {
+      const name = String(row?.name ?? row?.asset ?? row?.company ?? '').trim();
+      const ticker = String(row?.symbol ?? row?.ticker ?? '').trim();
+      const weight = Number(row?.weight ?? row?.percentage ?? row?.percent ?? 0);
+      const country = String(row?.country ?? '').trim();
+      const sector = String(row?.sector ?? '').trim();
+      if (!name || !Number.isFinite(weight) || weight <= 0) continue;
+      out.push({
+        name,
+        ticker: ticker || null,
+        weight,
+        country: country || null,
+        sector: sector || null,
+      });
+    }
+    return out.sort((a, b) => b.weight - a.weight);
   }
 
   pickSymbolFromSearch(rows: any[]): string | null {
