@@ -51,4 +51,14 @@ export class CreateInvestmentAssetDto {
   @IsString()
   @MaxLength(8)
   currency?: string; // default EUR si no viene
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  provider?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  metadataUrl?: string;
 }

@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InvestmentAssetType, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/common/prisma/prisma.service';
-import { FmpService } from './fmp.service';
 import { computeExposureBuckets } from './investment-exposure.utils';
+import { FundMetadataResolverService } from './fund-metadata-resolver.service';
+import { normalizeCountry, normalizeSector, normalizeWeightMap } from './fund-metadata.utils';
+import { ManualAssetMetadataDto } from './dto/manual-asset-metadata.dto';
 
 @Injectable()
 export class InvestmentExposureService {
@@ -10,7 +12,7 @@ export class InvestmentExposureService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly fmp: FmpService,
+    private readonly resolver: FundMetadataResolverService,
   ) {}
 
   private async getAssetsWithCurrentValue(userId: number) {
@@ -131,7 +133,7 @@ export class InvestmentExposureService {
   async syncMetadataForAsset(userId: number, assetId: number) {
     const asset = await this.prisma.investmentAsset.findFirst({
       where: { id: assetId, userId, active: true },
-      select: { id: true, name: true, type: true, identificator: true, currency: true },
+      select: { id: true, name: true, type: true, provider: true, metadataUrl: true, identificator: true, currency: true },
     });
 
     if (!asset) return null;
@@ -140,10 +142,12 @@ export class InvestmentExposureService {
       const payload: Prisma.AssetMetadataUncheckedCreateInput = {
         assetId: asset.id,
         isin: asset.identificator ?? null,
-        provider: 'manual',
+        provider: 'crypto',
         currency: asset.currency,
         cryptoCategory: this.inferCryptoCategory(asset.name),
         source: 'crypto-inferred',
+        sourceUrl: null,
+        asOfDate: null,
         syncedAt: new Date(),
         lastError: null,
       };
@@ -157,95 +161,59 @@ export class InvestmentExposureService {
     if (!['fund', 'etf'].includes(asset.type)) return null;
 
     const existing = await this.prisma.assetMetadata.findUnique({ where: { assetId: asset.id } });
+    const { result, errors } = await this.resolver.resolve({
+      assetId: asset.id,
+      name: asset.name,
+      type: asset.type,
+      provider: asset.provider,
+      metadataUrl: asset.metadataUrl,
+      identificator: existing?.isin || asset.identificator,
+      existingSymbol: existing?.symbol || existing?.fmpSymbol || null,
+    });
 
-    if (!this.fmp.isConfigured()) {
-      const err = 'FMP_API_KEY is not configured';
-      await this.prisma.assetMetadata.upsert({
-        where: { assetId: asset.id },
-        create: {
-          assetId: asset.id,
-          isin: asset.identificator ?? null,
-          provider: 'fmp',
-          currency: asset.currency,
-          lastError: err,
-          source: 'fmp',
-        },
-        update: { lastError: err, source: 'fmp' },
-      });
-      return existing;
-    }
-
-    try {
-      const resolvedSymbol = existing?.fmpSymbol || (await this.fmp.resolveSymbol({
-        isin: existing?.isin || asset.identificator,
-        name: asset.name,
-      }));
-
-      if (!resolvedSymbol) {
-        const msg = 'Symbol not found in FMP';
-        await this.prisma.assetMetadata.upsert({
-          where: { assetId: asset.id },
-          create: {
-            assetId: asset.id,
-            isin: existing?.isin || asset.identificator,
-            provider: 'fmp',
-            currency: asset.currency,
-            lastError: msg,
-            source: 'fmp',
-          },
-          update: { lastError: msg, source: 'fmp' },
-        });
-        return existing;
-      }
-
-      const [info, countryRows, sectorRows, holdingRows] = await Promise.all([
-        this.fmp.etfInfo(resolvedSymbol),
-        this.fmp.countryWeightings(resolvedSymbol),
-        this.fmp.sectorWeightings(resolvedSymbol),
-        this.fmp.holdings(resolvedSymbol),
-      ]);
-
-      const countries = this.fmp.normalizeWeightMap(countryRows, ['country', 'name']);
-      const sectors = this.fmp.normalizeWeightMap(sectorRows, ['sector', 'name']);
-      const topHoldings = this.fmp.normalizeHoldings(holdingRows).slice(0, 5);
-      const infoRow = Array.isArray(info) ? info[0] : null;
-
-      const payload: Prisma.AssetMetadataUncheckedCreateInput = {
-        assetId: asset.id,
-        isin: existing?.isin || asset.identificator || null,
-        fmpSymbol: resolvedSymbol,
-        provider: 'fmp',
-        currency: String(infoRow?.currency ?? asset.currency ?? '').toUpperCase() || asset.currency,
-        countriesJson: countries,
-        sectorsJson: sectors,
-        topHoldingsJson: topHoldings,
-        source: 'fmp',
-        syncedAt: new Date(),
-        lastError: null,
-      };
-
-      return this.prisma.assetMetadata.upsert({
-        where: { assetId: asset.id },
-        create: payload,
-        update: payload,
-      });
-    } catch (e: any) {
-      const message = String(e?.response?.data?.message || e?.message || e);
+    if (!result) {
+      const message = errors.join(' | ') || 'No provider returned metadata';
       this.logger.warn(`metadata sync failed asset=${asset.id}: ${message}`);
       await this.prisma.assetMetadata.upsert({
         where: { assetId: asset.id },
         create: {
           assetId: asset.id,
           isin: existing?.isin || asset.identificator || null,
-          provider: 'fmp',
+          provider: existing?.provider || 'manual',
           currency: asset.currency,
-          source: 'fmp',
+          source: existing?.source || 'manual',
           lastError: message,
         },
-        update: { lastError: message, source: 'fmp' },
+        update: { lastError: message },
       });
       return existing;
     }
+
+    const nextCountries = normalizeWeightMap(result.countries, normalizeCountry);
+    const nextSectors = normalizeWeightMap(result.sectors, normalizeSector);
+    const nextHoldings = result.topHoldings?.slice(0, 10) ?? null;
+
+    const payload: Prisma.AssetMetadataUncheckedCreateInput = {
+      assetId: asset.id,
+      isin: existing?.isin || asset.identificator || null,
+      symbol: result.symbol || existing?.symbol || null,
+      provider: result.provider,
+      currency: asset.currency,
+      countriesJson: nextCountries ?? (existing?.countriesJson as any) ?? null,
+      sectorsJson: nextSectors ?? (existing?.sectorsJson as any) ?? null,
+      topHoldingsJson: nextHoldings ?? (existing?.topHoldingsJson as any) ?? null,
+      source: result.source,
+      sourceUrl: result.sourceUrl || null,
+      asOfDate: result.asOfDate ? new Date(result.asOfDate) : (existing?.asOfDate ?? null),
+      syncedAt: new Date(),
+      lastError: null,
+    };
+
+    return this.prisma.assetMetadata.upsert({
+      where: { assetId: asset.id },
+      create: payload,
+      update: payload,
+    });
   }
 
   async syncMetadataForAllUsers() {
@@ -289,5 +257,37 @@ export class InvestmentExposureService {
     }
 
     return { processed: assets.length };
+  }
+
+  async upsertManualMetadata(userId: number, assetId: number, dto: ManualAssetMetadataDto) {
+    const asset = await this.prisma.investmentAsset.findFirst({
+      where: { id: assetId, userId, active: true },
+      select: { id: true, identificator: true, currency: true },
+    });
+    if (!asset) return null;
+
+    const existing = await this.prisma.assetMetadata.findUnique({ where: { assetId } });
+    const payload: Prisma.AssetMetadataUncheckedCreateInput = {
+      assetId,
+      isin: existing?.isin || asset.identificator || null,
+      symbol: existing?.symbol || null,
+      provider: (dto.provider || 'manual').trim().toLowerCase(),
+      currency: asset.currency,
+      countriesJson: dto.countries ?? (existing?.countriesJson as any) ?? null,
+      sectorsJson: dto.sectors ?? (existing?.sectorsJson as any) ?? null,
+      topHoldingsJson: dto.topHoldings ?? (existing?.topHoldingsJson as any) ?? null,
+      cryptoCategory: dto.cryptoCategory ?? existing?.cryptoCategory ?? null,
+      source: (dto.source || 'manual').trim().toLowerCase(),
+      sourceUrl: dto.sourceUrl ?? existing?.sourceUrl ?? null,
+      asOfDate: dto.asOfDate ? new Date(dto.asOfDate) : (existing?.asOfDate ?? null),
+      syncedAt: new Date(),
+      lastError: null,
+    };
+
+    return this.prisma.assetMetadata.upsert({
+      where: { assetId },
+      create: payload,
+      update: payload,
+    });
   }
 }

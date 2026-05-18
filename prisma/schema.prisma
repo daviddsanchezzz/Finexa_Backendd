@@ -908,6 +908,8 @@ model InvestmentAsset {
   currency  String              @default("EUR")
   quantity  Decimal             @default(0)
   identificator String?
+  provider String?
+  metadataUrl String?
 
   initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
   operations InvestmentOperation[]
@@ -931,6 +933,7 @@ model AssetMetadata {
 
   isin           String?
   fmpSymbol      String?
+  symbol         String?
   provider       String          @default("fmp")
   currency       String?
 
@@ -940,6 +943,8 @@ model AssetMetadata {
 
   cryptoCategory String?
   source         String?
+  sourceUrl      String?
+  asOfDate       DateTime?
   lastError      String?
   syncedAt       DateTime?
 

@@ -1,0 +1,3 @@
+ALTER TABLE "InvestmentAsset"
+ADD COLUMN IF NOT EXISTS "provider" TEXT,
+ADD COLUMN IF NOT EXISTS "metadataUrl" TEXT;

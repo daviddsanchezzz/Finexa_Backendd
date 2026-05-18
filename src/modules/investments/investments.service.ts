@@ -381,6 +381,8 @@ private async adjustAssetQuantityTx(
         type: dto.type ?? 'custom',
         riskType: (dto as any).riskType,
         currency,
+        provider: dto.provider?.trim() || null,
+        metadataUrl: dto.metadataUrl?.trim() || null,
         initialInvested,
         active: true,
       },
@@ -433,6 +435,16 @@ private async adjustAssetQuantityTx(
 
     if (dto.initialInvested !== undefined) {
       data.initialInvested = this.parseNonNegative(dto.initialInvested, 'initialInvested');
+    }
+
+    if ('provider' in (dto as any)) {
+      const raw = (dto as any).provider;
+      data.provider = raw && String(raw).trim() ? String(raw).trim().toLowerCase() : null;
+    }
+
+    if ('metadataUrl' in (dto as any)) {
+      const raw = (dto as any).metadataUrl;
+      data.metadataUrl = raw && String(raw).trim() ? String(raw).trim() : null;
     }
 
     if ('identificator' in (dto as any)) {

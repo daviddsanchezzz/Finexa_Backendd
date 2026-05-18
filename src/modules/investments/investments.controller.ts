@@ -24,6 +24,7 @@ import { WithdrawAssetDto } from './dto/withdraw-asset.dto';
 import { BuyAssetDto } from './dto/buy-asset.dto';
 import { ListPortfolioSnapshotsQueryDto } from './dto/portfolio-snapshot.dto';
 import { InvestmentExposureService } from './investment-exposure.service';
+import { ManualAssetMetadataDto } from './dto/manual-asset-metadata.dto';
 
 @Controller('investments')
 export class InvestmentsController {
@@ -174,6 +175,15 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
   @Post('assets/:id/metadata/sync')
   syncAssetMetadata(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     return this.investmentExposureService.syncMetadataForAsset(userId, id);
+  }
+
+  @Post('assets/:id/metadata/manual')
+  upsertManualAssetMetadata(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ManualAssetMetadataDto,
+  ) {
+    return this.investmentExposureService.upsertManualMetadata(userId, id, dto);
   }
 
   @Post('metadata/sync-all')

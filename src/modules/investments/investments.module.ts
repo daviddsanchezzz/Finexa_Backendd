@@ -6,6 +6,7 @@ import { InvestmentsSnapshotScheduler } from './InvestmentsSnapshotScheduler';
 import { PricesFetcherService } from './prices-fetcher.service';
 import { FmpService } from './fmp.service';
 import { InvestmentExposureService } from './investment-exposure.service';
+import { FundMetadataResolverService } from './fund-metadata-resolver.service';
 
 @Module({
   controllers: [InvestmentsController],
@@ -15,6 +16,7 @@ import { InvestmentExposureService } from './investment-exposure.service';
     InvestmentsSnapshotScheduler,
     PricesFetcherService,
     FmpService,
+    FundMetadataResolverService,
     InvestmentExposureService,
   ],
   exports: [InvestmentsService, InvestmentExposureService],
