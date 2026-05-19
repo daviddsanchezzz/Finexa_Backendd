@@ -5,6 +5,7 @@ import { computeExposureBuckets } from './investment-exposure.utils';
 import { FundMetadataResolverService } from './fund-metadata-resolver.service';
 import { normalizeCountry, normalizeSector, normalizeWeightMap } from './fund-metadata.utils';
 import { ManualAssetMetadataDto } from './dto/manual-asset-metadata.dto';
+import { UpsertCompositionDto } from './dto/upsert-composition.dto';
 
 @Injectable()
 export class InvestmentExposureService {
@@ -89,12 +90,97 @@ export class InvestmentExposureService {
     });
     if (!asset) return null;
 
-    const meta = await this.prisma.assetMetadata.findUnique({ where: { assetId } });
+    const [meta, regions, sectors, holdings] = await Promise.all([
+      this.prisma.assetMetadata.findUnique({ where: { assetId } }),
+      this.prisma.investmentAssetRegion.findMany({ where: { assetId }, orderBy: { pct: 'desc' } }),
+      this.prisma.investmentAssetSector.findMany({ where: { assetId }, orderBy: { pct: 'desc' } }),
+      this.prisma.investmentAssetHolding.findMany({ where: { assetId }, orderBy: { sortOrder: 'asc' } }),
+    ]);
+
     return {
       asset,
       metadata: meta,
+      composition: { regions, sectors, holdings },
     };
   }
+
+  // ── Normalized composition ───────────────────────────────────────────────
+
+  async getComposition(userId: number, assetId: number) {
+    const asset = await this.prisma.investmentAsset.findFirst({
+      where: { id: assetId, userId, active: true },
+    });
+    if (!asset) return null;
+
+    const [regions, sectors, holdings] = await Promise.all([
+      this.prisma.investmentAssetRegion.findMany({ where: { assetId }, orderBy: { pct: 'desc' } }),
+      this.prisma.investmentAssetSector.findMany({ where: { assetId }, orderBy: { pct: 'desc' } }),
+      this.prisma.investmentAssetHolding.findMany({ where: { assetId }, orderBy: { sortOrder: 'asc' } }),
+    ]);
+
+    // If no normalized data yet, fall back to JSON blobs for backwards compat
+    if (!regions.length && !sectors.length && !holdings.length) {
+      const meta = await this.prisma.assetMetadata.findUnique({ where: { assetId } });
+      if (meta) {
+        const fallbackRegions = meta.countriesJson
+          ? Object.entries(meta.countriesJson as Record<string, number>).map(([country, pct]) => ({ country, pct }))
+          : [];
+        const fallbackSectors = meta.sectorsJson
+          ? Object.entries(meta.sectorsJson as Record<string, number>).map(([sector, pct]) => ({ sector, pct }))
+          : [];
+        const fallbackHoldings = Array.isArray(meta.topHoldingsJson) ? meta.topHoldingsJson : [];
+        return { regions: fallbackRegions, sectors: fallbackSectors, holdings: fallbackHoldings, source: 'json_fallback' };
+      }
+    }
+
+    return { regions, sectors, holdings };
+  }
+
+  async upsertComposition(userId: number, assetId: number, dto: UpsertCompositionDto) {
+    const asset = await this.prisma.investmentAsset.findFirst({
+      where: { id: assetId, userId, active: true },
+    });
+    if (!asset) return null;
+
+    await this.prisma.$transaction(async (tx) => {
+      if (dto.regions !== undefined) {
+        await tx.investmentAssetRegion.deleteMany({ where: { assetId } });
+        if (dto.regions.length) {
+          await tx.investmentAssetRegion.createMany({
+            data: dto.regions.map((r) => ({ assetId, country: r.country, pct: r.pct })),
+          });
+        }
+      }
+
+      if (dto.sectors !== undefined) {
+        await tx.investmentAssetSector.deleteMany({ where: { assetId } });
+        if (dto.sectors.length) {
+          await tx.investmentAssetSector.createMany({
+            data: dto.sectors.map((s) => ({ assetId, sector: s.sector, pct: s.pct })),
+          });
+        }
+      }
+
+      if (dto.holdings !== undefined) {
+        await tx.investmentAssetHolding.deleteMany({ where: { assetId } });
+        if (dto.holdings.length) {
+          await tx.investmentAssetHolding.createMany({
+            data: dto.holdings.map((h, i) => ({
+              assetId,
+              name: h.name,
+              ticker: h.ticker ?? null,
+              weight: h.weight,
+              sortOrder: h.sortOrder ?? i,
+            })),
+          });
+        }
+      }
+    });
+
+    return this.getComposition(userId, assetId);
+  }
+
+  // ── Exposure (cross-asset analytics) ─────────────────────────────────────
 
   async getExposure(userId: number) {
     const assets = await this.getAssetsWithCurrentValue(userId);
@@ -102,30 +188,119 @@ export class InvestmentExposureService {
       return { countries: [], sectors: [], indirectHoldings: [], totalPortfolioValue: 0 };
     }
 
-    // For geographic/sector exposure, exclude asset classes not comparable by region/sector.
     const eligibleAssets = assets.filter((a) => a.type !== 'cash' && a.type !== 'crypto');
     if (!eligibleAssets.length) {
       return { countries: [], sectors: [], indirectHoldings: [], totalPortfolioValue: 0 };
     }
 
-    const metas = await this.prisma.assetMetadata.findMany({
-      where: { assetId: { in: eligibleAssets.map((a) => a.id) } },
-      select: { assetId: true, countriesJson: true, sectorsJson: true, topHoldingsJson: true },
-    });
+    const eligibleIds = eligibleAssets.map((a) => a.id);
+
+    // Fetch normalized tables + JSON fallback in parallel
+    const [assetRegions, assetSectors, assetHoldings, metas] = await Promise.all([
+      this.prisma.investmentAssetRegion.findMany({ where: { assetId: { in: eligibleIds } } }),
+      this.prisma.investmentAssetSector.findMany({ where: { assetId: { in: eligibleIds } } }),
+      this.prisma.investmentAssetHolding.findMany({ where: { assetId: { in: eligibleIds } } }),
+      this.prisma.assetMetadata.findMany({
+        where: { assetId: { in: eligibleIds } },
+        select: { assetId: true, countriesJson: true, sectorsJson: true, topHoldingsJson: true },
+      }),
+    ]);
+
+    // Group normalized data by assetId
+    const regionsByAsset = new Map<number, typeof assetRegions>();
+    for (const r of assetRegions) {
+      const prev = regionsByAsset.get(r.assetId) ?? [];
+      regionsByAsset.set(r.assetId, [...prev, r]);
+    }
+    const sectorsByAsset = new Map<number, typeof assetSectors>();
+    for (const s of assetSectors) {
+      const prev = sectorsByAsset.get(s.assetId) ?? [];
+      sectorsByAsset.set(s.assetId, [...prev, s]);
+    }
+    const holdingsByAsset = new Map<number, typeof assetHoldings>();
+    for (const h of assetHoldings) {
+      const prev = holdingsByAsset.get(h.assetId) ?? [];
+      holdingsByAsset.set(h.assetId, [...prev, h]);
+    }
     const metaByAsset = new Map(metas.map((m) => [m.assetId, m]));
 
     const rows = eligibleAssets.map((a) => {
-      const m = metaByAsset.get(a.id);
-      return {
-        currentValue: a.currentValue,
-        countries: (m?.countriesJson as Record<string, number> | null) ?? null,
-        sectors: (m?.sectorsJson as Record<string, number> | null) ?? null,
-        topHoldings: (m?.topHoldingsJson as any[] | null) ?? null,
-      };
+      const regions = regionsByAsset.get(a.id) ?? [];
+      const sectors = sectorsByAsset.get(a.id) ?? [];
+      const holdings = holdingsByAsset.get(a.id) ?? [];
+      const meta = metaByAsset.get(a.id);
+
+      // Prefer normalized tables; fall back to JSON if no rows exist
+      const countries: Record<string, number> | null =
+        regions.length > 0
+          ? Object.fromEntries(regions.map((r) => [r.country, Number(r.pct)]))
+          : (meta?.countriesJson as Record<string, number> | null) ?? null;
+
+      const sectorsMap: Record<string, number> | null =
+        sectors.length > 0
+          ? Object.fromEntries(sectors.map((s) => [s.sector, Number(s.pct)]))
+          : (meta?.sectorsJson as Record<string, number> | null) ?? null;
+
+      const topHoldings: any[] | null =
+        holdings.length > 0
+          ? holdings.map((h) => ({ name: h.name, ticker: h.ticker, weight: Number(h.weight) }))
+          : (meta?.topHoldingsJson as any[] | null) ?? null;
+
+      return { currentValue: a.currentValue, countries, sectors: sectorsMap, topHoldings };
     });
 
     return computeExposureBuckets(rows);
   }
+
+  // ── Internal: write normalized tables from external sync results ──────────
+
+  private async syncNormalizedComposition(
+    assetId: number,
+    countries: Record<string, number> | null,
+    sectors: Record<string, number> | null,
+    holdings: any[] | null,
+  ) {
+    const ops: any[] = [];
+
+    if (countries && Object.keys(countries).length) {
+      ops.push(this.prisma.investmentAssetRegion.deleteMany({ where: { assetId } }));
+      ops.push(
+        this.prisma.investmentAssetRegion.createMany({
+          data: Object.entries(countries).map(([country, pct]) => ({ assetId, country, pct })),
+        }),
+      );
+    }
+
+    if (sectors && Object.keys(sectors).length) {
+      ops.push(this.prisma.investmentAssetSector.deleteMany({ where: { assetId } }));
+      ops.push(
+        this.prisma.investmentAssetSector.createMany({
+          data: Object.entries(sectors).map(([sector, pct]) => ({ assetId, sector, pct })),
+        }),
+      );
+    }
+
+    if (holdings && holdings.length) {
+      ops.push(this.prisma.investmentAssetHolding.deleteMany({ where: { assetId } }));
+      ops.push(
+        this.prisma.investmentAssetHolding.createMany({
+          data: holdings.map((h: any, i: number) => ({
+            assetId,
+            name: h.name,
+            ticker: h.ticker ?? null,
+            weight: Number(h.weight ?? 0),
+            sortOrder: i,
+          })),
+        }),
+      );
+    }
+
+    if (ops.length) {
+      await this.prisma.$transaction(ops);
+    }
+  }
+
+  // ── Sync metadata from external providers ─────────────────────────────────
 
   private inferCryptoCategory(assetName: string) {
     const n = assetName.toLowerCase();
@@ -215,11 +390,21 @@ export class InvestmentExposureService {
       lastError: null,
     };
 
-    return this.prisma.assetMetadata.upsert({
+    const saved = await this.prisma.assetMetadata.upsert({
       where: { assetId: asset.id },
       create: payload,
       update: payload,
     });
+
+    // Also populate normalized tables so UI always reads from them
+    await this.syncNormalizedComposition(
+      asset.id,
+      nextCountries ?? (existing?.countriesJson as Record<string, number> | null) ?? null,
+      nextSectors ?? (existing?.sectorsJson as Record<string, number> | null) ?? null,
+      nextHoldings ?? (existing?.topHoldingsJson as any[] | null) ?? null,
+    );
+
+    return saved;
   }
 
   async syncMetadataForAllUsers() {
@@ -290,10 +475,20 @@ export class InvestmentExposureService {
       lastError: null,
     };
 
-    return this.prisma.assetMetadata.upsert({
+    const saved = await this.prisma.assetMetadata.upsert({
       where: { assetId },
       create: payload,
       update: payload,
     });
+
+    // Mirror to normalized tables
+    await this.syncNormalizedComposition(
+      assetId,
+      dto.countries ?? null,
+      dto.sectors ?? null,
+      dto.topHoldings ?? null,
+    );
+
+    return saved;
   }
 }

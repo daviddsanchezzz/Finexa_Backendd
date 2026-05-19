@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { InvestmentsService } from './investments.service';
@@ -25,6 +26,7 @@ import { BuyAssetDto } from './dto/buy-asset.dto';
 import { ListPortfolioSnapshotsQueryDto } from './dto/portfolio-snapshot.dto';
 import { InvestmentExposureService } from './investment-exposure.service';
 import { ManualAssetMetadataDto } from './dto/manual-asset-metadata.dto';
+import { UpsertCompositionDto } from './dto/upsert-composition.dto';
 
 @Controller('investments')
 export class InvestmentsController {
@@ -184,6 +186,20 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
     @Body() dto: ManualAssetMetadataDto,
   ) {
     return this.investmentExposureService.upsertManualMetadata(userId, id, dto);
+  }
+
+  @Get('assets/:id/composition')
+  getComposition(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.investmentExposureService.getComposition(userId, id);
+  }
+
+  @Put('assets/:id/composition')
+  upsertComposition(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpsertCompositionDto,
+  ) {
+    return this.investmentExposureService.upsertComposition(userId, id, dto);
   }
 
   @Post('metadata/sync-all')

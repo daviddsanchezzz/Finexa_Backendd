@@ -916,6 +916,10 @@ model InvestmentAsset {
   operations InvestmentOperation[]
   metadata   AssetMetadata?
 
+  regions  InvestmentAssetRegion[]
+  sectors  InvestmentAssetSector[]
+  holdings InvestmentAssetHolding[]
+
   transactions Transaction[]   // transferencias que apuntan a este asset
   valuations   InvestmentValuationSnapshot[]
 
@@ -925,6 +929,41 @@ model InvestmentAsset {
   archived  Boolean  @default(false)
 
   @@unique([userId, name])
+}
+
+model InvestmentAssetRegion {
+  id      Int             @id @default(autoincrement())
+  assetId Int
+  asset   InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  country String
+  pct     Decimal         @db.Decimal(5, 2)
+
+  @@unique([assetId, country])
+  @@index([assetId])
+}
+
+model InvestmentAssetSector {
+  id      Int             @id @default(autoincrement())
+  assetId Int
+  asset   InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  sector  String
+  pct     Decimal         @db.Decimal(5, 2)
+
+  @@unique([assetId, sector])
+  @@index([assetId])
+}
+
+model InvestmentAssetHolding {
+  id        Int             @id @default(autoincrement())
+  assetId   Int
+  asset     InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  name      String
+  ticker    String?
+  weight    Decimal         @db.Decimal(5, 2)
+  sortOrder Int             @default(0)
+
+  @@unique([assetId, name])
+  @@index([assetId])
 }
 
 model AssetMetadata {
