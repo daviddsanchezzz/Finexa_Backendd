@@ -125,6 +125,7 @@ model User {
   investmentAssets     InvestmentAsset[]
   investmentValuations InvestmentValuationSnapshot[]
   investmentOperations InvestmentOperation[]
+  investmentTargetAllocations InvestmentTargetAllocation[]
 
 
   createdAt     DateTime       @default(now())
@@ -915,6 +916,7 @@ model InvestmentAsset {
   initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
   operations InvestmentOperation[]
   metadata   AssetMetadata?
+  targetAllocations InvestmentTargetAllocation[]
 
   regions  InvestmentAssetRegion[]
   sectors  InvestmentAssetSector[]
@@ -1076,6 +1078,25 @@ model PortfolioSnapshot {
 
   @@unique([userId, monthStart])
   @@index([userId, monthStart])
+}
+
+model InvestmentTargetAllocation {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  assetId   Int
+  asset     InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  targetPct Decimal  @db.Decimal(7, 4)
+  active    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, assetId])
+  @@index([userId, active])
+  @@index([assetId, active])
 }
 
 

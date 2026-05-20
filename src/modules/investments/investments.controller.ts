@@ -27,6 +27,9 @@ import { ListPortfolioSnapshotsQueryDto } from './dto/portfolio-snapshot.dto';
 import { InvestmentExposureService } from './investment-exposure.service';
 import { ManualAssetMetadataDto } from './dto/manual-asset-metadata.dto';
 import { UpsertCompositionDto } from './dto/upsert-composition.dto';
+import { UpsertInvestmentTargetsDto } from './dto/upsert-investment-targets.dto';
+import { RebalancePreviewDto } from './dto/rebalance-preview.dto';
+import { ContributionPreviewDto } from './dto/contribution-preview.dto';
 
 @Controller('investments')
 export class InvestmentsController {
@@ -167,6 +170,26 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
   @Get('exposure')
   exposure(@User('id') userId: number) {
     return this.investmentExposureService.getExposure(userId);
+  }
+
+  @Get('targets')
+  listTargets(@User('id') userId: number) {
+    return this.investmentExposureService.listInvestmentTargets(userId);
+  }
+
+  @Put('targets')
+  upsertTargets(@User('id') userId: number, @Body() dto: UpsertInvestmentTargetsDto) {
+    return this.investmentExposureService.upsertInvestmentTargets(userId, dto);
+  }
+
+  @Post('rebalance/preview')
+  rebalancePreview(@User('id') userId: number, @Body() dto: RebalancePreviewDto) {
+    return this.investmentExposureService.previewRebalance(userId, dto);
+  }
+
+  @Post('contribution/preview')
+  contributionPreview(@User('id') userId: number, @Body() dto: ContributionPreviewDto) {
+    return this.investmentExposureService.previewContribution(userId, dto);
   }
 
   @Get('assets/:id/metadata')

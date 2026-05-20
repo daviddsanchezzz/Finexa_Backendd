@@ -6,6 +6,10 @@ import { FundMetadataResolverService } from './fund-metadata-resolver.service';
 import { normalizeCountry, normalizeSector, normalizeWeightMap } from './fund-metadata.utils';
 import { ManualAssetMetadataDto } from './dto/manual-asset-metadata.dto';
 import { UpsertCompositionDto } from './dto/upsert-composition.dto';
+import { UpsertInvestmentTargetsDto } from './dto/upsert-investment-targets.dto';
+import { RebalancePreviewDto } from './dto/rebalance-preview.dto';
+import { ContributionPreviewDto } from './dto/contribution-preview.dto';
+import { BadRequestException } from '@nestjs/common';
 
 @Injectable()
 export class InvestmentExposureService {
@@ -189,7 +193,8 @@ export class InvestmentExposureService {
       return { countries: [], sectors: [], indirectHoldings: [], totalPortfolioValue: 0 };
     }
 
-    const eligibleAssets = assets.filter((a) => a.type !== 'cash' && a.type !== 'crypto');
+    // Include crypto composition in exposure buckets; only cash is excluded.
+    const eligibleAssets = assets.filter((a) => a.type !== 'cash');
     if (!eligibleAssets.length) {
       return { countries: [], sectors: [], indirectHoldings: [], totalPortfolioValue: 0 };
     }
@@ -251,6 +256,169 @@ export class InvestmentExposureService {
     });
 
     return computeExposureBuckets(rows);
+  }
+
+  async listInvestmentTargets(userId: number) {
+    const assets = await this.getAssetsWithCurrentValue(userId);
+    const eligibleAssets = assets.filter((a) => a.type !== 'cash');
+    const total = eligibleAssets.reduce((sum, a) => sum + Number(a.currentValue || 0), 0);
+
+    const targetRows = await this.prisma.investmentTargetAllocation.findMany({
+      where: { userId, active: true, assetId: { in: eligibleAssets.map((a) => a.id) } },
+      select: { assetId: true, targetPct: true },
+    });
+    const byAsset = new Map<number, number>(
+      targetRows.map((r) => [r.assetId, Number(r.targetPct || 0)]),
+    );
+
+    const sumTarget = targetRows.reduce((s, r) => s + Number(r.targetPct || 0), 0);
+
+    return {
+      totalCurrentValue: total,
+      targetSumPct: sumTarget,
+      items: eligibleAssets
+        .map((a) => {
+          const currentValue = Number(a.currentValue || 0);
+          const actualPct = total > 0 ? (currentValue / total) * 100 : 0;
+          const targetPct = byAsset.get(a.id) ?? 0;
+          return {
+            assetId: a.id,
+            assetName: a.name,
+            assetType: a.type,
+            currentValue,
+            actualPct,
+            targetPct,
+            driftPct: actualPct - targetPct,
+          };
+        })
+        .sort((x, y) => y.currentValue - x.currentValue),
+    };
+  }
+
+  async upsertInvestmentTargets(userId: number, dto: UpsertInvestmentTargetsDto) {
+    const items = Array.isArray(dto.items) ? dto.items : [];
+    if (!items.length) throw new BadRequestException('items is required');
+
+    const dedup = new Map<number, number>();
+    for (const it of items) {
+      const assetId = Number(it.assetId);
+      const targetPct = Number(it.targetPct);
+      if (!Number.isInteger(assetId)) throw new BadRequestException('Invalid assetId');
+      if (!Number.isFinite(targetPct) || targetPct < 0 || targetPct > 100) {
+        throw new BadRequestException('Invalid targetPct');
+      }
+      dedup.set(assetId, targetPct);
+    }
+
+    const assetIds = [...dedup.keys()];
+    const owned = await this.prisma.investmentAsset.findMany({
+      where: { userId, active: true, archived: false, type: { not: 'cash' }, id: { in: assetIds } },
+      select: { id: true },
+    });
+    if (owned.length !== assetIds.length) {
+      throw new BadRequestException('Some assets are invalid or not eligible');
+    }
+
+    const sum = [...dedup.values()].reduce((s, x) => s + Number(x || 0), 0);
+    if (Math.abs(sum - 100) > 0.01) {
+      throw new BadRequestException('Target allocation must sum exactly 100%');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.investmentTargetAllocation.updateMany({
+        where: { userId },
+        data: { active: false },
+      });
+
+      for (const [assetId, targetPct] of dedup.entries()) {
+        await tx.investmentTargetAllocation.upsert({
+          where: { userId_assetId: { userId, assetId } },
+          update: { targetPct, active: true },
+          create: { userId, assetId, targetPct, active: true },
+        });
+      }
+    });
+
+    return this.listInvestmentTargets(userId);
+  }
+
+  async previewRebalance(userId: number, dto: RebalancePreviewDto) {
+    const minOperation = Math.max(0, Number(dto?.minOperation ?? 0));
+    const target = await this.listInvestmentTargets(userId);
+    if (!target.items.length) throw new BadRequestException('No eligible assets');
+    if (Math.abs(Number(target.targetSumPct || 0) - 100) > 0.01) {
+      throw new BadRequestException('Target allocation is not configured to 100%');
+    }
+
+    const total = Number(target.totalCurrentValue || 0);
+    const rows = target.items.map((x) => {
+      const targetValue = (total * Number(x.targetPct || 0)) / 100;
+      const delta = targetValue - Number(x.currentValue || 0);
+      return {
+        assetId: x.assetId,
+        assetName: x.assetName,
+        currentValue: Number(x.currentValue || 0),
+        targetValue,
+        delta,
+      };
+    });
+
+    const buys = rows
+      .filter((r) => r.delta > minOperation)
+      .map((r) => ({ assetId: r.assetId, assetName: r.assetName, amount: Number(r.delta.toFixed(2)) }));
+    const sells = rows
+      .filter((r) => r.delta < -minOperation)
+      .map((r) => ({ assetId: r.assetId, assetName: r.assetName, amount: Number(Math.abs(r.delta).toFixed(2)) }));
+
+    return {
+      totalCurrentValue: total,
+      minOperation,
+      buys,
+      sells,
+      rows,
+    };
+  }
+
+  async previewContribution(userId: number, dto: ContributionPreviewDto) {
+    const amount = Number(dto?.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('Invalid amount');
+    const minOperation = Math.max(0, Number(dto?.minOperation ?? 0));
+
+    const target = await this.listInvestmentTargets(userId);
+    if (!target.items.length) throw new BadRequestException('No eligible assets');
+    if (Math.abs(Number(target.targetSumPct || 0) - 100) > 0.01) {
+      throw new BadRequestException('Target allocation is not configured to 100%');
+    }
+
+    const total = Number(target.totalCurrentValue || 0);
+    const nextTotal = total + amount;
+    const needs = target.items
+      .map((x) => {
+        const desiredAfter = (nextTotal * Number(x.targetPct || 0)) / 100;
+        const need = Math.max(0, desiredAfter - Number(x.currentValue || 0));
+        return { assetId: x.assetId, assetName: x.assetName, need };
+      })
+      .filter((x) => x.need > 0);
+
+    const needSum = needs.reduce((s, x) => s + x.need, 0);
+    const allocations = needs
+      .map((n) => {
+        const raw = needSum > 0 ? (amount * n.need) / needSum : 0;
+        return { assetId: n.assetId, assetName: n.assetName, amount: Number(raw.toFixed(2)) };
+      })
+      .filter((x) => x.amount > minOperation);
+
+    const assigned = allocations.reduce((s, x) => s + x.amount, 0);
+    const remainder = Number((amount - assigned).toFixed(2));
+
+    return {
+      amount,
+      minOperation,
+      totalCurrentValue: total,
+      totalAfterContribution: nextTotal,
+      allocations,
+      remainder,
+    };
   }
 
   // ── Internal: write normalized tables from external sync results ──────────
