@@ -8,6 +8,7 @@ import { PrismaService } from 'src/common/prisma/prisma.service';
 import { CreateInvestmentAssetDto } from './dto/create-investment-asset.dto';
 import { UpdateInvestmentAssetDto } from './dto/update-investment-asset.dto';
 import { CreateInvestmentValuationDto } from './dto/create-valuation.dto';
+import { CreateInvestmentValuationsBatchDto } from './dto/create-valuations-batch.dto';
 import { UpdateInvestmentValuationDto } from './dto/update-valuation.dto';
 import { Prisma, PrismaClient } from '@prisma/client';
 type Tx = Prisma.TransactionClient;
@@ -224,7 +225,7 @@ private async adjustAssetQuantityTx(
         active: true,
         assetId: { in: assetIds },
         date: { lte: target },
-        type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell', 'swap_in', 'swap_out'] as any },
+        type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell', 'swap', 'swap_in', 'swap_out'] as any },
       },
       select: { assetId: true, type: true, amount: true },
     });
@@ -239,7 +240,7 @@ private async adjustAssetQuantityTx(
     for (const o of ops) {
       const t = String(o.type);
       const amt = Number(o.amount ?? 0);
-      const delta = inflow.has(t) ? amt : outflow.has(t) ? -amt : 0;
+      const delta = inflow.has(t) ? amt : outflow.has(t) ? -amt : t === 'swap' ? amt : 0;
       if (delta) bookByAsset.set(o.assetId, (bookByAsset.get(o.assetId) ?? 0) + delta);
     }
 
@@ -314,6 +315,10 @@ private async adjustAssetQuantityTx(
 
       if (inflowTypes.has(t)) prev.inflow += amt;
       else if (outflowTypes.has(t)) prev.outflow += amt;
+      else if (t === 'swap') {
+        if (amt >= 0) prev.inflow += amt;
+        else prev.outflow += Math.abs(amt);
+      }
 
       aggMap.set(o.assetId, prev);
     }
@@ -554,6 +559,40 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
   return valuation;
 }
 
+async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatchDto) {
+  const rawDate = new Date(dto.date);
+  if (Number.isNaN(rawDate.getTime())) throw new BadRequestException('Invalid date');
+  const date = this.startOfUtcDay(rawDate);
+
+  const items = Array.isArray(dto.items) ? dto.items : [];
+  if (!items.length) throw new BadRequestException('items is required');
+
+  const normalized = items.map((it) => ({
+    assetId: this.requireInt(it.assetId, 'assetId'),
+    value: this.parseNonNegative(it.value, 'value'),
+    currency: this.normalizeCurrency(it.currency, 'EUR'),
+  }));
+
+  const uniqueAssetIds = Array.from(new Set(normalized.map((x) => x.assetId)));
+  await Promise.all(uniqueAssetIds.map((assetId) => this.assertAssetOwned(userId, assetId)));
+
+  const valuations = await this.prisma.$transaction(async (tx) => {
+    return Promise.all(
+      normalized.map((it) =>
+        this.upsertValuationSnapshotTx(tx, userId, {
+          assetId: it.assetId,
+          date,
+          value: new Prisma.Decimal(it.value),
+          currency: it.currency,
+        }),
+      ),
+    );
+  });
+
+  await this.recalcInvestmentWalletBalance(userId);
+  return { count: valuations.length, valuations };
+}
+
   public async upsertValuationSnapshotTx(
   tx: Tx,
   userId: number,
@@ -737,6 +776,10 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
 
       if (bookInTypes.has(t)) prev.bookIn += amt;
       else if (bookOutTypes.has(t)) prev.bookOut += amt;
+      else if (t === 'swap') {
+        if (amt >= 0) prev.bookIn += amt;
+        else prev.bookOut += Math.abs(amt);
+      }
 
       agg.set(o.assetId, prev);
     }
@@ -912,7 +955,7 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
     for (const o of ops) {
       const t = String(o.type);
       const amt = Number(o.amount ?? 0);
-      const delta = bookInTypes.has(t) ? amt : bookOutTypes.has(t) ? -amt : 0;
+      const delta = bookInTypes.has(t) ? amt : bookOutTypes.has(t) ? -amt : t === 'swap' ? amt : 0;
       if (!delta) continue;
 
       const dayKey = this.toDayKeyUTC(o.date);
@@ -1057,7 +1100,7 @@ async depositAsset(userId: number, assetId: number, dto: any) {
       data: {
         userId,
         assetId,
-        type: 'transfer_in' as any,    // entrada a inversión
+        type: 'buy' as any,
         date,
         amount,                        // SOLO principal
         quantity,
@@ -1128,7 +1171,7 @@ async withdrawAsset(userId: number, assetId: number, dto: any) {
       data: {
         userId,
         assetId,
-        type: 'transfer_out' as any,   // salida de inversión
+        type: 'sell' as any,
         date,
         quantity,
         amount: amountNet,             // guardas neto
@@ -1349,9 +1392,9 @@ async swapAssets(userId: number, dto: any) {
       data: {
         userId,
         assetId: fromAssetId,
-        type: 'swap_out' as any,
+        type: 'swap' as any,
         date,
-        amount: amountOut,
+        amount: -Math.abs(amountOut),
         fee,              // asignamos fee al out leg (decisión de modelado)
         swapGroupId,
         active: true,
@@ -1363,9 +1406,9 @@ async swapAssets(userId: number, dto: any) {
       data: {
         userId,
         assetId: toAssetId,
-        type: 'swap_in' as any,
+        type: 'swap' as any,
         date,
-        amount: amountIn,
+        amount: Math.abs(amountIn),
         fee: 0,           // fee ya lo imputamos al out leg
         swapGroupId,
         active: true,
@@ -1397,7 +1440,7 @@ async deleteSwap(userId: number, swapGroupId: string) {
       userId,
       active: true,
       swapGroupId: sg,
-      type: { in: ['swap_in', 'swap_out'] as any },
+      type: { in: ['swap', 'swap_in', 'swap_out'] as any },
     },
     select: { id: true },
   });
@@ -1406,7 +1449,7 @@ async deleteSwap(userId: number, swapGroupId: string) {
 
   // 2) Soft delete de ambas patas
   await this.prisma.investmentOperation.updateMany({
-    where: { userId, swapGroupId: sg, type: { in: ['swap_in', 'swap_out'] as any } },
+    where: { userId, swapGroupId: sg, type: { in: ['swap', 'swap_in', 'swap_out'] as any } },
     data: { active: false },
   });
 

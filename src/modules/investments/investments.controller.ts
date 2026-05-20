@@ -20,8 +20,6 @@ import { UpdateInvestmentValuationDto } from './dto/update-valuation.dto';
 import { User } from 'src/common/decorators/user.decorator';
 import { SellAssetDto } from './dto/sell-asset.dto';
 import { SwapAssetsDto } from './dto/swap-assets.dto';
-import { DepositAssetDto } from './dto/deposit-asset.dto';
-import { WithdrawAssetDto } from './dto/withdraw-asset.dto';
 import { BuyAssetDto } from './dto/buy-asset.dto';
 import { ListPortfolioSnapshotsQueryDto } from './dto/portfolio-snapshot.dto';
 import { InvestmentExposureService } from './investment-exposure.service';
@@ -30,6 +28,7 @@ import { UpsertCompositionDto } from './dto/upsert-composition.dto';
 import { UpsertInvestmentTargetsDto } from './dto/upsert-investment-targets.dto';
 import { RebalancePreviewDto } from './dto/rebalance-preview.dto';
 import { ContributionPreviewDto } from './dto/contribution-preview.dto';
+import { CreateInvestmentValuationsBatchDto } from './dto/create-valuations-batch.dto';
 
 @Controller('investments')
 export class InvestmentsController {
@@ -145,6 +144,11 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
     return this.investmentsService.createValuation(userId, dto);
   }
 
+  @Post('valuations/batch')
+  createValuationsBatch(@User('id') userId: number, @Body() dto: CreateInvestmentValuationsBatchDto) {
+    return this.investmentsService.createValuationsBatch(userId, dto);
+  }
+
   @Patch('valuations/:id')
   updateValuation(
     @User('id') userId: number,
@@ -257,18 +261,18 @@ timeline(
   deposit(
     @User('id') userId: number,
     @Param('assetId') assetId: string,
-    @Body() dto: DepositAssetDto,
+    @Body() dto: BuyAssetDto,
   ) {
-    return this.investmentsService.depositAsset(userId, Number(assetId), dto);
+    return this.investmentsService.buyAsset(userId, Number(assetId), dto);
   }
 
   @Post(':assetId/withdraw')
   withdraw(
     @User('id') userId: number,
     @Param('assetId') assetId: string,
-    @Body() dto: WithdrawAssetDto,
+    @Body() dto: SellAssetDto,
   ) {
-    return this.investmentsService.withdrawAsset(userId, Number(assetId), dto);
+    return this.investmentsService.sellAsset(userId, Number(assetId), dto);
   }
 
   @Post(':assetId/buy')

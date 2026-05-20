@@ -29,6 +29,7 @@ type BackendOpType =
   | "sell"
   | "transfer_in"
   | "transfer_out"
+  | "swap"
   | "swap_in"
   | "swap_out"
   | string;
@@ -43,6 +44,8 @@ function opLabel(t: BackendOpType) {
       return "Compra";
     case "sell":
       return "Venta";
+    case "swap":
+      return "Swap";
     case "swap_in":
       return "Swap (entrada)";
     case "swap_out":
