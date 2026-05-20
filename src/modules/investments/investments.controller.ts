@@ -303,6 +303,29 @@ timeline(
     return this.investmentsService.deleteSwap(userId, swapGroupId);
   }
 
+  @Patch('swaps/:swapGroupId')
+  updateSwap(
+    @User('id') userId: number,
+    @Param('swapGroupId') swapGroupId: string,
+    @Body() dto: any,
+  ) {
+    return this.investmentsService.updateSwap(userId, swapGroupId, dto);
+  }
 
+  @Delete('operations/:id')
+  deleteOperation(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.investmentsService.deleteOperation(userId, id);
+  }
 
+  @Patch('operations/:id')
+  updateOperation(
+    @User('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: any,
+  ) {
+    return this.investmentsService.updateOperation(userId, id, dto);
+  }
 }

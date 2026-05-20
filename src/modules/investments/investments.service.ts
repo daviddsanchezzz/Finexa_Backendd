@@ -1461,6 +1461,151 @@ async deleteSwap(userId: number, swapGroupId: string) {
     await this.recalcInvestmentWalletBalance(userId);
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // DELETE OPERATION (buy / sell)
+  // Reverses all wallet and quantity effects, then soft-deletes the op.
+  // ─────────────────────────────────────────────────────────────────────────
+  async deleteOperation(userId: number, operationId: number) {
+    // 1) Load the operation with its linked transaction
+    const op = await this.prisma.investmentOperation.findFirst({
+      where: { id: operationId, userId, active: true },
+      include: {
+        transaction: {
+          select: { id: true, fromWalletId: true, toWalletId: true, amount: true },
+        },
+      },
+    });
+    if (!op) throw new NotFoundException('Operation not found');
+
+    const type = String(op.type);
+    if (type === 'swap' || type === 'swap_in' || type === 'swap_out') {
+      throw new BadRequestException('Use DELETE /investments/swaps/:swapGroupId for swap operations');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      // Reverse wallet effects using the linked Transaction for wallet IDs
+      if (op.transaction) {
+        const { fromWalletId, toWalletId } = op.transaction;
+
+        if (type === 'buy' || type === 'transfer_in') {
+          // Original: cash(from) -= amount+fee, inv(to) += amount
+          // Reverse:  cash(from) += amount+fee, inv(to) -= amount
+          const totalOutflow = op.amount + (op.fee ?? 0);
+          await tx.wallet.update({ where: { id: fromWalletId! }, data: { balance: { increment: totalOutflow } } });
+          await tx.wallet.update({ where: { id: toWalletId! },   data: { balance: { decrement: op.amount } } });
+        } else if (type === 'sell' || type === 'transfer_out') {
+          // Original: inv(from) -= amount, cash(to) += amount
+          // Reverse:  inv(from) += amount, cash(to) -= amount
+          await tx.wallet.update({ where: { id: toWalletId! },   data: { balance: { decrement: op.amount } } });
+          await tx.wallet.update({ where: { id: fromWalletId! }, data: { balance: { increment: op.amount } } });
+        }
+
+        // Soft-delete the linked general Transaction
+        await tx.transaction.update({ where: { id: op.transaction.id }, data: { active: false } });
+      }
+
+      // Reverse quantity
+      if (op.quantity) {
+        const qty = new Prisma.Decimal(op.quantity.toString());
+        const isBuy = type === 'buy' || type === 'transfer_in';
+        await this.adjustAssetQuantityTx(tx, userId, op.assetId, isBuy ? qty.neg() : qty);
+      }
+
+      // Soft-delete the operation itself
+      await tx.investmentOperation.update({ where: { id: operationId }, data: { active: false } });
+    });
+
+    await this.recalcInvestmentWalletBalance(userId);
+    return { id: operationId, deleted: true };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UPDATE OPERATION (buy / sell)
+  // Strategy: delete old op (reverting effects) then recreate with new data.
+  // ─────────────────────────────────────────────────────────────────────────
+  async updateOperation(userId: number, operationId: number, dto: any) {
+    // 1) Load operation to know type and linked wallet IDs
+    const op = await this.prisma.investmentOperation.findFirst({
+      where: { id: operationId, userId, active: true },
+      include: {
+        transaction: {
+          select: { id: true, fromWalletId: true, toWalletId: true },
+        },
+      },
+    });
+    if (!op) throw new NotFoundException('Operation not found');
+
+    const type = String(op.type);
+    if (type === 'swap' || type === 'swap_in' || type === 'swap_out') {
+      throw new BadRequestException('Use PATCH /investments/swaps/:swapGroupId for swap operations');
+    }
+
+    // 2) Delete the old operation (reverses wallet effects)
+    await this.deleteOperation(userId, operationId);
+
+    // 3) Re-use the same wallet the original op used, unless overridden in dto
+    const isBuy = type === 'buy' || type === 'transfer_in';
+    const originalWalletId = isBuy
+      ? op.transaction?.fromWalletId
+      : op.transaction?.toWalletId;
+
+    const mergedDto = {
+      amount:      dto.amount      ?? op.amount,
+      fee:         dto.fee         ?? op.fee ?? 0,
+      quantity:    dto.quantity    ?? (op.quantity ? op.quantity.toString() : undefined),
+      date:        dto.date        ?? op.date.toISOString(),
+      description: dto.description ?? undefined,
+      ...(isBuy
+        ? { fromWalletId: dto.fromWalletId ?? originalWalletId }
+        : { toWalletId:   dto.toWalletId   ?? originalWalletId }),
+    };
+
+    // 4) Recreate using the same asset and type
+    if (isBuy) {
+      return this.buyAsset(userId, op.assetId, mergedDto);
+    } else {
+      return this.sellAsset(userId, op.assetId, mergedDto);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UPDATE SWAP
+  // Strategy: delete the old swap group then recreate with new values.
+  // ─────────────────────────────────────────────────────────────────────────
+  async updateSwap(userId: number, swapGroupId: string, dto: any) {
+    const sg = (swapGroupId ?? '').trim();
+    if (!sg) throw new BadRequestException('swapGroupId is required');
+
+    // Load the two legs to get asset IDs and current values
+    const legs = await this.prisma.investmentOperation.findMany({
+      where: { userId, swapGroupId: sg, active: true },
+    });
+    if (legs.length === 0) throw new NotFoundException('Swap not found');
+
+    const outLeg = legs.find((l) => l.amount < 0 || (l.fee ?? 0) > 0) ?? legs[0];
+    const inLeg  = legs.find((l) => l.id !== outLeg.id) ?? legs[1];
+
+    if (!outLeg || !inLeg) throw new BadRequestException('Swap legs not found');
+
+    // Delete old swap
+    await this.deleteSwap(userId, sg);
+
+    // Recreate with merged values
+    const mergedDto = {
+      fromAssetId:  dto.fromAssetId  ?? outLeg.assetId,
+      toAssetId:    dto.toAssetId    ?? inLeg.assetId,
+      amountOut:    dto.amountOut    ?? Math.abs(outLeg.amount),
+      amountIn:     dto.amountIn     ?? Math.abs(inLeg.amount),
+      fee:          dto.fee          ?? outLeg.fee ?? 0,
+      date:         dto.date         ?? outLeg.date.toISOString(),
+      description:  dto.description  ?? undefined,
+      quantityOut:  dto.quantityOut  ?? (outLeg.quantity ? outLeg.quantity.toString() : undefined),
+      quantityIn:   dto.quantityIn   ?? (inLeg.quantity  ? inLeg.quantity.toString()  : undefined),
+    };
+
+    return this.swapAssets(userId, mergedDto);
+  }
+
   async listOperations(userId: number, assetId: number, active?: boolean) {
     const asset = await this.prisma.investmentAsset.findFirst({
       where: { id: assetId, userId, active: true },
@@ -1481,12 +1626,16 @@ async deleteSwap(userId: number, swapGroupId: string) {
         type: true,
         date: true,
         amount: true,
+        quantity: true,
         fee: true,
         transactionId: true,
         swapGroupId: true,
         createdAt: true,
         updatedAt: true,
         active: true,
+        transaction: {
+          select: { fromWalletId: true, toWalletId: true },
+        },
       },
     });
   }
