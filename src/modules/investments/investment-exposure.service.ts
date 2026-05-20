@@ -30,13 +30,20 @@ export class InvestmentExposureService {
     const assetIds = assets.map((a) => a.id);
     if (!assetIds.length) return [] as Array<{ id: number; name: string; type: InvestmentAssetType; currentValue: number }>;
 
-    const ops = await this.prisma.investmentOperation.findMany({
-      where: { userId, active: true, assetId: { in: assetIds } },
-      select: { assetId: true, type: true, amount: true },
-    });
-
     const bookIn = new Set(['transfer_in', 'buy', 'swap_in']);
     const bookOut = new Set(['transfer_out', 'sell', 'swap_out']);
+
+    const [ops, latestDates] = await Promise.all([
+      this.prisma.investmentOperation.findMany({
+        where: { userId, active: true, assetId: { in: assetIds } },
+        select: { assetId: true, type: true, amount: true },
+      }),
+      this.prisma.investmentValuationSnapshot.groupBy({
+        by: ['assetId'],
+        where: { userId, active: true, assetId: { in: assetIds } },
+        _max: { date: true },
+      }),
+    ]);
 
     const byAsset = new Map<number, { in: number; out: number }>();
     for (const op of ops) {
@@ -47,12 +54,6 @@ export class InvestmentExposureService {
       if (bookOut.has(t)) prev.out += amount;
       byAsset.set(op.assetId, prev);
     }
-
-    const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
-      by: ['assetId'],
-      where: { userId, active: true, assetId: { in: assetIds } },
-      _max: { date: true },
-    });
 
     const latestPairs = latestDates
       .filter((r) => r._max.date)

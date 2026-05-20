@@ -710,10 +710,17 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
     const bookInTypes = new Set(['transfer_in', 'buy', 'swap_in']);
     const bookOutTypes = new Set(['transfer_out', 'sell', 'swap_out']);
 
-    const ops = await this.prisma.investmentOperation.findMany({
-      where: { userId, active: true, assetId: { in: assetIds } },
-      select: { assetId: true, type: true, amount: true },
-    });
+    const [ops, latestDates] = await Promise.all([
+      this.prisma.investmentOperation.findMany({
+        where: { userId, active: true, assetId: { in: assetIds } },
+        select: { assetId: true, type: true, amount: true },
+      }),
+      this.prisma.investmentValuationSnapshot.groupBy({
+        by: ['assetId'],
+        where: { userId, active: true, assetId: { in: assetIds } },
+        _max: { date: true },
+      }),
+    ]);
 
     const agg = new Map<
       number,
@@ -733,12 +740,6 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
 
       agg.set(o.assetId, prev);
     }
-
-    const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
-      by: ['assetId'],
-      where: { userId, active: true, assetId: { in: assetIds } },
-      _max: { date: true },
-    });
 
     const latestPairs = latestDates
       .filter((r) => r._max.date)
@@ -859,12 +860,24 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
     const bookInTypes = new Set(['transfer_in', 'buy', 'swap_in']);
     const bookOutTypes = new Set(['transfer_out', 'sell', 'swap_out']);
 
-    // Seed equity (last valuation <= from)
-    const seedDates = await this.prisma.investmentValuationSnapshot.groupBy({
-      by: ['assetId'],
-      where: { userId, active: true, assetId: { in: assetIds }, date: { lte: from } },
-      _max: { date: true },
-    });
+    // Seed equity, valuations in range, and ops all run in parallel
+    const [seedDates, valuations, ops] = await Promise.all([
+      this.prisma.investmentValuationSnapshot.groupBy({
+        by: ['assetId'],
+        where: { userId, active: true, assetId: { in: assetIds }, date: { lte: from } },
+        _max: { date: true },
+      }),
+      this.prisma.investmentValuationSnapshot.findMany({
+        where: { userId, active: true, assetId: { in: assetIds }, date: { gte: from, lt: toExclusive } },
+        orderBy: { date: 'asc' },
+        select: { assetId: true, date: true, value: true },
+      }),
+      this.prisma.investmentOperation.findMany({
+        where: { userId, active: true, assetId: { in: assetIds }, date: { lt: toExclusive } },
+        select: { assetId: true, type: true, amount: true, date: true },
+        orderBy: { date: 'asc' },
+      }),
+    ]);
 
     const seedPairs = seedDates
       .filter((r) => r._max.date)
@@ -883,17 +896,6 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
       if (!prev || s.date > prev.date) seedValueMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
     }
 
-    const valuations = await this.prisma.investmentValuationSnapshot.findMany({
-      where: {
-        userId,
-        active: true,
-        assetId: { in: assetIds },
-        date: { gte: from, lt: toExclusive },
-      },
-      orderBy: { date: 'asc' },
-      select: { assetId: true, date: true, value: true },
-    });
-
     const valuationsByDay = new Map<string, Map<number, number>>();
     for (const v of valuations) {
       const dayKey = this.toDayKeyUTC(v.date);
@@ -904,17 +906,6 @@ async createValuation(userId: number, dto: CreateInvestmentValuationDto) {
     // Book value by asset as "netContributions" line (includes swaps to keep allocation)
     const bookByAsset = new Map<number, number>();
     for (const a of assets) bookByAsset.set(a.id, Number(a.initialInvested ?? 0));
-
-    const ops = await this.prisma.investmentOperation.findMany({
-      where: {
-        userId,
-        active: true,
-        assetId: { in: assetIds },
-        date: { lt: toExclusive },
-      },
-      select: { assetId: true, type: true, amount: true, date: true },
-      orderBy: { date: 'asc' },
-    });
 
     const opsByDay = new Map<string, Array<{ assetId: number; delta: number }>>();
 
