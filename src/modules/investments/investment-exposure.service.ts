@@ -26,13 +26,14 @@ export class InvestmentExposureService {
       select: {
         id: true,
         name: true,
+        abbreviation: true,
         type: true,
         initialInvested: true,
       },
     });
 
     const assetIds = assets.map((a) => a.id);
-    if (!assetIds.length) return [] as Array<{ id: number; name: string; type: InvestmentAssetType; currentValue: number }>;
+    if (!assetIds.length) return [] as Array<{ id: number; name: string; abbreviation: string | null; type: InvestmentAssetType; currentValue: number }>;
 
     const bookIn = new Set(['transfer_in', 'buy', 'swap_in']);
     const bookOut = new Set(['transfer_out', 'sell', 'swap_out']);
@@ -82,6 +83,7 @@ export class InvestmentExposureService {
       return {
         id: a.id,
         name: a.name,
+        abbreviation: a.abbreviation ?? null,
         type: a.type,
         currentValue,
       };
@@ -284,6 +286,7 @@ export class InvestmentExposureService {
           return {
             assetId: a.id,
             assetName: a.name,
+            assetAbbreviation: a.abbreviation ?? null,
             assetType: a.type,
             currentValue,
             actualPct,
