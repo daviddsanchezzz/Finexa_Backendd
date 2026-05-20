@@ -549,41 +549,49 @@ if (filters?.dateFrom || filters?.dateTo) {
       return this.update(userId, id, dto);
     }
 
+    const templateTx = await this.prisma.transaction.findFirst({
+      where: { id: templateId, userId, active: true },
+    });
+
+    if (!templateTx) {
+      return this.update(userId, id, dto);
+    }
+
     // 3) Actualizar la plantilla (no toca balances)
     const templateUpdateData: any = {
-      type: dto.type ?? baseTx.type,
-      amount: dto.amount ?? baseTx.amount,
-      description: dto.description ?? baseTx.description,
+      type: dto.type ?? templateTx.type,
+      amount: dto.amount ?? templateTx.amount,
+      description: dto.description ?? templateTx.description,
       categoryId:
         typeof (dto as any).categoryId !== 'undefined'
           ? (dto as any).categoryId
-          : baseTx.categoryId,
+          : templateTx.categoryId,
       subcategoryId:
         typeof (dto as any).subcategoryId !== 'undefined'
           ? (dto as any).subcategoryId
-          : baseTx.subcategoryId,
+          : templateTx.subcategoryId,
       walletId:
         typeof (dto as any).walletId !== 'undefined'
           ? (dto as any).walletId
-          : baseTx.walletId,
+          : templateTx.walletId,
       fromWalletId:
         typeof (dto as any).fromWalletId !== 'undefined'
           ? (dto as any).fromWalletId
-          : baseTx.fromWalletId,
+          : templateTx.fromWalletId,
       toWalletId:
         typeof (dto as any).toWalletId !== 'undefined'
           ? (dto as any).toWalletId
-          : baseTx.toWalletId,
+          : templateTx.toWalletId,
 
       // ✅ clave: propagar investmentAssetId en series
       investmentAssetId:
         typeof (dto as any).investmentAssetId !== 'undefined'
           ? (dto as any).investmentAssetId
-          : (baseTx as any).investmentAssetId,
+          : (templateTx as any).investmentAssetId,
       projectId:
         typeof (dto as any).projectId !== 'undefined'
           ? (dto as any).projectId
-          : (baseTx as any).projectId,
+          : (templateTx as any).projectId,
     };
 
     // isRecurring + recurrence para la plantilla
@@ -604,16 +612,12 @@ if (filters?.dateFrom || filters?.dateTo) {
 
     // ✅ Caso 2: actualizar esta + futuras
     if (scope === 'future') {
-      if (baseTx.parentId) {
-        await this.update(userId, baseTx.id, dto);
-      }
-
       const futureChildren = await this.prisma.transaction.findMany({
         where: {
           userId,
           active: true,
           parentId: templateId,
-          date: { gt: baseTx.date },
+          date: { gte: baseTx.date },
         },
       });
 
