@@ -368,10 +368,26 @@ export class InvestmentExposureService {
 
     const buys = rows
       .filter((r) => r.delta > minOperation)
-      .map((r) => ({ assetId: r.assetId, assetName: r.assetName, amount: Number(r.delta.toFixed(2)) }));
+      .map((r) => {
+        const m = target.items.find((it) => it.assetId === r.assetId);
+        return {
+          assetId: r.assetId,
+          assetName: r.assetName,
+          assetAbbreviation: m?.assetAbbreviation ?? null,
+          amount: Number(r.delta.toFixed(2)),
+        };
+      });
     const sells = rows
       .filter((r) => r.delta < -minOperation)
-      .map((r) => ({ assetId: r.assetId, assetName: r.assetName, amount: Number(Math.abs(r.delta).toFixed(2)) }));
+      .map((r) => {
+        const m = target.items.find((it) => it.assetId === r.assetId);
+        return {
+          assetId: r.assetId,
+          assetName: r.assetName,
+          assetAbbreviation: m?.assetAbbreviation ?? null,
+          amount: Number(Math.abs(r.delta).toFixed(2)),
+        };
+      });
 
     return {
       totalCurrentValue: total,
