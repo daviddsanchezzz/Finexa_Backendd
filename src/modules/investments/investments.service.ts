@@ -1606,14 +1606,17 @@ async deleteSwap(userId: number, swapGroupId: string) {
     return this.swapAssets(userId, mergedDto);
   }
 
-  async listOperations(userId: number, assetId: number, active?: boolean) {
-    const asset = await this.prisma.investmentAsset.findFirst({
-      where: { id: assetId, userId, active: true },
-      select: { id: true },
-    });
-    if (!asset) throw new BadRequestException('Asset no encontrado');
+  async listOperations(userId: number, assetId?: number, active?: boolean) {
+    if (assetId !== undefined) {
+      const asset = await this.prisma.investmentAsset.findFirst({
+        where: { id: assetId, userId, active: true },
+        select: { id: true },
+      });
+      if (!asset) throw new BadRequestException('Asset no encontrado');
+    }
 
-    const where: any = { userId, assetId };
+    const where: any = { userId };
+    if (assetId !== undefined) where.assetId = assetId;
     if (typeof active === 'boolean') where.active = active;
 
     return this.prisma.investmentOperation.findMany({

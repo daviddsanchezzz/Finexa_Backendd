@@ -64,13 +64,12 @@ listOperations(
   @Query('assetId') assetId?: string,
   @Query('active') active?: string,
 ) {
-  if (assetId === undefined) {
-    throw new BadRequestException('assetId es requerido');
-  }
-
-  const parsedAssetId = Number(assetId);
-  if (!Number.isInteger(parsedAssetId)) {
-    throw new BadRequestException('assetId inválido');
+  let parsedAssetId: number | undefined = undefined;
+  if (assetId !== undefined) {
+    parsedAssetId = Number(assetId);
+    if (!Number.isInteger(parsedAssetId)) {
+      throw new BadRequestException('assetId inválido');
+    }
   }
 
   let activeParsed: boolean | undefined = undefined;
