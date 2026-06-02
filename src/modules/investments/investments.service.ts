@@ -1683,51 +1683,74 @@ private async getCashflowNetForMonth(userId: number, from: Date, to: Date): Prom
 
 
 async createMonthlySnapshot(userId: number, monthStartInput: Date, isAuto: boolean) {
-  const monthStart = this.normalizeToMonthStartUTC(monthStartInput);
-  const periodEnd = this.addMonthsUTC(monthStart, 1);
-  const prevMonthStart = this.addMonthsUTC(monthStart, -1);
-
-  // 1) startValue = endValue del mes anterior (si existe)
-  const prevSnap = await this.prisma.portfolioSnapshot.findUnique({
-    where: { userId_monthStart: { userId, monthStart: prevMonthStart } },
-    select: { endValue: true },
-  });
-  const startValue = prevSnap?.endValue ?? 2654.04;
-
-  // 2) endValue = portfolio value at periodEnd (cierre del mes)
-  const endValue = await this.getPortfolioValueAt(userId, periodEnd);
-
-  // 3) cashflowNet del mes (sin swaps)
-  const cashflowNet = await this.getCashflowNetForMonth(userId, monthStart, periodEnd);
-
-  // 4) profit y returnPct
-  const start = startValue ?? 0;
-const profit = startValue == null ? null : endValue - startValue - cashflowNet;
-const returnPct =
-  startValue != null && startValue > 0 && profit != null
-    ? profit / startValue
-    : null;
+  const payload = await this.buildMonthlySnapshotPayload(userId, monthStartInput, isAuto);
 
   try {
     return await this.prisma.portfolioSnapshot.create({
-      data: {
-        userId,
-        monthStart,
-        currency: 'EUR',
-        startValue,
-        endValue,
-        cashflowNet,
-        profit,
-        returnPct,
-        isAuto,
-        active: true,
-      },
+      data: payload,
     });
   } catch (e: any) {
     // Prisma P2002 => unique constraint (ya existe ese mes)
     if (e?.code === 'P2002') return null;
     throw e;
   }
+}
+
+private async buildMonthlySnapshotPayload(userId: number, monthStartInput: Date, isAuto: boolean) {
+  const monthStart = this.normalizeToMonthStartUTC(monthStartInput);
+  const periodEnd = this.addMonthsUTC(monthStart, 1);
+  const prevMonthStart = this.addMonthsUTC(monthStart, -1);
+
+  const prevSnap = await this.prisma.portfolioSnapshot.findUnique({
+    where: { userId_monthStart: { userId, monthStart: prevMonthStart } },
+    select: { endValue: true },
+  });
+  const startValue = prevSnap?.endValue ?? 2654.04;
+  const endValue = await this.getPortfolioValueAt(userId, periodEnd);
+  const cashflowNet = await this.getCashflowNetForMonth(userId, monthStart, periodEnd);
+  const profit = startValue == null ? null : endValue - startValue - cashflowNet;
+  const returnPct =
+    startValue != null && startValue > 0 && profit != null
+      ? profit / startValue
+      : null;
+
+  return {
+    userId,
+    monthStart,
+    currency: 'EUR',
+    startValue,
+    endValue,
+    cashflowNet,
+    profit,
+    returnPct,
+    isAuto,
+    active: true,
+  };
+}
+
+async rebuildMonthlySnapshot(userId: number, monthStartInput: Date) {
+  const payload = await this.buildMonthlySnapshotPayload(userId, monthStartInput, false);
+
+  const existing = await this.prisma.portfolioSnapshot.findUnique({
+    where: {
+      userId_monthStart: {
+        userId,
+        monthStart: payload.monthStart,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    return this.prisma.portfolioSnapshot.update({
+      where: { id: existing.id },
+      data: payload,
+    });
+  }
+
+  return this.prisma.portfolioSnapshot.create({
+    data: payload,
+  });
 }
 
 async listMonthlySnapshots(userId: number, q: { from?: string; to?: string; limit?: number }) {

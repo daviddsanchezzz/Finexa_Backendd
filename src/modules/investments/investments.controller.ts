@@ -42,6 +42,23 @@ export class InvestmentsController {
   async listSnapshots(@User('id') userId: number, @Query() q: ListPortfolioSnapshotsQueryDto) {
     return this.investmentsService.listMonthlySnapshots(userId, q);
   }
+
+  @Post('snapshots/rebuild')
+  async rebuildSnapshot(
+    @User('id') userId: number,
+    @Query('monthStart') monthStart?: string,
+  ) {
+    if (!monthStart) {
+      throw new BadRequestException('monthStart is required');
+    }
+
+    const parsed = new Date(monthStart);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('monthStart must be a valid date');
+    }
+
+    return this.investmentsService.rebuildMonthlySnapshot(userId, parsed);
+  }
   // -----------------------------
   // Assets
   // -----------------------------
