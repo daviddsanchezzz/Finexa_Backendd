@@ -225,7 +225,7 @@ private async adjustAssetQuantityTx(
         active: true,
         assetId: { in: assetIds },
         date: { lte: target },
-        type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell', 'swap', 'swap_in', 'swap_out'] as any },
+        type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell', 'swap_in', 'swap_out'] as any },
       },
       select: { assetId: true, type: true, amount: true },
     });
@@ -240,7 +240,7 @@ private async adjustAssetQuantityTx(
     for (const o of ops) {
       const t = String(o.type);
       const amt = Number(o.amount ?? 0);
-      const delta = inflow.has(t) ? amt : outflow.has(t) ? -amt : t === 'swap' ? amt : 0;
+      const delta = inflow.has(t) ? amt : outflow.has(t) ? -amt : 0;
       if (delta) bookByAsset.set(o.assetId, (bookByAsset.get(o.assetId) ?? 0) + delta);
     }
 
@@ -315,11 +315,6 @@ private async adjustAssetQuantityTx(
 
       if (inflowTypes.has(t)) prev.inflow += amt;
       else if (outflowTypes.has(t)) prev.outflow += amt;
-      else if (t === 'swap') {
-        if (amt >= 0) prev.inflow += amt;
-        else prev.outflow += Math.abs(amt);
-      }
-
       aggMap.set(o.assetId, prev);
     }
 
@@ -776,11 +771,6 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
 
       if (bookInTypes.has(t)) prev.bookIn += amt;
       else if (bookOutTypes.has(t)) prev.bookOut += amt;
-      else if (t === 'swap') {
-        if (amt >= 0) prev.bookIn += amt;
-        else prev.bookOut += Math.abs(amt);
-      }
-
       agg.set(o.assetId, prev);
     }
 
@@ -955,7 +945,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
     for (const o of ops) {
       const t = String(o.type);
       const amt = Number(o.amount ?? 0);
-      const delta = bookInTypes.has(t) ? amt : bookOutTypes.has(t) ? -amt : t === 'swap' ? amt : 0;
+      const delta = bookInTypes.has(t) ? amt : bookOutTypes.has(t) ? -amt : 0;
       if (!delta) continue;
 
       const dayKey = this.toDayKeyUTC(o.date);
@@ -1392,9 +1382,9 @@ async swapAssets(userId: number, dto: any) {
       data: {
         userId,
         assetId: fromAssetId,
-        type: 'swap' as any,
+        type: 'swap_out' as any,
         date,
-        amount: -Math.abs(amountOut),
+        amount: Math.abs(amountOut),
         fee,              // asignamos fee al out leg (decisión de modelado)
         swapGroupId,
         active: true,
@@ -1406,7 +1396,7 @@ async swapAssets(userId: number, dto: any) {
       data: {
         userId,
         assetId: toAssetId,
-        type: 'swap' as any,
+        type: 'swap_in' as any,
         date,
         amount: Math.abs(amountIn),
         fee: 0,           // fee ya lo imputamos al out leg
@@ -1440,7 +1430,7 @@ async deleteSwap(userId: number, swapGroupId: string) {
       userId,
       active: true,
       swapGroupId: sg,
-      type: { in: ['swap', 'swap_in', 'swap_out'] as any },
+      type: { in: ['swap_in', 'swap_out'] as any },
     },
     select: { id: true },
   });
@@ -1449,7 +1439,7 @@ async deleteSwap(userId: number, swapGroupId: string) {
 
   // 2) Soft delete de ambas patas
   await this.prisma.investmentOperation.updateMany({
-    where: { userId, swapGroupId: sg, type: { in: ['swap', 'swap_in', 'swap_out'] as any } },
+    where: { userId, swapGroupId: sg, type: { in: ['swap_in', 'swap_out'] as any } },
     data: { active: false },
   });
 
@@ -1478,7 +1468,7 @@ async deleteSwap(userId: number, swapGroupId: string) {
     if (!op) throw new NotFoundException('Operation not found');
 
     const type = String(op.type);
-    if (type === 'swap' || type === 'swap_in' || type === 'swap_out') {
+    if (type === 'swap_in' || type === 'swap_out') {
       throw new BadRequestException('Use DELETE /investments/swaps/:swapGroupId for swap operations');
     }
 
@@ -1536,7 +1526,7 @@ async deleteSwap(userId: number, swapGroupId: string) {
     if (!op) throw new NotFoundException('Operation not found');
 
     const type = String(op.type);
-    if (type === 'swap' || type === 'swap_in' || type === 'swap_out') {
+    if (type === 'swap_in' || type === 'swap_out') {
       throw new BadRequestException('Use PATCH /investments/swaps/:swapGroupId for swap operations');
     }
 

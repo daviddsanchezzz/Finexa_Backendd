@@ -57,10 +57,6 @@ export class InvestmentExposureService {
       const amount = Number(op.amount ?? 0);
       if (bookIn.has(t)) prev.in += amount;
       if (bookOut.has(t)) prev.out += amount;
-      if (t === 'swap') {
-        if (amount >= 0) prev.in += amount;
-        else prev.out += Math.abs(amount);
-      }
       byAsset.set(op.assetId, prev);
     }
 

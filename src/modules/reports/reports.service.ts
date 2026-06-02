@@ -221,7 +221,7 @@ private async getAssetMonthlyPerformance(userId: number, start: Date, end: Date)
       active: true,
       assetId: { in: assetIds },
       date: { gte: start, lt: end },
-      type: { in: ['transfer_in','buy','transfer_out','sell','swap','swap_in','swap_out'] as any },
+      type: { in: ['transfer_in','buy','transfer_out','sell','swap_in','swap_out'] as any },
     },
     select: { assetId: true, type: true, amount: true, fee: true },
   });
@@ -249,7 +249,6 @@ private async getAssetMonthlyPerformance(userId: number, start: Date, end: Date)
     let delta = 0;
     if (inflow.has(t)) delta = +amt;
     else if (outflow.has(t)) delta = -amt;
-    else if (t === 'swap') delta = amt;
 
     delta -= fee; // fees siempre restan
 
