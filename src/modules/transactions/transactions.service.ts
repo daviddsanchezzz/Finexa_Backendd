@@ -18,6 +18,22 @@ export class TransactionsService {
   ) {}
 
   // ============================================================
+  // HELPERS
+  // ============================================================
+  private async autoResolveTripId(userId: number, subcategoryId: number): Promise<number | undefined> {
+    const sub = await this.prisma.subcategory.findFirst({
+      where: { id: subcategoryId },
+      include: { category: { select: { name: true } } },
+    });
+    if (!sub || !sub.category.name.toLowerCase().includes('viaje')) return undefined;
+    const trip = await this.prisma.trip.findFirst({
+      where: { userId, name: sub.name },
+      select: { id: true },
+    });
+    return trip?.id;
+  }
+
+  // ============================================================
   // CREATE
   // ============================================================
   async create(userId: number, dto: CreateTransactionDto) {
@@ -29,6 +45,12 @@ export class TransactionsService {
 
     // Extraer info de recurrencia del DTO
     const { isRecurring, recurrence, parentId, ...rest } = dto as any;
+
+    // Auto-link to trip when subcategory belongs to a "Viajes" category
+    if (rest.subcategoryId && !rest.tripId) {
+      const autoTripId = await this.autoResolveTripId(userId, rest.subcategoryId).catch(() => undefined);
+      if (autoTripId != null) rest.tripId = autoTripId;
+    }
 
     // 1) Crear SIEMPRE la transacción "real" (la que afecta al saldo)
     const transaction = await this.prisma.transaction.create({
@@ -333,9 +355,14 @@ if (filters?.dateFrom || filters?.dateTo) {
     }
 
     // 2️⃣ ACTUALIZAR TRANSACCIÓN
+    const dtoAny = dto as any;
+    if (dtoAny.subcategoryId && !('tripId' in dtoAny)) {
+      const autoTripId = await this.autoResolveTripId(userId, dtoAny.subcategoryId).catch(() => undefined);
+      if (autoTripId != null) dtoAny.tripId = autoTripId;
+    }
     const updated = await this.prisma.transaction.update({
       where: { id },
-      data: dto as any,
+      data: dtoAny,
     });
 
     // 3️⃣ APLICAR EFECTO NUEVO
