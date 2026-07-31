@@ -183,7 +183,10 @@ async getTripDetail(userId: number, tripId: number) {
         },
       },
 
-      transactions: true,
+      transactions: {
+        where: { active: true },
+        include: { category: true, subcategory: true, wallet: true },
+      },
     },
   });
 
