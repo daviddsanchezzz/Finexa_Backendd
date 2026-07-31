@@ -47,9 +47,11 @@ export class TransactionsService {
     const { isRecurring, recurrence, parentId, ...rest } = dto as any;
 
     // Auto-link to trip when subcategory belongs to a "Viajes" category
+    // We capture tripId here but do NOT set it on the transaction —
+    // instead we'll create a TripPlanItem so the expense integrates as a plan entry
+    let autoTripIdForPlanItem: number | undefined;
     if (rest.subcategoryId && !rest.tripId) {
-      const autoTripId = await this.autoResolveTripId(userId, rest.subcategoryId).catch(() => undefined);
-      if (autoTripId != null) rest.tripId = autoTripId;
+      autoTripIdForPlanItem = await this.autoResolveTripId(userId, rest.subcategoryId).catch(() => undefined);
     }
 
     // 1) Crear SIEMPRE la transacción "real" (la que afecta al saldo)
@@ -118,7 +120,23 @@ export class TransactionsService {
       });
     }
 
-    // 3) Si NO es recurrente, terminamos aquí
+    // 3) Si hay auto-trip y NO es recurrente, crear TripPlanItem integrado
+    if (autoTripIdForPlanItem != null && !isRecurring) {
+      await this.prisma.tripPlanItem.create({
+        data: {
+          tripId: autoTripIdForPlanItem,
+          type: 'expense',
+          title: rest.description || 'Gasto',
+          cost: rest.amount ?? null,
+          date: rawDate,
+          startTime: rawDate,
+          transactionId: transaction.id,
+          metadata: { expenseCategory: 'other' },
+        },
+      }).catch(() => null);
+    }
+
+    // 4) Si NO es recurrente, terminamos aquí
     if (!isRecurring || !recurrence) {
       return PrismaDateTransformer.toPlain(transaction);
     }
@@ -356,14 +374,42 @@ if (filters?.dateFrom || filters?.dateTo) {
 
     // 2️⃣ ACTUALIZAR TRANSACCIÓN
     const dtoAny = dto as any;
-    if (dtoAny.subcategoryId && !('tripId' in dtoAny)) {
-      const autoTripId = await this.autoResolveTripId(userId, dtoAny.subcategoryId).catch(() => undefined);
-      if (autoTripId != null) dtoAny.tripId = autoTripId;
-    }
     const updated = await this.prisma.transaction.update({
       where: { id },
       data: dtoAny,
     });
+
+    // Sync linked TripPlanItem cost if one exists for this transaction
+    const linkedPlanItem = await this.prisma.tripPlanItem.findFirst({
+      where: { transactionId: id },
+      select: { id: true },
+    });
+    if (linkedPlanItem) {
+      await this.prisma.tripPlanItem.update({
+        where: { id: linkedPlanItem.id },
+        data: {
+          cost: updated.amount,
+          ...(dtoAny.description ? { title: dtoAny.description } : {}),
+        },
+      }).catch(() => null);
+    } else if (dtoAny.subcategoryId) {
+      // If subcategory changed to a viaje one and no planItem exists yet, create it
+      const autoTripId = await this.autoResolveTripId(userId, dtoAny.subcategoryId).catch(() => undefined);
+      if (autoTripId != null) {
+        await this.prisma.tripPlanItem.create({
+          data: {
+            tripId: autoTripId,
+            type: 'expense',
+            title: updated.description || 'Gasto',
+            cost: updated.amount,
+            date: updated.date,
+            startTime: updated.date,
+            transactionId: id,
+            metadata: { expenseCategory: 'other' },
+          },
+        }).catch(() => null);
+      }
+    }
 
     // 3️⃣ APLICAR EFECTO NUEVO
     if (updated.type === 'income' && updated.walletId) {
