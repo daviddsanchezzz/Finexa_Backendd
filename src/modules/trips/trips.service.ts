@@ -102,13 +102,40 @@ export class TripsService {
     return true;
   }
 
+  private countryFlag(iso2?: string | null): string {
+    if (!iso2 || iso2.length !== 2) return '✈️';
+    return [...iso2.toUpperCase()].map((c) => String.fromCodePoint(c.charCodeAt(0) + 0x1f1a5)).join('');
+  }
+
+  private async ensureTripSubcategory(userId: number, tripName: string, destination?: string | null): Promise<void> {
+    const viajesCategory = await this.prisma.category.findFirst({
+      where: { userId, type: 'expense', name: { contains: 'viaje', mode: 'insensitive' }, active: true },
+    });
+    if (!viajesCategory) return;
+
+    const existing = await this.prisma.subcategory.findFirst({
+      where: { categoryId: viajesCategory.id, name: tripName },
+    });
+    if (existing) return;
+
+    const last = await this.prisma.subcategory.findFirst({
+      where: { categoryId: viajesCategory.id },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
+
+    await this.prisma.subcategory.create({
+      data: { name: tripName, categoryId: viajesCategory.id, emoji: this.countryFlag(destination), position: (last?.position ?? -1) + 1 },
+    });
+  }
+
   async createTrip(userId: number, dto: CreateTripDto) {
     const startDate = dto.startDate ? new Date(dto.startDate) : undefined;
     const endDate = dto.endDate ? new Date(dto.endDate) : undefined;
 
     const year = startDate?.getFullYear() ?? endDate?.getFullYear() ?? undefined;
 
-    return this.prisma.trip.create({
+    const trip = await this.prisma.trip.create({
       data: {
         userId,
         name: dto.name,
@@ -123,6 +150,12 @@ export class TripsService {
         status: dto.status,
       },
     });
+
+    if (dto.status === StatusDto.planning) {
+      await this.ensureTripSubcategory(userId, dto.name, dto.destination).catch(() => {});
+    }
+
+    return trip;
   }
 
   async getTrips(userId: number) {
@@ -166,7 +199,7 @@ async getTripDetail(userId: number, tripId: number) {
     const endDate = dto.endDate ? new Date(dto.endDate) : undefined;
     const year = startDate?.getFullYear() ?? endDate?.getFullYear() ?? undefined;
 
-    return this.prisma.trip.update({
+    const updated = await this.prisma.trip.update({
       where: { id: tripId },
       data: {
         ...dto,
@@ -176,6 +209,12 @@ async getTripDetail(userId: number, tripId: number) {
         year,
       },
     });
+
+    if (dto.status === StatusDto.planning && existing.status !== StatusDto.planning) {
+      await this.ensureTripSubcategory(userId, updated.name, updated.destination).catch(() => {});
+    }
+
+    return updated;
   }
 
   async deleteTrip(userId: number, tripId: number) {

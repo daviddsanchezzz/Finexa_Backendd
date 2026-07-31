@@ -37,9 +37,17 @@ export class SubcategoriesService {
     return this.prisma.subcategory.update({ where: { id }, data: dto });
   }
 
+  async reorder(categoryId: number, order: number[]) {
+    await this.prisma.$transaction(
+      order.map((id, index) =>
+        this.prisma.subcategory.update({ where: { id }, data: { position: index } }),
+      ),
+    );
+  }
+
   async remove(id: number,deleteTx: boolean) {
     if(deleteTx){
-      
+
     }else{
       await this.findOne(id);
       return this.prisma.subcategory.update({ where: { id }, data: { active: false } });

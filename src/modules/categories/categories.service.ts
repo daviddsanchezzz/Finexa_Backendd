@@ -44,7 +44,7 @@ async create(userId: number, dto: CreateCategoryDto) {
   async findAll(userId: number) {
     return this.prisma.category.findMany({
       where: { OR: [{ userId }, { userId: null }], active: true },
-      include: { subcategories: true },
+      include: { subcategories: { orderBy: [{ position: 'asc' }, { name: 'asc' }] } },
       orderBy: [
         { position: 'asc' },
         { name: 'asc' },
@@ -56,7 +56,7 @@ async create(userId: number, dto: CreateCategoryDto) {
   async findOne(userId: number, id: number) {
     const category = await this.prisma.category.findFirst({
       where: { id, OR: [{ userId }, { userId: null }], active: true },
-      include: { subcategories: true },
+      include: { subcategories: { orderBy: [{ position: 'asc' }, { name: 'asc' }] } },
     });
     if (!category) throw new NotFoundException('Category not found');
     return category;

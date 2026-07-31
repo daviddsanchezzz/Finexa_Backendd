@@ -22,6 +22,11 @@ export class SubcategoriesController {
     return this.subcategoriesService.findAll(+categoryId);
   }
 
+  @Patch('reorder')
+  reorder(@Param('categoryId') categoryId: string, @Body() body: { order: number[] }) {
+    return this.subcategoriesService.reorder(+categoryId, body.order);
+  }
+
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateSubcategoryDto) {
     return this.subcategoriesService.update(+id, dto);
