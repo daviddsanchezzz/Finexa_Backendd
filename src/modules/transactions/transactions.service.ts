@@ -500,6 +500,11 @@ if (filters?.dateFrom || filters?.dateTo) {
       data: { active: false },
     });
 
+    // Remove linked TripPlanItem if this transaction auto-created one
+    await this.prisma.tripPlanItem.deleteMany({
+      where: { transactionId: id },
+    }).catch(() => null);
+
     return PrismaDateTransformer.toPlain(removed);
   }
 
