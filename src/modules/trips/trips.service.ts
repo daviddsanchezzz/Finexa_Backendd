@@ -382,7 +382,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       }
     }
 
-    if (dto.type === "transport_destination") {
+    if (dto.type === "transport_destination" || dto.type === "transport_local") {
       const td = (dto as any).destinationTransportDetails;
       if (!td?.mode) throw new BadRequestException("destinationTransportDetails.mode requerido");
 
@@ -531,7 +531,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         await tx.accommodationDetails.deleteMany({ where: { planItemId } });
       }
 
-      if (dto.type === "transport_destination") {
+      if (dto.type === "transport_destination" || dto.type === "transport_local") {
         const td = (dto as any).destinationTransportDetails;
         if (!td?.mode) throw new BadRequestException("destinationTransportDetails.mode requerido");
 
