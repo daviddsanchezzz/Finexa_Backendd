@@ -131,7 +131,7 @@ export class TransactionsService {
           date: rawDate,
           startTime: rawDate,
           transactionId: transaction.id,
-          metadata: { expenseCategory: 'other' },
+          metadata: { expenseCategory: 'other', pending: true },
         },
       }).catch(() => null);
     }
@@ -405,7 +405,7 @@ if (filters?.dateFrom || filters?.dateTo) {
             date: updated.date,
             startTime: updated.date,
             transactionId: id,
-            metadata: { expenseCategory: 'other' },
+            metadata: { expenseCategory: 'other', pending: true },
           },
         }).catch(() => null);
       }
