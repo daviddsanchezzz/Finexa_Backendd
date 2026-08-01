@@ -141,6 +141,12 @@ export class CreateTripPlanItemDto {
   @Type(() => AccommodationDetailsDto)
   accommodationDetails?: AccommodationDetailsDto;
 
+  @IsOptional()
+  destinationTransportDetails?: any;
+
+  @IsOptional()
+  flightDetails?: any;
+
 }
 
 
