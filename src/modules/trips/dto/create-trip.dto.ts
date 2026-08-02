@@ -59,6 +59,10 @@ year?: number;
   @IsOptional()
   @IsNumber()
   cost?: number;
+
+  @IsOptional()
+  @IsString()
+  coverImageUrl?: string;
 }
 
 

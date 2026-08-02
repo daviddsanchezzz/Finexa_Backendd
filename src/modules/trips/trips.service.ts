@@ -148,6 +148,7 @@ export class TripsService {
         continent: dto.continent,
         year,
         status: dto.status,
+        coverImageUrl: dto.coverImageUrl ?? null,
       },
     });
 

@@ -571,8 +571,9 @@ model Trip {
   cost        Float      @default(0)
   budget      Float?
 
-  continent   Continent?
-  year        Int?
+  continent      Continent?
+  year           Int?
+  coverImageUrl  String?
 
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
