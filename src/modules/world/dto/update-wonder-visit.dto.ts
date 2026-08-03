@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsDateString, IsUrl, IsIn, IsInt, IsPositive } from "class-validator";
+import { IsBoolean, IsOptional, IsDateString, IsUrl, IsNumber, Min, Max, IsInt, IsPositive } from "class-validator";
 
 export class UpdateWonderVisitDto {
   @IsBoolean()
@@ -13,8 +13,10 @@ export class UpdateWonderVisitDto {
   photoUrl?: string;
 
   @IsOptional()
-  @IsIn(["top", "center", "bottom"])
-  photoAlign?: string;
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  photoOffset?: number;
 
   @IsOptional()
   @IsInt()
