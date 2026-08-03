@@ -15,6 +15,8 @@ import { AerodataboxService } from "./aviationstack.service";
   import { DateTime } from "luxon";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
 import { TripDocumentType, UpsertTripDocumentDto } from "./dto/trip-document.dto";
+import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
+import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 
 function parseProviderLocalToUtcJsDate(localStr?: string | null) {
   // "2026-04-03 16:00+02:00" -> ISO -> Date
@@ -348,6 +350,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
 
             gate: fd.gate ?? null,
             seat: fd.seat ?? null,
+            bookingRef: fd.bookingRef ?? null,
 
             aircraftModel: fd.aircraftModel ?? null,
 
@@ -494,6 +497,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
               arrTerminal: fd.arrTerminal ?? null,
               gate: fd.gate ?? null,
               seat: fd.seat ?? null,
+              bookingRef: fd.bookingRef ?? null,
               aircraftModel: fd.aircraftModel ?? null,
               schedDepAt: fd.schedDepAt ? new Date(fd.schedDepAt) : null,
               schedArrAt: fd.schedArrAt ? new Date(fd.schedArrAt) : null,
@@ -943,6 +947,89 @@ async deleteTripDocument(tripId: number, type: TripDocumentType) {
   return { success: true };
 }
 
+// =========================================================
+// Trip contacts
+// =========================================================
+
+async listTripContacts(tripId: number) {
+  return this.prisma.tripContact.findMany({ where: { tripId }, orderBy: { createdAt: "asc" } });
+}
+
+async createTripContact(tripId: number, dto: CreateTripContactDto) {
+  return this.prisma.tripContact.create({
+    data: { tripId, name: dto.name.trim(), phone: dto.phone.trim(), notes: dto.notes?.trim() || null },
+  });
+}
+
+async updateTripContact(tripId: number, contactId: number, dto: UpdateTripContactDto) {
+  const existing = await this.prisma.tripContact.findFirst({ where: { id: contactId, tripId }, select: { id: true } });
+  if (!existing) throw new NotFoundException("Contact not found");
+
+  const data: any = {};
+  if (dto.name !== undefined) data.name = dto.name.trim();
+  if (dto.phone !== undefined) data.phone = dto.phone.trim();
+  if (dto.notes !== undefined) data.notes = dto.notes?.trim() || null;
+
+  return this.prisma.tripContact.update({ where: { id: contactId }, data });
+}
+
+async deleteTripContact(tripId: number, contactId: number) {
+  const existing = await this.prisma.tripContact.findFirst({ where: { id: contactId, tripId }, select: { id: true } });
+  if (!existing) throw new NotFoundException("Contact not found");
+
+  await this.prisma.tripContact.delete({ where: { id: contactId } });
+  return { success: true };
+}
+
+// =========================================================
+// Trip checklist (Maleta)
+// =========================================================
+
+async listTripChecklist(tripId: number) {
+  return this.prisma.tripChecklistItem.findMany({ where: { tripId }, orderBy: [{ category: "asc" }, { order: "asc" }, { createdAt: "asc" }] });
+}
+
+async seedTripChecklist(tripId: number, dto: SeedTripChecklistDto) {
+  // idempotente: si ya hay items, no volvemos a sembrar
+  const existingCount = await this.prisma.tripChecklistItem.count({ where: { tripId } });
+  if (existingCount > 0) return this.listTripChecklist(tripId);
+
+  await this.prisma.tripChecklistItem.createMany({
+    data: dto.items.map((it, i) => ({
+      tripId,
+      category: it.category,
+      label: it.label,
+      order: it.order ?? i,
+    })),
+  });
+  return this.listTripChecklist(tripId);
+}
+
+async createTripChecklistItem(tripId: number, dto: CreateTripChecklistItemDto) {
+  return this.prisma.tripChecklistItem.create({
+    data: { tripId, category: dto.category, label: dto.label.trim(), order: dto.order ?? 0 },
+  });
+}
+
+async updateTripChecklistItem(tripId: number, itemId: number, dto: UpdateTripChecklistItemDto) {
+  const existing = await this.prisma.tripChecklistItem.findFirst({ where: { id: itemId, tripId }, select: { id: true } });
+  if (!existing) throw new NotFoundException("Checklist item not found");
+
+  const data: any = {};
+  if (dto.label !== undefined) data.label = dto.label.trim();
+  if (dto.checked !== undefined) data.checked = dto.checked;
+  if (dto.order !== undefined) data.order = dto.order;
+
+  return this.prisma.tripChecklistItem.update({ where: { id: itemId }, data });
+}
+
+async deleteTripChecklistItem(tripId: number, itemId: number) {
+  const existing = await this.prisma.tripChecklistItem.findFirst({ where: { id: itemId, tripId }, select: { id: true } });
+  if (!existing) throw new NotFoundException("Checklist item not found");
+
+  await this.prisma.tripChecklistItem.delete({ where: { id: itemId } });
+  return { success: true };
+}
 
 // =========================================================
 // TASKS

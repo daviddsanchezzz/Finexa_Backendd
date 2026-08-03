@@ -20,6 +20,8 @@ import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import { AerodataboxService } from "./aviationstack.service";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
 import { TripDocumentType, UpsertTripDocumentDto } from "./dto/trip-document.dto";
+import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
+import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 
 @Controller("trips")
 export class TripsController {
@@ -310,6 +312,104 @@ async deleteDocument(
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
   return this.tripsService.deleteTripDocument(tripId, type);
+}
+
+// =========================================================
+// Trip contacts
+// =========================================================
+
+@Get(":tripId/contacts")
+async listContacts(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.listTripContacts(tripId);
+}
+
+@Post(":tripId/contacts")
+async createContact(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Body() dto: CreateTripContactDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.createTripContact(tripId, dto);
+}
+
+@Patch(":tripId/contacts/:contactId")
+async updateContact(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("contactId", ParseIntPipe) contactId: number,
+  @Body() dto: UpdateTripContactDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.updateTripContact(tripId, contactId, dto);
+}
+
+@Delete(":tripId/contacts/:contactId")
+async deleteContact(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("contactId", ParseIntPipe) contactId: number
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.deleteTripContact(tripId, contactId);
+}
+
+// =========================================================
+// Trip checklist (Maleta)
+// =========================================================
+
+@Get(":tripId/checklist")
+async listChecklist(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.listTripChecklist(tripId);
+}
+
+@Post(":tripId/checklist/seed")
+async seedChecklist(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Body() dto: SeedTripChecklistDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.seedTripChecklist(tripId, dto);
+}
+
+@Post(":tripId/checklist")
+async createChecklistItem(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Body() dto: CreateTripChecklistItemDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.createTripChecklistItem(tripId, dto);
+}
+
+@Patch(":tripId/checklist/:itemId")
+async updateChecklistItem(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("itemId", ParseIntPipe) itemId: number,
+  @Body() dto: UpdateTripChecklistItemDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.updateTripChecklistItem(tripId, itemId, dto);
+}
+
+@Delete(":tripId/checklist/:itemId")
+async deleteChecklistItem(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("itemId", ParseIntPipe) itemId: number
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.deleteTripChecklistItem(tripId, itemId);
 }
 
 }

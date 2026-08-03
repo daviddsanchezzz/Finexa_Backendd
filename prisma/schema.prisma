@@ -603,6 +603,44 @@ model Trip {
   transactions Transaction[]
   planItems   TripPlanItem[]
   documents   TripDocument[]
+  contacts    TripContact[]
+  checklistItems TripChecklistItem[]
+}
+
+model TripContact {
+  id        Int      @id @default(autoincrement())
+  tripId    Int
+  name      String
+  phone     String
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+}
+
+enum ChecklistCategory {
+  ropa
+  documentos
+  electronica
+  otros
+}
+
+model TripChecklistItem {
+  id        Int               @id @default(autoincrement())
+  tripId    Int
+  category  ChecklistCategory
+  label     String
+  checked   Boolean           @default(false)
+  order     Int               @default(0)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId, category])
 }
 
 enum TripDocumentType {
@@ -764,6 +802,7 @@ model FlightDetails {
 
   gate String? // rellenado manualmente por el usuario, sin fuente en vivo
   seat String?
+  bookingRef String?
 
   aircraftModel String?
 
