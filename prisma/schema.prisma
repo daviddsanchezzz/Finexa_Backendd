@@ -135,6 +135,7 @@ model User {
   active        Boolean        @default(true)
 
   documents     UserDocument[]
+  wonderVisits WonderVisit[]
 }
 
 model UserDocument {
@@ -605,6 +606,7 @@ model Trip {
   documents   TripDocument[]
   contacts    TripContact[]
   checklistItems TripChecklistItem[]
+  wonderVisits WonderVisit[]
 }
 
 model TripContact {
@@ -641,6 +643,23 @@ model TripChecklistItem {
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   @@index([tripId, category])
+}
+
+model WonderVisit {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  wonderKey String
+  visitedAt DateTime?
+  photoUrl  String?
+  tripId    Int?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trip Trip? @relation(fields: [tripId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, wonderKey])
+  @@index([userId])
 }
 
 enum TripDocumentType {
