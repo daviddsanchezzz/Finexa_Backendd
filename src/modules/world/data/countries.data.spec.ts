@@ -16,7 +16,8 @@ describe('countries.data', () => {
     expect(counts).toEqual({
       europe: 44,
       asia: 48,
-      america: 35,
+      north_america: 23,
+      south_america: 12,
       africa: 54,
       oceania: 14,
     });

@@ -16,18 +16,29 @@ function displayNameEs(code: string): string {
 export class WorldService {
   constructor(private prisma: PrismaService) {}
 
-  private async getVisitedCountryCodes(userId: number): Promise<Set<string>> {
+  private async getVisitedCountryDates(userId: number): Promise<Map<string, Date | null>> {
     const seenTrips = await this.prisma.trip.findMany({
       where: { userId, status: "seen" as any, destination: { not: null } },
-      select: { destination: true },
+      select: { destination: true, startDate: true },
+      orderBy: { startDate: "asc" },
     });
-    return new Set(
-      seenTrips.map((t) => (t.destination || "").trim().toUpperCase()).filter(Boolean),
-    );
+
+    const dates = new Map<string, Date | null>();
+    for (const t of seenTrips) {
+      const code = (t.destination || "").trim().toUpperCase();
+      if (!code) continue;
+      const current = dates.get(code);
+      if (t.startDate && (!current || t.startDate < current)) {
+        dates.set(code, t.startDate);
+      } else if (!dates.has(code)) {
+        dates.set(code, null);
+      }
+    }
+    return dates;
   }
 
   async getCountries(userId: number) {
-    const visitedCodes = await this.getVisitedCountryCodes(userId);
+    const visitedDates = await this.getVisitedCountryDates(userId);
 
     const byContinent = new Map<WorldContinent, typeof COUNTRIES>();
     for (const country of COUNTRIES) {
@@ -40,7 +51,8 @@ export class WorldService {
       const countries = list.map((c) => ({
         code: c.code,
         nameEs: displayNameEs(c.code),
-        visited: visitedCodes.has(c.code),
+        visited: visitedDates.has(c.code),
+        visitedAt: visitedDates.get(c.code)?.toISOString() ?? null,
       }));
       const visited = countries.filter((c) => c.visited).length;
       return {
