@@ -602,6 +602,34 @@ model Trip {
   tasks       TripTask[]
   transactions Transaction[]
   planItems   TripPlanItem[]
+  documents   TripDocument[]
+}
+
+enum TripDocumentType {
+  travel_insurance
+  car_rental
+  accommodation_booking
+  activity_booking
+}
+
+model TripDocument {
+  id             Int              @id @default(autoincrement())
+  tripId         Int
+  type           TripDocumentType
+  provider       String?          // aseguradora / empresa de alquiler / alojamiento / actividad
+  referenceCode  String?          // nº de póliza / nº de reserva / localizador
+  expiryDate     DateTime?        // caducidad (seguro) o fecha del servicio, según el tipo
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  // Opcional: si el usuario también quiere llevar el coste como
+  // un plan item (type="expense") del viaje, se enlaza aquí.
+  planItemId Int?     @unique
+  planItem   TripPlanItem? @relation(fields: [planItemId], references: [id], onDelete: SetNull)
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, type])
 }
 
 // =========================
@@ -695,6 +723,7 @@ model TripPlanItem {
   accommodationDetails AccommodationDetails?
   destinationTransport DestinationTransportDetails?
  expenseDetails ExpenseDetails?
+  tripDocument   TripDocument?
 
   attachments Attachment[]
 
@@ -732,6 +761,9 @@ model FlightDetails {
 
   depTerminal String?
   arrTerminal String?
+
+  gate String? // rellenado manualmente por el usuario, sin fuente en vivo
+  seat String?
 
   aircraftModel String?
 

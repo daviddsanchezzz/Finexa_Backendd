@@ -3,9 +3,11 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Param,
+  ParseEnumPipe,
   Body,
   ParseIntPipe,
   Query,
@@ -17,6 +19,7 @@ import { CreateTripPlanItemDto, SetPaymentStatusDto } from "./dto/create-trip-pl
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import { AerodataboxService } from "./aviationstack.service";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
+import { TripDocumentType, UpsertTripDocumentDto } from "./dto/trip-document.dto";
 
 @Controller("trips")
 export class TripsController {
@@ -275,5 +278,38 @@ async toggleTask(
   return this.tripsService.toggleTripTaskStatus(tripId, taskId);
 }
 
+// =========================================================
+// Trip documents (ej. seguro de viaje)
+// =========================================================
+
+@Get(":tripId/documents")
+async listDocuments(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.getTripDocuments(tripId);
+}
+
+@Put(":tripId/documents/:type")
+async upsertDocument(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("type", new ParseEnumPipe(TripDocumentType)) type: TripDocumentType,
+  @Body() dto: UpsertTripDocumentDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.upsertTripDocument(tripId, type, dto);
+}
+
+@Delete(":tripId/documents/:type")
+async deleteDocument(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("type", new ParseEnumPipe(TripDocumentType)) type: TripDocumentType
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.deleteTripDocument(tripId, type);
+}
 
 }

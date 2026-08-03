@@ -14,6 +14,7 @@ import { AerodataboxService } from "./aviationstack.service";
 
   import { DateTime } from "luxon";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
+import { TripDocumentType, UpsertTripDocumentDto } from "./dto/trip-document.dto";
 
 function parseProviderLocalToUtcJsDate(localStr?: string | null) {
   // "2026-04-03 16:00+02:00" -> ISO -> Date
@@ -345,6 +346,9 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
             depTerminal: fd.depTerminal ?? null,
             arrTerminal: fd.arrTerminal ?? null,
 
+            gate: fd.gate ?? null,
+            seat: fd.seat ?? null,
+
             aircraftModel: fd.aircraftModel ?? null,
 
             schedDepAt: fd.schedDepAt ? new Date(fd.schedDepAt) : null,
@@ -488,6 +492,8 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
               arrTz: fd.arrTz ?? null,
               depTerminal: fd.depTerminal ?? null,
               arrTerminal: fd.arrTerminal ?? null,
+              gate: fd.gate ?? null,
+              seat: fd.seat ?? null,
               aircraftModel: fd.aircraftModel ?? null,
               schedDepAt: fd.schedDepAt ? new Date(fd.schedDepAt) : null,
               schedArrAt: fd.schedArrAt ? new Date(fd.schedArrAt) : null,
@@ -893,6 +899,48 @@ async setTripNotePinned(tripId: number, noteId: number, pinned: boolean) {
     where: { id: noteId },
     data: { pinned },
   });
+}
+
+// =========================================================
+// Trip documents (ej. seguro de viaje)
+// =========================================================
+
+async getTripDocuments(tripId: number) {
+  return this.prisma.tripDocument.findMany({ where: { tripId } });
+}
+
+async upsertTripDocument(tripId: number, type: TripDocumentType, dto: UpsertTripDocumentDto) {
+  // si viene planItemId, comprobamos que sea un plan item real de este viaje
+  if (dto.planItemId != null) {
+    const planItem = await this.prisma.tripPlanItem.findFirst({
+      where: { id: dto.planItemId, tripId },
+      select: { id: true },
+    });
+    if (!planItem) throw new BadRequestException("planItemId no pertenece a este viaje");
+  }
+
+  return this.prisma.tripDocument.upsert({
+    where: { tripId_type: { tripId, type } },
+    create: {
+      tripId,
+      type,
+      provider: dto.provider ?? null,
+      referenceCode: dto.referenceCode ?? null,
+      expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
+      planItemId: dto.planItemId ?? null,
+    },
+    update: {
+      provider: dto.provider ?? null,
+      referenceCode: dto.referenceCode ?? null,
+      expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
+      planItemId: dto.planItemId ?? null,
+    },
+  });
+}
+
+async deleteTripDocument(tripId: number, type: TripDocumentType) {
+  await this.prisma.tripDocument.deleteMany({ where: { tripId, type } });
+  return { success: true };
 }
 
 
