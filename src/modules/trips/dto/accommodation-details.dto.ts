@@ -20,5 +20,7 @@ export class AccommodationDetailsDto {
   // si quieres permitir localhost:
   @IsOptional() @IsUrl({ require_tld: false }) website?: string;
 
+  @IsOptional() @IsUrl({ require_tld: false }) coverImageUrl?: string;
+
   @IsOptional() metadata?: any;
 }

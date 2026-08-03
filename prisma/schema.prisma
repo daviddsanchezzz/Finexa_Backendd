@@ -773,6 +773,8 @@ model AccommodationDetails {
   phone      String?
   website    String?
 
+  coverImageUrl String?
+
   metadata   Json? @db.JsonB
 
   planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)

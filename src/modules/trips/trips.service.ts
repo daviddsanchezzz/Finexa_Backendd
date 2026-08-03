@@ -377,6 +377,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
             bookingRef: ad.bookingRef ?? null,
             phone: ad.phone ?? null,
             website: ad.website ?? null,
+            coverImageUrl: ad.coverImageUrl ?? null,
             metadata: ad.metadata ?? null,
           },
         });
@@ -524,6 +525,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
               bookingRef: ad.bookingRef ?? null,
               phone: ad.phone ?? null,
               website: ad.website ?? null,
+              coverImageUrl: ad.coverImageUrl ?? null,
               metadata: ad.metadata ?? null,
             },
           });
