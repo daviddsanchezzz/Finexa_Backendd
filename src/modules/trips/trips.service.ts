@@ -4,7 +4,9 @@ import {
   ForbiddenException,
   NotFoundException,
   BadRequestException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "src/common/prisma/prisma.service";
 import { CreateTripDto, StatusDto, UpdateTripDto } from "./dto/create-trip.dto";
 import { CreateTripPlanItemDto, PaymentStatus } from "./dto/create-trip-plan-item.dto";
@@ -97,6 +99,13 @@ function safePct(num: number, den: number) {
 @Injectable()
 export class TripsService {
   constructor(private prisma: PrismaService, private aerodatabox: AerodataboxService) {}
+
+  private wrapChecklistError(error: unknown): never {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+      throw new ServiceUnavailableException("Checklist temporalmente no disponible. Falta aplicar la migración en base de datos.");
+    }
+    throw error;
+  }
 
   // ✅ util para controller
   async assertTripOwnership(userId: number, tripId: number) {
@@ -986,29 +995,63 @@ async deleteTripContact(tripId: number, contactId: number) {
 // =========================================================
 
 async listTripChecklist(tripId: number) {
-  return this.prisma.tripChecklistItem.findMany({ where: { tripId }, orderBy: [{ category: "asc" }, { order: "asc" }, { createdAt: "asc" }] });
+  try {
+    return await this.prisma.tripChecklistItem.findMany({
+      where: { tripId },
+      orderBy: [{ category: "asc" }, { order: "asc" }, { createdAt: "asc" }],
+    });
+  } catch (error) {
+    this.wrapChecklistError(error);
+  }
 }
 
 async seedTripChecklist(tripId: number, dto: SeedTripChecklistDto) {
-  // idempotente: si ya hay items, no volvemos a sembrar
-  const existingCount = await this.prisma.tripChecklistItem.count({ where: { tripId } });
-  if (existingCount > 0) return this.listTripChecklist(tripId);
+  try {
+    const items = dto.items
+      .map((item, index) => ({
+        tripId,
+        category: item.category,
+        label: item.label.trim(),
+        order: item.order ?? index,
+      }))
+      .filter((item) => item.label.length > 0);
 
-  await this.prisma.tripChecklistItem.createMany({
-    data: dto.items.map((it, i) => ({
-      tripId,
-      category: it.category,
-      label: it.label,
-      order: it.order ?? i,
-    })),
-  });
-  return this.listTripChecklist(tripId);
+    if (!items.length) {
+      throw new BadRequestException("Debes enviar al menos un artículo válido.");
+    }
+
+    const existingCount = await this.prisma.tripChecklistItem.count({ where: { tripId } });
+    if (existingCount > 0) return this.listTripChecklist(tripId);
+
+    await this.prisma.tripChecklistItem.createMany({ data: items });
+    return this.listTripChecklist(tripId);
+  } catch (error) {
+    this.wrapChecklistError(error);
+  }
 }
 
 async createTripChecklistItem(tripId: number, dto: CreateTripChecklistItemDto) {
-  return this.prisma.tripChecklistItem.create({
-    data: { tripId, category: dto.category, label: dto.label.trim(), order: dto.order ?? 0 },
-  });
+  const label = dto.label.trim();
+  if (!label) throw new BadRequestException("El artículo no puede estar vacío.");
+
+  try {
+    const lastItem = await this.prisma.tripChecklistItem.findFirst({
+      where: { tripId, category: dto.category },
+      orderBy: { order: "desc" },
+      select: { order: true },
+    });
+
+    return await this.prisma.tripChecklistItem.create({
+      data: {
+        tripId,
+        category: dto.category,
+        label,
+        order: dto.order ?? (lastItem?.order ?? -1) + 1,
+      },
+    });
+  } catch (error) {
+    this.wrapChecklistError(error);
+  }
 }
 
 async updateTripChecklistItem(tripId: number, itemId: number, dto: UpdateTripChecklistItemDto) {
@@ -1016,18 +1059,30 @@ async updateTripChecklistItem(tripId: number, itemId: number, dto: UpdateTripChe
   if (!existing) throw new NotFoundException("Checklist item not found");
 
   const data: any = {};
-  if (dto.label !== undefined) data.label = dto.label.trim();
+  if (dto.label !== undefined) {
+    const label = dto.label.trim();
+    if (!label) throw new BadRequestException("El artículo no puede estar vacío.");
+    data.label = label;
+  }
   if (dto.checked !== undefined) data.checked = dto.checked;
   if (dto.order !== undefined) data.order = dto.order;
 
-  return this.prisma.tripChecklistItem.update({ where: { id: itemId }, data });
+  try {
+    return await this.prisma.tripChecklistItem.update({ where: { id: itemId }, data });
+  } catch (error) {
+    this.wrapChecklistError(error);
+  }
 }
 
 async deleteTripChecklistItem(tripId: number, itemId: number) {
   const existing = await this.prisma.tripChecklistItem.findFirst({ where: { id: itemId, tripId }, select: { id: true } });
   if (!existing) throw new NotFoundException("Checklist item not found");
 
-  await this.prisma.tripChecklistItem.delete({ where: { id: itemId } });
+  try {
+    await this.prisma.tripChecklistItem.delete({ where: { id: itemId } });
+  } catch (error) {
+    this.wrapChecklistError(error);
+  }
   return { success: true };
 }
 

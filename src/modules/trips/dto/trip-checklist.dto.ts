@@ -1,10 +1,11 @@
-import { IsBoolean, IsInt, IsOptional, IsString } from "class-validator";
+import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, ValidateNested } from "class-validator";
+import { Type } from "class-transformer";
 import { ChecklistCategory } from "@prisma/client";
 
 export { ChecklistCategory };
 
 export class CreateTripChecklistItemDto {
-  category: ChecklistCategory;
+  @IsEnum(ChecklistCategory) category: ChecklistCategory;
 
   @IsString() label: string;
 
@@ -20,5 +21,8 @@ export class UpdateTripChecklistItemDto {
 }
 
 export class SeedTripChecklistDto {
-  items: { category: ChecklistCategory; label: string; order?: number }[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateTripChecklistItemDto)
+  items: CreateTripChecklistItemDto[];
 }
