@@ -1,4 +1,4 @@
-export type WonderEra = "modern" | "ancient";
+export type WonderEra = "modern" | "ancient" | "natural";
 
 export interface WonderCatalogItem {
   key: string;
@@ -22,4 +22,11 @@ export const WONDERS_CATALOG: WonderCatalogItem[] = [
   { key: "mausoleum_halicarnassus", name: "Mausoleo de Halicarnaso", country: "TR", era: "ancient" },
   { key: "colossus_rhodes", name: "Coloso de Rodas", country: "GR", era: "ancient" },
   { key: "lighthouse_alexandria", name: "Faro de Alejandría", country: "EG", era: "ancient" },
+  { key: "amazon_rainforest", name: "Amazonía", country: "BR", era: "natural" },
+  { key: "halong_bay", name: "Bahía de Ha Long", country: "VN", era: "natural" },
+  { key: "iguazu_falls", name: "Cataratas del Iguazú", country: "AR", era: "natural" },
+  { key: "jeju_island", name: "Isla de Jeju", country: "KR", era: "natural" },
+  { key: "komodo_island", name: "Isla de Komodo", country: "ID", era: "natural" },
+  { key: "puerto_princesa_river", name: "Río Subterráneo de Puerto Princesa", country: "PH", era: "natural" },
+  { key: "table_mountain", name: "Montaña de la Mesa", country: "ZA", era: "natural" },
 ];
