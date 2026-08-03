@@ -47,8 +47,8 @@ getContinentsStats(@User("id") userId: number) {
 
 
   @Get()
-  getTrips(@User("id") userId: number) {
-    return this.tripsService.getTrips(userId);
+  getTrips(@User("id") userId: number, @Query("country") country?: string) {
+    return this.tripsService.getTrips(userId, country);
   }
 
   @Get(":id")

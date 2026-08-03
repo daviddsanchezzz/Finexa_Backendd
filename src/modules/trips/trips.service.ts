@@ -171,10 +171,13 @@ export class TripsService {
     return trip;
   }
 
-  async getTrips(userId: number) {
+  async getTrips(userId: number, country?: string) {
     // si no hay fechas, ordena por createdAt para wishlist
     return this.prisma.trip.findMany({
-      where: { userId },
+      where: {
+        userId,
+        ...(country ? { destination: country.trim().toUpperCase() } : {}),
+      },
       orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],
     });
   }
