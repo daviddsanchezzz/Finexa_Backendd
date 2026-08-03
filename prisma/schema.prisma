@@ -712,6 +712,7 @@ enum TripPlanItemType {
   // Generic
   activity                // ✅ añadido (actividad genérica)
   expense                 // ✅ añadido (gasto sin actividad)
+  visit                   // varias paradas a pie agrupadas (stops en metadata JSON)
   other
 }
 

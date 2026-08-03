@@ -28,6 +28,7 @@ export enum TripPlanItemType {
   // ===== Generic / base =====
   activity = "activity",
   expense = "expense",
+  visit = "visit",
 
   // ===== Culture & tourism =====
   museum = "museum",
