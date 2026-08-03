@@ -104,6 +104,7 @@ model User {
   language      String?        @default("es")
   currency      String?        @default("EUR")
   theme         String?        @default("light")
+  pinnedFinanceTabModuleKey String? @default("investments")
 
   wallets                Wallet[]                @relation("UserWallets")
   walletShares           WalletShare[]
