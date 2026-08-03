@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, ForbiddenException } from "@nestjs/common";
 import { PrismaService } from "src/common/prisma/prisma.service";
 import { COUNTRIES, CONTINENT_ORDER, safePct, WorldContinent } from "./data/countries.data";
 import { WONDERS_CATALOG } from "./data/wonders.data";
@@ -102,6 +102,16 @@ export class WorldService {
     if (!dto.visited) {
       await this.prisma.wonderVisit.deleteMany({ where: { userId, wonderKey } });
     } else {
+      if (dto.tripId != null) {
+        const trip = await this.prisma.trip.findFirst({
+          where: { id: dto.tripId, userId },
+          select: { id: true },
+        });
+        if (!trip) {
+          throw new ForbiddenException(`Trip ${dto.tripId} does not belong to this user`);
+        }
+      }
+
       await this.prisma.wonderVisit.upsert({
         where: { userId_wonderKey: { userId, wonderKey } },
         create: {

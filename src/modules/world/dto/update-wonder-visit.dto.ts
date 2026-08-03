@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsDateString, IsString, IsInt } from "class-validator";
+import { IsBoolean, IsOptional, IsDateString, IsUrl, IsInt, IsPositive } from "class-validator";
 
 export class UpdateWonderVisitDto {
   @IsBoolean()
@@ -9,10 +9,11 @@ export class UpdateWonderVisitDto {
   visitedAt?: string;
 
   @IsOptional()
-  @IsString()
+  @IsUrl({ protocols: ["https"], require_protocol: true })
   photoUrl?: string;
 
   @IsOptional()
   @IsInt()
+  @IsPositive()
   tripId?: number;
 }
