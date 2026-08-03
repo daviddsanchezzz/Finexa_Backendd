@@ -133,6 +133,23 @@ model User {
   updatedAt     DateTime       @updatedAt
   createdBy     Int?
   active        Boolean        @default(true)
+
+  documents     UserDocument[]
+}
+
+model UserDocument {
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  type           String    // "passport" | "dni"
+  country        String    // país emisor, ISO2 (ES, FR...)
+  documentNumber String?
+  expiryDate     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
 }
 
 //////////////////////////////////////////////////////////////
