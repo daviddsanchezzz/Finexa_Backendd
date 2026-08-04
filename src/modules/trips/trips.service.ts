@@ -284,6 +284,7 @@ export class TripsService {
       },
       include: {
         countryStays: { orderBy: { order: "asc" } },
+        user: { select: { id: true, name: true, email: true } },
         members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true } } } },
       },
       orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],
