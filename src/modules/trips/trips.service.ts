@@ -526,6 +526,21 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       });
     }
 
+    const attachments = Array.isArray((dto as any).attachments) ? (dto as any).attachments : [];
+    if (attachments.length > 0) {
+      await tx.attachment.createMany({
+        data: attachments.map((file: any) => ({
+          planItemId: planItem.id,
+          kind: file.kind,
+          url: file.url,
+          filename: file.filename ?? null,
+          mimeType: file.mimeType ?? null,
+          sizeBytes: file.sizeBytes ?? null,
+          metadata: file.metadata ?? null,
+        })),
+      });
+    }
+
     return planItem;
   });
 
@@ -684,6 +699,24 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         });
       } else {
         await tx.destinationTransportDetails.deleteMany({ where: { planItemId } });
+      }
+
+      if ((dto as any).attachments !== undefined) {
+        const attachments = Array.isArray((dto as any).attachments) ? (dto as any).attachments : [];
+        await tx.attachment.deleteMany({ where: { planItemId } });
+        if (attachments.length > 0) {
+          await tx.attachment.createMany({
+            data: attachments.map((file: any) => ({
+              planItemId,
+              kind: file.kind,
+              url: file.url,
+              filename: file.filename ?? null,
+              mimeType: file.mimeType ?? null,
+              sizeBytes: file.sizeBytes ?? null,
+              metadata: file.metadata ?? null,
+            })),
+          });
+        }
       }
 
       return base;

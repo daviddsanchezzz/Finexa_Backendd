@@ -9,6 +9,7 @@ import {
   IsISO8601,
   ValidateNested,
   IsBoolean,
+  IsArray,
 } from "class-validator";
 import { AccommodationDetailsDto } from "./accommodation-details.dto";
 
@@ -67,6 +68,28 @@ export enum PaymentStatus {
   paid = "paid",
 }
 
+export class PlanItemAttachmentDto {
+  @IsString()
+  kind: string;
+
+  @IsString()
+  url: string;
+
+  @IsOptional()
+  @IsString()
+  filename?: string | null;
+
+  @IsOptional()
+  @IsString()
+  mimeType?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  sizeBytes?: number | null;
+
+  @IsOptional()
+  metadata?: any;
+}
 
 export class CreateTripPlanItemDto {
   @IsEnum(TripPlanItemType)
@@ -134,6 +157,12 @@ export class CreateTripPlanItemDto {
 
   @IsOptional()
   metadata?: any;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanItemAttachmentDto)
+  attachments?: PlanItemAttachmentDto[];
 
   
 
