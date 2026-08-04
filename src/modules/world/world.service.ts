@@ -17,19 +17,23 @@ export class WorldService {
   constructor(private prisma: PrismaService) {}
 
   private async getVisitedCountryDates(userId: number): Promise<Map<string, Date | null>> {
-    const seenTrips = await this.prisma.trip.findMany({
-      where: { userId, status: "seen" as any, destination: { not: null } },
-      select: { destination: true, startDate: true },
+    // Reads per-country stays (not the trip's own single destination/startDate)
+    // so a multi-country trip (e.g. Estonia + Latvia) correctly marks both
+    // countries visited, each with its own stay's date — not just the
+    // trip's primary country and overall start date.
+    const seenStays = await this.prisma.tripCountryStay.findMany({
+      where: { trip: { userId, status: "seen" as any } },
+      select: { country: true, startDate: true },
       orderBy: { startDate: "asc" },
     });
 
     const dates = new Map<string, Date | null>();
-    for (const t of seenTrips) {
-      const code = (t.destination || "").trim().toUpperCase();
+    for (const s of seenStays) {
+      const code = (s.country || "").trim().toUpperCase();
       if (!code) continue;
       const current = dates.get(code);
-      if (t.startDate && (!current || t.startDate < current)) {
-        dates.set(code, t.startDate);
+      if (s.startDate && (!current || s.startDate < current)) {
+        dates.set(code, s.startDate);
       } else if (!dates.has(code)) {
         dates.set(code, null);
       }

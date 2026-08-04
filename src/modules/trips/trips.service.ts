@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "src/common/prisma/prisma.service";
-import { CreateTripDto, StatusDto, UpdateTripDto } from "./dto/create-trip.dto";
+import { CreateTripDto, StatusDto, UpdateTripDto, CountryStayDto } from "./dto/create-trip.dto";
 import { CreateTripPlanItemDto, PaymentStatus } from "./dto/create-trip-plan-item.dto";
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import PDFDocument = require("pdfkit");
@@ -95,6 +95,43 @@ function safePct(num: number, den: number) {
   return Math.round((num / den) * 100);
 }
 
+interface DerivedFromStays {
+  destination: string | null;
+  continent: string | null;
+  startDate?: Date;
+  endDate?: Date;
+}
+
+// The "primary" country of a multi-country trip is whichever stay starts
+// earliest (stays without a date fall back to array order); Trip's overall
+// startDate/endDate become the min/max across every stay's own range.
+function deriveFromStays(stays: CountryStayDto[]): DerivedFromStays {
+  const parsed = stays.map((s) => ({
+    country: normalizeCountryCode(s.country),
+    continent: s.continent ?? null,
+    startDate: s.startDate ? new Date(s.startDate) : null,
+    endDate: s.endDate ? new Date(s.endDate) : null,
+  }));
+
+  const sorted = [...parsed].sort((a, b) => {
+    if (a.startDate && b.startDate) return a.startDate.getTime() - b.startDate.getTime();
+    if (a.startDate) return -1;
+    if (b.startDate) return 1;
+    return 0;
+  });
+  const primary = sorted[0];
+
+  const starts = parsed.map((s) => s.startDate).filter((d): d is Date => !!d);
+  const ends = parsed.map((s) => s.endDate).filter((d): d is Date => !!d);
+
+  return {
+    destination: primary?.country ?? null,
+    continent: primary?.continent ?? null,
+    startDate: starts.length ? new Date(Math.min(...starts.map((d) => d.getTime()))) : undefined,
+    endDate: ends.length ? new Date(Math.max(...ends.map((d) => d.getTime()))) : undefined,
+  };
+}
+
 
 @Injectable()
 export class TripsService {
@@ -105,6 +142,49 @@ export class TripsService {
       throw new ServiceUnavailableException("Checklist temporalmente no disponible. Falta aplicar la migración en base de datos.");
     }
     throw error;
+  }
+
+  // Keeps TripCountryStay in sync with a create/update payload:
+  // - countryStays provided (non-empty) -> full replace, one row per stay.
+  // - only destination provided (legacy single-country flow) -> replace
+  //   with exactly one stay mirroring the scalar fields, so every trip with
+  //   a destination always has a matching stay for getSummary/getContinentsStats/
+  //   the World module to read.
+  // - neither provided -> leave existing stays untouched (e.g. editing just
+  //   budget/status shouldn't wipe country data).
+  private async syncCountryStays(
+    tripId: number,
+    dto: CreateTripDto | UpdateTripDto,
+    fallbackDates: { startDate?: Date; endDate?: Date }
+  ) {
+    if (dto.countryStays && dto.countryStays.length > 0) {
+      await this.prisma.tripCountryStay.deleteMany({ where: { tripId } });
+      await this.prisma.tripCountryStay.createMany({
+        data: dto.countryStays.map((s, index) => ({
+          tripId,
+          country: normalizeCountryCode(s.country)!,
+          continent: s.continent as any,
+          startDate: s.startDate ? new Date(s.startDate) : null,
+          endDate: s.endDate ? new Date(s.endDate) : null,
+          order: index,
+        })),
+      });
+    } else if (dto.destination !== undefined) {
+      await this.prisma.tripCountryStay.deleteMany({ where: { tripId } });
+      const code = normalizeCountryCode(dto.destination);
+      if (code) {
+        await this.prisma.tripCountryStay.create({
+          data: {
+            tripId,
+            country: code,
+            continent: dto.continent as any,
+            startDate: fallbackDates.startDate ?? null,
+            endDate: fallbackDates.endDate ?? null,
+            order: 0,
+          },
+        });
+      }
+    }
   }
 
   // ✅ util para controller
@@ -142,8 +222,12 @@ export class TripsService {
   }
 
   async createTrip(userId: number, dto: CreateTripDto) {
-    const startDate = dto.startDate ? new Date(dto.startDate) : undefined;
-    const endDate = dto.endDate ? new Date(dto.endDate) : undefined;
+    const derived = dto.countryStays?.length ? deriveFromStays(dto.countryStays) : null;
+
+    const startDate = derived?.startDate ?? (dto.startDate ? new Date(dto.startDate) : undefined);
+    const endDate = derived?.endDate ?? (dto.endDate ? new Date(dto.endDate) : undefined);
+    const destination = derived ? derived.destination : normalizeCountryCode(dto.destination);
+    const continent = derived ? (derived.continent as any) : dto.continent;
 
     const year = startDate?.getFullYear() ?? endDate?.getFullYear() ?? undefined;
 
@@ -151,24 +235,29 @@ export class TripsService {
       data: {
         userId,
         name: dto.name,
-        destination: normalizeCountryCode(dto.destination),
+        destination,
         startDate,
         endDate,
         companions: dto.companions ?? [],
         budget: dto.budget,
         cost: dto.cost,
-        continent: dto.continent,
+        continent,
         year,
         status: dto.status,
         coverImageUrl: dto.coverImageUrl ?? null,
       },
     });
 
+    await this.syncCountryStays(trip.id, dto, { startDate, endDate });
+
     if (dto.status === StatusDto.planning) {
-      await this.ensureTripSubcategory(userId, dto.name, dto.destination).catch(() => {});
+      await this.ensureTripSubcategory(userId, dto.name, destination).catch(() => {});
     }
 
-    return trip;
+    return this.prisma.trip.findUnique({
+      where: { id: trip.id },
+      include: { countryStays: { orderBy: { order: "asc" } } },
+    });
   }
 
   async getTrips(userId: number, country?: string) {
@@ -176,8 +265,9 @@ export class TripsService {
     return this.prisma.trip.findMany({
       where: {
         userId,
-        ...(country ? { destination: country.trim().toUpperCase() } : {}),
+        ...(country ? { countryStays: { some: { country: country.trim().toUpperCase() } } } : {}),
       },
+      include: { countryStays: { orderBy: { order: "asc" } } },
       orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],
     });
   }
@@ -203,6 +293,8 @@ async getTripDetail(userId: number, tripId: number) {
         where: { active: true },
         include: { category: true, subcategory: true, wallet: true },
       },
+
+      countryStays: { orderBy: { order: "asc" } },
     },
   });
 
@@ -214,26 +306,38 @@ async getTripDetail(userId: number, tripId: number) {
     const existing = await this.prisma.trip.findFirst({ where: { id: tripId, userId } });
     if (!existing) throw new ForbiddenException();
 
-    const startDate = dto.startDate ? new Date(dto.startDate) : undefined;
-    const endDate = dto.endDate ? new Date(dto.endDate) : undefined;
+    const { countryStays, ...rest } = dto;
+    const derived = countryStays?.length ? deriveFromStays(countryStays) : null;
+
+    const startDate = derived?.startDate ?? (dto.startDate ? new Date(dto.startDate) : undefined);
+    const endDate = derived?.endDate ?? (dto.endDate ? new Date(dto.endDate) : undefined);
     const year = startDate?.getFullYear() ?? endDate?.getFullYear() ?? undefined;
 
     const updated = await this.prisma.trip.update({
       where: { id: tripId },
       data: {
-        ...dto,
-        destination: dto.destination ? normalizeCountryCode(dto.destination) : undefined,
+        ...rest,
+        destination: derived ? derived.destination : dto.destination ? normalizeCountryCode(dto.destination) : undefined,
+        continent: derived ? (derived.continent as any) : dto.continent,
         startDate,
         endDate,
         year,
       },
     });
 
+    await this.syncCountryStays(tripId, dto, {
+      startDate: startDate ?? existing.startDate ?? undefined,
+      endDate: endDate ?? existing.endDate ?? undefined,
+    });
+
     if (dto.status === StatusDto.planning && existing.status !== StatusDto.planning) {
       await this.ensureTripSubcategory(userId, updated.name, updated.destination).catch(() => {});
     }
 
-    return updated;
+    return this.prisma.trip.findUnique({
+      where: { id: tripId },
+      include: { countryStays: { orderBy: { order: "asc" } } },
+    });
   }
 
   async deleteTrip(userId: number, tripId: number) {
@@ -651,14 +755,14 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       ? Math.max(0, Math.ceil((nextTrip.startDate.getTime() - today.getTime()) / 86400000))
       : null;
 
-    const seenTrips = await this.prisma.trip.findMany({
-      where: { userId, status: "seen" as StatusDto, destination: { not: null } },
-      select: { destination: true },
+    const seenStays = await this.prisma.tripCountryStay.findMany({
+      where: { trip: { userId, status: "seen" as any } },
+      select: { country: true },
     });
 
     const visitedSet = new Set(
-      seenTrips
-        .map((t) => (t.destination || "").trim().toUpperCase())
+      seenStays
+        .map((s) => (s.country || "").trim().toUpperCase())
         .filter(Boolean)
     );
 
@@ -1170,36 +1274,36 @@ async toggleTripTaskStatus(tripId: number, taskId: number) {
 
 
 async getContinentsStats(userId: number) {
-  // 1) Trae los trips vistos con country + continent
-  const seen = await this.prisma.trip.findMany({
+  // 1) Trae los stays (país + continente propios) de cada viaje visto —
+  // un viaje puede tener varios países, cada uno con su propio continente.
+  const seenStays = await this.prisma.tripCountryStay.findMany({
     where: {
-      userId,
-      status: "seen" as any,
-      destination: { not: null },
+      trip: { userId, status: "seen" as any },
     },
     select: {
-      destination: true,
+      tripId: true,
+      country: true,
       continent: true,
     },
   });
 
-  // 2) Agrupa en Sets (únicos) por continente
+  // 2) Agrupa en Sets (únicos) por continente; un mismo viaje puede sumar
+  // "1 viaje visto" a más de un continente si sus países están repartidos.
   const visitedSets = new Map<ContinentKey, Set<string>>();
-  const tripsCount = new Map<ContinentKey, number>();
+  const tripsByContinent = new Map<ContinentKey, Set<number>>();
 
-  const bump = (k: ContinentKey) => tripsCount.set(k, (tripsCount.get(k) ?? 0) + 1);
-
-  for (const t of seen) {
-    const rawC = (t.continent || "").toString().toLowerCase().trim();
+  for (const s of seenStays) {
+    const rawC = (s.continent || "").toString().toLowerCase().trim();
     const key: ContinentKey = (CONTINENTS_ORDER.includes(rawC as any) ? rawC : "unknown") as ContinentKey;
 
-    const code = (t.destination || "").trim().toUpperCase();
+    const code = (s.country || "").trim().toUpperCase();
     if (!code) continue;
 
     if (!visitedSets.has(key)) visitedSets.set(key, new Set());
     visitedSets.get(key)!.add(code);
 
-    bump(key);
+    if (!tripsByContinent.has(key)) tripsByContinent.set(key, new Set());
+    tripsByContinent.get(key)!.add(s.tripId);
   }
 
   // 3) Devuelve en formato listo para el front: visited/total + pct + trips
@@ -1212,7 +1316,7 @@ async getContinentsStats(userId: number) {
       visitedCountries: visited, // 31
       totalCountries: total,     // 52
       pct: safePct(visited, total), // 67
-      trips: tripsCount.get(continent) ?? 0, // opcional: nº de viajes vistos
+      trips: tripsByContinent.get(continent)?.size ?? 0, // nº de viajes distintos con algún país en este continente
     };
   });
 
