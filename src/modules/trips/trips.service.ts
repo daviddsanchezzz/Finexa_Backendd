@@ -214,16 +214,82 @@ export class TripsService {
     return [...iso2.toUpperCase()].map((c) => String.fromCodePoint(c.charCodeAt(0) + 0x1f1a5)).join('');
   }
 
-  private async ensureTripSubcategory(userId: number, tripName: string, destination?: string | null): Promise<void> {
+  private async buildUniqueTripSubcategoryName(
+    categoryId: number,
+    baseName: string,
+    excludeSubcategoryId?: number,
+  ): Promise<string> {
+    const trimmed = baseName.trim() || 'Viaje';
+    let candidate = trimmed;
+    let suffix = 2;
+
+    while (true) {
+      const existing = await this.prisma.subcategory.findFirst({
+        where: {
+          categoryId,
+          name: candidate,
+          active: true,
+          ...(excludeSubcategoryId ? { id: { not: excludeSubcategoryId } } : {}),
+        },
+        select: { id: true },
+      });
+
+      if (!existing) return candidate;
+
+      candidate = `${trimmed} ${suffix}`;
+      suffix += 1;
+    }
+  }
+
+  private async syncTripSubcategory(userId: number, tripId: number, tripName: string, destination?: string | null): Promise<void> {
     const viajesCategory = await this.prisma.category.findFirst({
       where: { userId, type: 'expense', name: { contains: 'viaje', mode: 'insensitive' }, active: true },
     });
     if (!viajesCategory) return;
 
-    const existing = await this.prisma.subcategory.findFirst({
-      where: { categoryId: viajesCategory.id, name: tripName },
+    const existingByTrip = await this.prisma.subcategory.findFirst({
+      where: { tripId },
     });
-    if (existing) return;
+
+    if (existingByTrip) {
+      const uniqueName = await this.buildUniqueTripSubcategoryName(
+        viajesCategory.id,
+        tripName,
+        existingByTrip.id,
+      );
+      await this.prisma.subcategory.update({
+        where: { id: existingByTrip.id },
+        data: {
+          categoryId: viajesCategory.id,
+          name: uniqueName,
+          emoji: this.countryFlag(destination),
+          active: true,
+        },
+      });
+      return;
+    }
+
+    const legacyByName = await this.prisma.subcategory.findFirst({
+      where: {
+        categoryId: viajesCategory.id,
+        tripId: null,
+        name: tripName,
+        active: true,
+      },
+    });
+
+    if (legacyByName) {
+      await this.prisma.subcategory.update({
+        where: { id: legacyByName.id },
+        data: {
+          tripId,
+          name: tripName,
+          emoji: this.countryFlag(destination),
+          active: true,
+        },
+      });
+      return;
+    }
 
     const last = await this.prisma.subcategory.findFirst({
       where: { categoryId: viajesCategory.id },
@@ -231,8 +297,41 @@ export class TripsService {
       select: { position: true },
     });
 
+    const uniqueName = await this.buildUniqueTripSubcategoryName(viajesCategory.id, tripName);
+
     await this.prisma.subcategory.create({
-      data: { name: tripName, categoryId: viajesCategory.id, emoji: this.countryFlag(destination), position: (last?.position ?? -1) + 1 },
+      data: {
+        name: uniqueName,
+        categoryId: viajesCategory.id,
+        tripId,
+        emoji: this.countryFlag(destination),
+        position: (last?.position ?? -1) + 1,
+      },
+    });
+  }
+
+  private async removeTripSubcategory(userId: number, tripId: number, tripName: string): Promise<void> {
+    const result = await this.prisma.subcategory.updateMany({
+      where: { tripId, active: true },
+      data: { active: false },
+    });
+
+    if (result.count > 0) return;
+
+    const viajesCategory = await this.prisma.category.findFirst({
+      where: { userId, type: 'expense', name: { contains: 'viaje', mode: 'insensitive' }, active: true },
+      select: { id: true },
+    });
+    if (!viajesCategory) return;
+
+    await this.prisma.subcategory.updateMany({
+      where: {
+        categoryId: viajesCategory.id,
+        tripId: null,
+        name: tripName,
+        active: true,
+      },
+      data: { active: false },
     });
   }
 
@@ -266,7 +365,7 @@ export class TripsService {
     await this.syncCountryStays(trip.id, dto, { startDate, endDate });
 
     if (dto.status === StatusDto.planning) {
-      await this.ensureTripSubcategory(userId, dto.name, destination).catch(() => {});
+      await this.syncTripSubcategory(userId, trip.id, dto.name, destination).catch(() => {});
     }
 
     return this.prisma.trip.findUnique({
@@ -352,8 +451,8 @@ async getTripDetail(userId: number, tripId: number) {
       endDate: endDate ?? existing.endDate ?? undefined,
     });
 
-    if (dto.status === StatusDto.planning && existing.status !== StatusDto.planning) {
-      await this.ensureTripSubcategory(userId, updated.name, updated.destination).catch(() => {});
+    if (updated.status === StatusDto.planning) {
+      await this.syncTripSubcategory(userId, updated.id, updated.name, updated.destination).catch(() => {});
     }
 
     return this.prisma.trip.findUnique({
@@ -370,6 +469,8 @@ async getTripDetail(userId: number, tripId: number) {
       where: { tripId },
       data: { tripId: null },
     });
+
+    await this.removeTripSubcategory(userId, tripId, existing.name).catch(() => {});
 
     return this.prisma.trip.delete({ where: { id: tripId } });
   }
@@ -1044,19 +1145,55 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     other: "Otro",
   };
 
+  // Misma taxonomía y mismo mapeo tipo→categoría que TripExpensesSection.tsx
+  // (la pantalla "Gastos" del viaje en la app), para que el PDF coincida con
+  // lo que el usuario ve ahí en vez de con las Transaction adjuntas.
+  private readonly BUDGET_CATEGORY_DEFS: { key: string; label: string; color: string }[] = [
+    { key: "accommodation", label: "Alojamiento", color: "#22C55E" },
+    { key: "transport_main", label: "Transporte principal", color: "#2563EB" },
+    { key: "transport_local", label: "Transporte local", color: "#0EA5E9" },
+    { key: "food", label: "Comida", color: "#F97316" },
+    { key: "activities", label: "Actividades / visitas", color: "#A855F7" },
+    { key: "leisure", label: "Ocio", color: "#EF4444" },
+    { key: "shopping", label: "Compras", color: "#F59E0B" },
+    { key: "other", label: "Otros / fees", color: "#475569" },
+  ];
+
+  private categoryForPlanItem(item: any): string {
+    if (item.type === "expense") {
+      return item.metadata?.expenseCategory ?? "other";
+    }
+    const t = item.type;
+    if (t === "accommodation") return "accommodation";
+    if (t === "flight" || t === "transport_destination") return "transport_main";
+    if (t === "transport_local" || t === "transport" || t === "taxi") return "transport_local";
+    if (t === "restaurant" || t === "cafe" || t === "market") return "food";
+    if (["museum", "monument", "viewpoint", "free_tour", "guided_tour", "day_trip", "hike", "beach", "activity"].includes(t)) {
+      return "activities";
+    }
+    if (["concert", "sport", "bar_party", "nightlife"].includes(t)) return "leisure";
+    if (t === "shopping") return "shopping";
+    return "other";
+  }
+
   private async generateTripPdfMinimal(trip: any, includeExpenses: boolean): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: "A4", margin: 50 });
+      const doc = new PDFDocument({ size: "A4", margin: 0 });
       const chunks: Buffer[] = [];
       doc.on("data", (chunk: Buffer) => chunks.push(chunk));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
       const PRIMARY = "#2563EB";
+      const PRIMARY_DARK = "#1D4ED8";
       const TEXT = "#0F172A";
       const MUTED = "#64748B";
+      const MUTED_LIGHT = "#94A3B8";
       const BORDER = "#E2E8F0";
-      const PAGE_BOTTOM = 760;
+      const CARD_BG = "#F8FAFC";
+      const MARGIN_X = 50;
+      const CONTENT_WIDTH = 495; // 595 (A4 pt width) - 2*50
+      const PAGE_BOTTOM = 780;
 
       const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
       const fmtEuro = (n: unknown) => {
@@ -1071,63 +1208,45 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       };
       const fmtDateLong = (d: Date) =>
         capitalize(d.toLocaleDateString("es-ES", { weekday: "long", day: "2-digit", month: "long" }));
-      const divider = () => {
-        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(BORDER).stroke();
-      };
       const ensureSpace = (needed: number) => {
-        if (doc.y + needed > PAGE_BOTTOM) doc.addPage();
+        if (doc.y + needed > PAGE_BOTTOM) {
+          doc.addPage();
+          doc.x = MARGIN_X;
+          doc.y = 50;
+        }
+      };
+      const sectionHeader = (title: string) => {
+        ensureSpace(50);
+        doc.moveDown(0.9);
+        doc.rect(MARGIN_X, doc.y + 2, 4, 16).fill(PRIMARY);
+        doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text(title, MARGIN_X + 12, doc.y);
+        doc.moveDown(0.5);
       };
 
-      // ── Portada ──────────────────────────────────
-      doc.fontSize(22).font("Helvetica-Bold").fillColor(TEXT).text(trip.name);
+      // ── Portada (banda de color) ──────────────────
+      doc.rect(0, 0, 595, 130).fill(PRIMARY);
+      doc.fillColor("white").font("Helvetica-Bold").fontSize(24).text(trip.name, MARGIN_X, 40, { width: CONTENT_WIDTH });
 
       const countries: string[] = (trip.countryStays ?? []).map((c: any) => c.country).filter(Boolean);
-      const countriesLabel = countries.length ? countries.join(", ") : trip.destination ?? "";
-      if (countriesLabel) {
-        doc.moveDown(0.2);
-        doc.fontSize(11).font("Helvetica").fillColor(MUTED).text(countriesLabel);
-      }
+      const countriesLabel = countries.length ? countries.join(" · ") : trip.destination ?? "";
 
       const start = trip.startDate ? new Date(trip.startDate) : null;
       const end = trip.endDate ? new Date(trip.endDate) : null;
-      const days =
-        start && end ? Math.round((end.getTime() - start.getTime()) / 86400000) + 1 : null;
-      if (start && end) {
-        const fmtShort = (d: Date) =>
-          d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
-        doc.moveDown(0.2);
-        doc
-          .fontSize(11)
-          .font("Helvetica")
-          .fillColor(MUTED)
-          .text(`${fmtShort(start)} — ${fmtShort(end)}${days ? ` · ${days} días` : ""}`);
-      }
+      const days = start && end ? Math.round((end.getTime() - start.getTime()) / 86400000) + 1 : null;
+      const fmtShort = (d: Date) => d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
+      const dateRangeLabel = start && end ? `${fmtShort(start)} — ${fmtShort(end)}${days ? ` · ${days} días` : ""}` : "";
 
-      const people: string[] = [
-        trip.user?.name,
-        ...((trip.members ?? []).map((m: any) => m.user?.name)),
-      ].filter(Boolean);
-      if (people.length > 1) {
-        doc.moveDown(0.2);
-        doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(`Viajeros: ${people.join(", ")}`);
-      }
+      doc
+        .fontSize(11)
+        .font("Helvetica")
+        .fillColor("#DBEAFE")
+        .text([countriesLabel, dateRangeLabel].filter(Boolean).join("   ·   "), MARGIN_X, 78, { width: CONTENT_WIDTH });
 
-      if (trip.budget != null) {
-        doc.moveDown(0.2);
-        doc
-          .fontSize(10)
-          .font("Helvetica")
-          .fillColor(MUTED)
-          .text(`Presupuesto: ${fmtEuro(trip.budget)}${trip.cost != null ? ` · Coste planificado: ${fmtEuro(trip.cost)}` : ""}`);
-      }
+      doc.x = MARGIN_X;
+      doc.y = 145;
 
-      doc.moveDown(1);
-      divider();
-      doc.moveDown(1);
-
-      // ── Itinerario ───────────────────────────────
-      doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Itinerario");
-      doc.moveDown(0.5);
+      // ── Itinerario ─────────────────────────────────
+      sectionHeader("Itinerario");
 
       const planItems = [...(trip.planItems ?? [])].sort((a: any, b: any) => {
         const da = a.day ? new Date(a.day).getTime() : 0;
@@ -1139,7 +1258,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       });
 
       if (!planItems.length) {
-        doc.fontSize(10).font("Helvetica").fillColor(MUTED).text("Este viaje todavía no tiene actividades planificadas.");
+        doc.fontSize(10).font("Helvetica").fillColor(MUTED).text("Este viaje todavía no tiene actividades planificadas.", MARGIN_X, doc.y, { width: CONTENT_WIDTH });
       }
 
       let currentDayKey = "";
@@ -1147,14 +1266,22 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         const dayKey = item.day ? new Date(item.day).toDateString() : "__sin_fecha__";
         if (dayKey !== currentDayKey) {
           currentDayKey = dayKey;
-          ensureSpace(40);
+          ensureSpace(36);
           doc.moveDown(0.5);
           const label = item.day ? fmtDateLong(new Date(item.day)) : "Sin fecha asignada";
-          doc.fontSize(12).font("Helvetica-Bold").fillColor(PRIMARY).text(label);
-          doc.moveDown(0.25);
+          doc.font("Helvetica-Bold").fontSize(11);
+          const pillWidth = doc.widthOfString(label) + 20;
+          doc.roundedRect(MARGIN_X, doc.y, pillWidth, 20, 10).fill("#EFF6FF");
+          doc.fillColor(PRIMARY_DARK).text(label, MARGIN_X + 10, doc.y + 5);
+          doc.moveDown(0.9);
         }
 
-        ensureSpace(30);
+        ensureSpace(34);
+
+        const catColor = this.BUDGET_CATEGORY_DEFS.find((d) => d.key === this.categoryForPlanItem(item))?.color ?? MUTED_LIGHT;
+        const rowX = MARGIN_X;
+        const dotY = doc.y + 4;
+        doc.circle(rowX + 3, dotY, 3).fill(catColor);
 
         const timeStart = fmtTime(item.startAt);
         const timeEnd = fmtTime(item.endAt);
@@ -1165,7 +1292,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
           .fontSize(10)
           .font("Helvetica-Bold")
           .fillColor(TEXT)
-          .text(`${timeLabel ? `${timeLabel}  ·  ` : ""}${typeLabel} — ${item.title}`);
+          .text(`${timeLabel ? `${timeLabel}  ·  ` : ""}${typeLabel} — ${item.title}`, rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
 
         const details: string[] = [];
         if (item.location) details.push(item.location);
@@ -1176,12 +1303,8 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
           const line = [f.airlineName, f.flightNumberRaw, route].filter(Boolean).join(" · ");
           if (line) details.push(line);
         }
-        if (item.accommodationDetails) {
-          const a = item.accommodationDetails;
-          if (a.address) details.push(a.address);
-          const ci = fmtTime(a.checkInAt);
-          const co = fmtTime(a.checkOutAt);
-          if (ci || co) details.push(`Entrada ${ci ?? "-"} · Salida ${co ?? "-"}`);
+        if (item.accommodationDetails?.address) {
+          details.push(item.accommodationDetails.address);
         }
         if (item.destinationTransport) {
           const t = item.destinationTransport;
@@ -1199,89 +1322,216 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         }
 
         if (details.length) {
-          doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(details.join("  ·  "));
+          doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(details.join("   ·   "), rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
         }
-        doc.moveDown(0.4);
+        doc.moveDown(0.55);
+      }
+
+      // ── Alojamientos ─────────────────────────────
+      const accommodations = planItems.filter((it: any) => it.accommodationDetails);
+      if (accommodations.length) {
+        sectionHeader("Alojamientos");
+        const fmtDateTime = (iso: unknown) => {
+          if (!iso) return null;
+          const d = new Date(iso as string);
+          if (isNaN(d.getTime())) return null;
+          return `${d.toLocaleDateString("es-ES", { day: "2-digit", month: "short" })}, ${d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`;
+        };
+
+        for (const item of accommodations) {
+          ensureSpace(50);
+          const a = item.accommodationDetails;
+          doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(item.title, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+
+          const ci = fmtDateTime(a.checkInAt);
+          const co = fmtDateTime(a.checkOutAt);
+          if (ci || co) {
+            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(`Entrada ${ci ?? "-"}   ·   Salida ${co ?? "-"}`, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          }
+          if (a.address) {
+            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(a.address, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          }
+          const extra: string[] = [];
+          if (a.guests) extra.push(`${a.guests} huésped${a.guests !== 1 ? "es" : ""}`);
+          if (a.rooms) extra.push(`${a.rooms} habitación${a.rooms !== 1 ? "es" : ""}`);
+          if (item.cost != null) {
+            const costLabel = fmtEuro(item.cost);
+            if (costLabel) extra.push(`Coste: ${costLabel}`);
+          }
+          if (extra.length) {
+            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(extra.join("   ·   "), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          }
+          doc.moveDown(0.6);
+        }
       }
 
       // ── Tareas ───────────────────────────────────
       const tasks = trip.tasks ?? [];
       if (tasks.length) {
-        ensureSpace(60);
-        doc.moveDown(0.6);
-        doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Tareas");
-        doc.moveDown(0.4);
+        sectionHeader("Tareas");
+        const taskRowHeight = 18;
         for (const task of tasks) {
-          ensureSpace(20);
+          ensureSpace(taskRowHeight);
+          const done = task.status === "done";
+          const rowY = doc.y;
+          doc.roundedRect(MARGIN_X, rowY + 1, 10, 10, 2).lineWidth(1).strokeColor(done ? "#16A34A" : BORDER).stroke();
+          if (done) doc.roundedRect(MARGIN_X, rowY + 1, 10, 10, 2).fill("#16A34A");
           doc
             .fontSize(10)
             .font("Helvetica")
-            .fillColor(task.status === "done" ? MUTED : TEXT)
-            .text(`${task.status === "done" ? "☑" : "☐"} ${task.title}`);
+            .fillColor(done ? MUTED : TEXT)
+            .text(task.title, MARGIN_X + 16, rowY, { width: CONTENT_WIDTH - 16 });
+          doc.y = rowY + taskRowHeight;
         }
       }
 
       // ── Notas ────────────────────────────────────
       const notes = trip.notes ?? [];
       if (notes.length) {
-        ensureSpace(60);
-        doc.moveDown(0.6);
-        doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Notas");
-        doc.moveDown(0.4);
+        sectionHeader("Notas");
         for (const note of notes) {
           ensureSpace(30);
           if (note.title) {
-            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(note.title);
+            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(note.title, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
           }
-          doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(note.body);
-          doc.moveDown(0.3);
+          doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(note.body, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          doc.moveDown(0.4);
         }
       }
 
       // ── Gastos (página final, solo si se pidió incluir) ──
+      // Usa los costes del planning (igual que la pestaña "Gastos" de la
+      // app) categorizados, no las Transaction sueltas — ese es el gasto
+      // real del viaje.
       if (includeExpenses) {
         doc.addPage();
-        doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Gastos");
-        doc.moveDown(0.6);
+        doc.x = MARGIN_X;
+        doc.y = 50;
 
+        doc.rect(MARGIN_X, doc.y + 2, 4, 20).fill(PRIMARY);
+        doc.fontSize(18).font("Helvetica-Bold").fillColor(TEXT).text("Gastos", MARGIN_X + 12, doc.y);
+        doc.moveDown(1);
+
+        const entries = (trip.planItems ?? []).filter(
+          (it: any) => !(it.metadata?.pending === true) && Number(it.cost) > 0,
+        );
         const transactions: any[] = trip.transactions ?? [];
-        if (!transactions.length) {
-          doc
-            .fontSize(10)
-            .font("Helvetica")
-            .fillColor(MUTED)
-            .text("No hay gastos registrados para este viaje.");
+        const txTotal = transactions.reduce((s, tx) => s + (Number(tx.amount) || 0), 0);
+        const entriesTotal = entries.reduce((s: number, it: any) => s + (Number(it.cost) || 0), 0);
+        const totalSpent = entriesTotal + txTotal;
+
+        if (!entries.length && !transactions.length) {
+          doc.fontSize(10).font("Helvetica").fillColor(MUTED).text("Este viaje todavía no tiene gastos asignados en el planning.", MARGIN_X, doc.y, { width: CONTENT_WIDTH });
         } else {
-          const sorted = [...transactions].sort(
-            (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-          );
+          // Total + barra de presupuesto
+          doc.fontSize(11).font("Helvetica").fillColor(MUTED).text("Total gastado", MARGIN_X, doc.y);
+          doc.fontSize(26).font("Helvetica-Bold").fillColor(TEXT).text(fmtEuro(totalSpent) ?? "0 €", MARGIN_X, doc.y);
+          doc.moveDown(0.3);
 
-          let total = 0;
-          const rowHeight = 18;
-          for (const tx of sorted) {
-            ensureSpace(rowHeight);
-            const amount = Number(tx.amount) || 0;
-            if (tx.type === "expense") total += amount;
-
-            const dateStr = new Date(tx.date).toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
-            const label = [tx.description, tx.category?.name].filter(Boolean).join(" · ") || "Gasto";
-            const sign = tx.type === "income" ? "+" : tx.type === "expense" ? "-" : "";
-            const amountLabel = `${sign}${fmtEuro(Math.abs(amount)) ?? ""}`;
-
-            const rowY = doc.y;
-            doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateStr}   ${label}`, 50, rowY, { width: 350 });
+          if (trip.budget != null && trip.budget > 0) {
+            const pct = Math.min(totalSpent / trip.budget, 1);
+            const over = totalSpent > trip.budget;
+            const barColor = over ? "#EF4444" : pct > 0.8 ? "#F59E0B" : "#22C55E";
+            doc.roundedRect(MARGIN_X, doc.y, CONTENT_WIDTH, 6, 3).fill(BORDER);
+            doc.roundedRect(MARGIN_X, doc.y, CONTENT_WIDTH * pct, 6, 3).fill(barColor);
+            doc.moveDown(0.5);
             doc
-              .fontSize(10)
-              .font("Helvetica-Bold")
-              .fillColor(tx.type === "income" ? "#16A34A" : TEXT)
-              .text(amountLabel, 400, rowY, { width: 145, align: "right" });
+              .fontSize(9)
+              .font("Helvetica")
+              .fillColor(over ? "#EF4444" : MUTED)
+              .text(
+                over
+                  ? `${fmtEuro(totalSpent - trip.budget)} por encima del presupuesto de ${fmtEuro(trip.budget)}`
+                  : `Queda ${fmtEuro(trip.budget - totalSpent)} de ${fmtEuro(trip.budget)}`,
+                MARGIN_X,
+                doc.y,
+              );
+          }
+
+          // Desglose por categoría
+          const totalsByCategory = new Map<string, number>();
+          for (const it of entries) {
+            const k = this.categoryForPlanItem(it);
+            totalsByCategory.set(k, (totalsByCategory.get(k) ?? 0) + (Number(it.cost) || 0));
+          }
+          if (txTotal > 0) totalsByCategory.set("other", (totalsByCategory.get("other") ?? 0) + txTotal);
+
+          const visibleCats = this.BUDGET_CATEGORY_DEFS
+            .map((def) => ({ ...def, amount: totalsByCategory.get(def.key) ?? 0 }))
+            .filter((d) => d.amount > 0)
+            .sort((a, b) => b.amount - a.amount);
+
+          if (visibleCats.length) {
+            ensureSpace(30);
+            doc.moveDown(0.9);
+            doc.fontSize(12).font("Helvetica-Bold").fillColor(TEXT).text("Gastos por categoría", MARGIN_X, doc.y);
+            doc.moveDown(0.4);
+
+            for (const cat of visibleCats) {
+              ensureSpace(30);
+              const pct = totalSpent > 0 ? (cat.amount / totalSpent) * 100 : 0;
+              const rowY = doc.y;
+              doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(cat.label, MARGIN_X, rowY, { width: 300 });
+              doc
+                .fontSize(10)
+                .font("Helvetica-Bold")
+                .fillColor(TEXT)
+                .text(`${fmtEuro(cat.amount)}  (${Math.round(pct)}%)`, MARGIN_X + 300, rowY, { width: CONTENT_WIDTH - 300, align: "right" });
+              doc.y = rowY + 15;
+              doc.roundedRect(MARGIN_X, doc.y, CONTENT_WIDTH, 4, 2).fill(BORDER);
+              doc.roundedRect(MARGIN_X, doc.y, CONTENT_WIDTH * (pct / 100), 4, 2).fill(cat.color);
+              doc.y += 12;
+            }
+          }
+
+          // Listado detallado
+          const sortedEntries = [...entries].sort((a: any, b: any) => {
+            const ta = a.startAt ? new Date(a.startAt).getTime() : a.day ? new Date(a.day).getTime() : 0;
+            const tb = b.startAt ? new Date(b.startAt).getTime() : b.day ? new Date(b.day).getTime() : 0;
+            return ta - tb;
+          });
+
+          ensureSpace(30);
+          doc.moveDown(0.5);
+          doc.fontSize(12).font("Helvetica-Bold").fillColor(TEXT).text("Detalle", MARGIN_X, doc.y);
+          doc.moveDown(0.35);
+
+          const rowHeight = 18;
+          for (const it of sortedEntries) {
+            ensureSpace(rowHeight);
+            const catDef = this.BUDGET_CATEGORY_DEFS.find((d) => d.key === this.categoryForPlanItem(it));
+            const rowY = doc.y;
+            doc.circle(MARGIN_X + 3, rowY + 6, 3).fill(catDef?.color ?? MUTED_LIGHT);
+            const dateLabel = it.day || it.startAt ? new Date(it.startAt ?? it.day).toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "";
+            doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateLabel ? `${dateLabel}   ` : ""}${it.title}`, MARGIN_X + 12, rowY, { width: 340 });
+            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(fmtEuro(it.cost) ?? "", 400, rowY, { width: 95, align: "right" });
             doc.y = rowY + rowHeight;
           }
 
-          doc.moveDown(0.4);
-          divider();
-          doc.moveDown(0.4);
-          doc.fontSize(12).font("Helvetica-Bold").fillColor(TEXT).text(`Total gastado: ${fmtEuro(total)}`, { align: "right" });
+          // Transacciones adjuntadas (registradas), si las hay
+          if (transactions.length) {
+            ensureSpace(30);
+            doc.moveDown(0.5);
+            doc.fontSize(11).font("Helvetica-Bold").fillColor(MUTED).text("REGISTRADAS EN CARTERA", MARGIN_X, doc.y);
+            doc.moveDown(0.35);
+
+            const sortedTx = [...transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            for (const tx of sortedTx) {
+              ensureSpace(rowHeight);
+              const amount = Number(tx.amount) || 0;
+              const dateStr = new Date(tx.date).toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+              const label = [tx.description, tx.category?.name].filter(Boolean).join(" · ") || "Gasto";
+              const sign = tx.type === "income" ? "+" : tx.type === "expense" ? "-" : "";
+              const rowY = doc.y;
+              doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateStr}   ${label}`, MARGIN_X, rowY, { width: 340 });
+              doc
+                .fontSize(10)
+                .font("Helvetica-Bold")
+                .fillColor(tx.type === "income" ? "#16A34A" : TEXT)
+                .text(`${sign}${fmtEuro(Math.abs(amount)) ?? ""}`, 400, rowY, { width: 95, align: "right" });
+              doc.y = rowY + rowHeight;
+            }
+          }
         }
       }
 

@@ -266,6 +266,8 @@ model Subcategory {
 
   categoryId   Int
   category     Category      @relation(fields: [categoryId], references: [id])
+  tripId       Int?          @unique
+  trip         Trip?         @relation(fields: [tripId], references: [id], onDelete: SetNull)
 
   transactions Transaction[]
 
@@ -639,6 +641,7 @@ model Trip {
   wonderVisits WonderVisit[]
   countryStays TripCountryStay[]
   members      TripMember[]
+  subcategory  Subcategory?
 }
 
 // A trip can be shared with other users (friends) who become full co-owners
