@@ -1196,6 +1196,11 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       const PAGE_BOTTOM = 780;
 
       const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+      // La fuente estándar Helvetica de pdfkit solo soporta WinAnsiEncoding
+      // (~Latin-1): la flecha "→" no existe ahí y sale como basura ("!'").
+      // Los títulos vienen de datos guardados (p.ej. autofill de vuelos:
+      // "BCN → PMO"), así que hay que sanear cualquier texto dinámico.
+      const safe = (s: unknown): string => (typeof s === "string" ? s.replace(/→/g, "-") : String(s ?? ""));
       const fmtEuro = (n: unknown) => {
         const v = typeof n === "number" ? n : Number(n);
         return isNaN(v) ? null : `${v.toFixed(2).replace(".", ",")} €`;
@@ -1225,7 +1230,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
 
       // ── Portada (banda de color) ──────────────────
       doc.rect(0, 0, 595, 130).fill(PRIMARY);
-      doc.fillColor("white").font("Helvetica-Bold").fontSize(24).text(trip.name, MARGIN_X, 40, { width: CONTENT_WIDTH });
+      doc.fillColor("white").font("Helvetica-Bold").fontSize(24).text(safe(trip.name), MARGIN_X, 40, { width: CONTENT_WIDTH });
 
       const countries: string[] = (trip.countryStays ?? []).map((c: any) => c.country).filter(Boolean);
       const countriesLabel = countries.length ? countries.join(" · ") : trip.destination ?? "";
@@ -1292,14 +1297,14 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
           .fontSize(10)
           .font("Helvetica-Bold")
           .fillColor(TEXT)
-          .text(`${timeLabel ? `${timeLabel}  ·  ` : ""}${typeLabel} — ${item.title}`, rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
+          .text(`${timeLabel ? `${timeLabel}  ·  ` : ""}${typeLabel} — ${safe(item.title)}`, rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
 
         const details: string[] = [];
         if (item.location) details.push(item.location);
 
         if (item.flightDetails) {
           const f = item.flightDetails;
-          const route = [f.fromIata, f.toIata].filter(Boolean).join(" → ");
+          const route = [f.fromIata, f.toIata].filter(Boolean).join(" - ");
           const line = [f.airlineName, f.flightNumberRaw, route].filter(Boolean).join(" · ");
           if (line) details.push(line);
         }
@@ -1308,7 +1313,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         }
         if (item.destinationTransport) {
           const t = item.destinationTransport;
-          const route = [t.fromName, t.toName].filter(Boolean).join(" → ");
+          const route = [t.fromName, t.toName].filter(Boolean).join(" - ");
           if (route) details.push(route);
         }
         const stops = item.metadata?.stops;
@@ -1322,7 +1327,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         }
 
         if (details.length) {
-          doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(details.join("   ·   "), rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
+          doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(safe(details.join("   ·   ")), rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
         }
         doc.moveDown(0.55);
       }
@@ -1341,7 +1346,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         for (const item of accommodations) {
           ensureSpace(50);
           const a = item.accommodationDetails;
-          doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(item.title, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(safe(item.title), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
 
           const ci = fmtDateTime(a.checkInAt);
           const co = fmtDateTime(a.checkOutAt);
@@ -1349,7 +1354,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
             doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(`Entrada ${ci ?? "-"}   ·   Salida ${co ?? "-"}`, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
           }
           if (a.address) {
-            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(a.address, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(safe(a.address), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
           }
           const extra: string[] = [];
           if (a.guests) extra.push(`${a.guests} huésped${a.guests !== 1 ? "es" : ""}`);
@@ -1380,7 +1385,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
             .fontSize(10)
             .font("Helvetica")
             .fillColor(done ? MUTED : TEXT)
-            .text(task.title, MARGIN_X + 16, rowY, { width: CONTENT_WIDTH - 16 });
+            .text(safe(task.title), MARGIN_X + 16, rowY, { width: CONTENT_WIDTH - 16 });
           doc.y = rowY + taskRowHeight;
         }
       }
@@ -1392,9 +1397,9 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         for (const note of notes) {
           ensureSpace(30);
           if (note.title) {
-            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(note.title, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(safe(note.title), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
           }
-          doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(note.body, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(safe(note.body), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
           doc.moveDown(0.4);
         }
       }
@@ -1503,7 +1508,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
             const rowY = doc.y;
             doc.circle(MARGIN_X + 3, rowY + 6, 3).fill(catDef?.color ?? MUTED_LIGHT);
             const dateLabel = it.day || it.startAt ? new Date(it.startAt ?? it.day).toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "";
-            doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateLabel ? `${dateLabel}   ` : ""}${it.title}`, MARGIN_X + 12, rowY, { width: 340 });
+            doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateLabel ? `${dateLabel}   ` : ""}${safe(it.title)}`, MARGIN_X + 12, rowY, { width: 340 });
             doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(fmtEuro(it.cost) ?? "", 400, rowY, { width: 95, align: "right" });
             doc.y = rowY + rowHeight;
           }
@@ -1523,7 +1528,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
               const label = [tx.description, tx.category?.name].filter(Boolean).join(" · ") || "Gasto";
               const sign = tx.type === "income" ? "+" : tx.type === "expense" ? "-" : "";
               const rowY = doc.y;
-              doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateStr}   ${label}`, MARGIN_X, rowY, { width: 340 });
+              doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(safe(`${dateStr}   ${label}`), MARGIN_X, rowY, { width: 340 });
               doc
                 .fontSize(10)
                 .font("Helvetica-Bold")
