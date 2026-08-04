@@ -1220,6 +1220,12 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       const MARGIN_X = 50;
       const CONTENT_WIDTH = 495; // 595 (A4 pt width) - 2*50
       const PAGE_BOTTOM = 780;
+      // El servidor corre en UTC; toda fecha/hora guardada representa un
+      // instante que hay que mostrar en la zona horaria del viaje (por
+      // defecto España), igual que hace el dispositivo del usuario en la
+      // app — si no, salen desplazadas (p.ej. un vuelo a las 10:50 sale
+      // como 08:50, o el día de inicio sale un día antes).
+      const TZ = "Europe/Madrid";
 
       const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
       // La fuente estándar Helvetica de pdfkit solo soporta WinAnsiEncoding
@@ -1235,10 +1241,16 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         if (!iso) return null;
         const d = new Date(iso as string);
         if (isNaN(d.getTime())) return null;
-        return d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+        return d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
+      };
+      const fmtDateShort = (iso: unknown) => {
+        if (!iso) return null;
+        const d = new Date(iso as string);
+        if (isNaN(d.getTime())) return null;
+        return d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", timeZone: TZ });
       };
       const fmtDateLong = (d: Date) =>
-        capitalize(d.toLocaleDateString("es-ES", { weekday: "long", day: "2-digit", month: "long" }));
+        capitalize(d.toLocaleDateString("es-ES", { weekday: "long", day: "2-digit", month: "long", timeZone: TZ }));
       const ensureSpace = (needed: number) => {
         if (doc.y + needed > PAGE_BOTTOM) {
           doc.addPage();
@@ -1259,19 +1271,33 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       doc.fillColor("white").font("Helvetica-Bold").fontSize(24).text(safe(trip.name), MARGIN_X, 40, { width: CONTENT_WIDTH });
 
       const countries: string[] = (trip.countryStays ?? []).map((c: any) => c.country).filter(Boolean);
-      const countriesLabel = countries.length ? countries.join(" · ") : trip.destination ?? "";
+      const countriesLabel = countries.length
+        ? countries.map((c) => this.countryNameEs(c)).join(" · ")
+        : trip.destination
+          ? this.countryNameEs(trip.destination)
+          : "";
 
       const start = trip.startDate ? new Date(trip.startDate) : null;
       const end = trip.endDate ? new Date(trip.endDate) : null;
       const days = start && end ? Math.round((end.getTime() - start.getTime()) / 86400000) + 1 : null;
-      const fmtShort = (d: Date) => d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
+      const fmtShort = (d: Date) => d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric", timeZone: TZ });
       const dateRangeLabel = start && end ? `${fmtShort(start)} — ${fmtShort(end)}${days ? ` · ${days} días` : ""}` : "";
+
+      let subtitleX = MARGIN_X;
+      if (flagBuffer) {
+        try {
+          doc.image(flagBuffer, MARGIN_X, 79, { width: 20, height: 14 });
+          subtitleX = MARGIN_X + 26;
+        } catch {
+          // imagen corrupta o formato no soportado: seguimos sin bandera
+        }
+      }
 
       doc
         .fontSize(11)
         .font("Helvetica")
         .fillColor("#DBEAFE")
-        .text([countriesLabel, dateRangeLabel].filter(Boolean).join("   ·   "), MARGIN_X, 78, { width: CONTENT_WIDTH });
+        .text([countriesLabel, dateRangeLabel].filter(Boolean).join("   ·   "), subtitleX, 78, { width: CONTENT_WIDTH - (subtitleX - MARGIN_X) });
 
       doc.x = MARGIN_X;
       doc.y = 145;
@@ -1288,13 +1314,17 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         return ta - tb;
       });
 
-      if (!planItems.length) {
+      // Alojamientos y gastos tienen su propia sección más abajo — aquí solo
+      // va lo que es estrictamente itinerario del día.
+      const itineraryItems = planItems.filter((it: any) => it.type !== "accommodation" && it.type !== "expense");
+
+      if (!itineraryItems.length) {
         doc.fontSize(10).font("Helvetica").fillColor(MUTED).text("Este viaje todavía no tiene actividades planificadas.", MARGIN_X, doc.y, { width: CONTENT_WIDTH });
       }
 
       let currentDayKey = "";
-      for (const item of planItems) {
-        const dayKey = item.day ? new Date(item.day).toDateString() : "__sin_fecha__";
+      for (const item of itineraryItems) {
+        const dayKey = item.day ? new Date(item.day).toLocaleDateString("en-CA", { timeZone: TZ }) : "__sin_fecha__";
         if (dayKey !== currentDayKey) {
           currentDayKey = dayKey;
           ensureSpace(36);
@@ -1334,9 +1364,6 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
           const line = [f.airlineName, f.flightNumberRaw, route].filter(Boolean).join(" · ");
           if (line) details.push(line);
         }
-        if (item.accommodationDetails?.address) {
-          details.push(item.accommodationDetails.address);
-        }
         if (item.destinationTransport) {
           const t = item.destinationTransport;
           const route = [t.fromName, t.toName].filter(Boolean).join(" - ");
@@ -1347,10 +1374,6 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
           details.push(`Paradas: ${stops.map((s: any) => s.label).filter(Boolean).join(", ")}`);
         }
         if (item.notes) details.push(item.notes);
-        if (item.cost != null) {
-          const costLabel = fmtEuro(item.cost);
-          if (costLabel) details.push(`Coste: ${costLabel}`);
-        }
 
         if (details.length) {
           doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(safe(details.join("   ·   ")), rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
@@ -1359,89 +1382,80 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       }
 
       // ── Alojamientos ─────────────────────────────
+      // Rejilla a 2 columnas para aprovechar todo el ancho de la página en
+      // vez de una lista vertical estrecha.
       const accommodations = planItems.filter((it: any) => it.accommodationDetails);
       if (accommodations.length) {
         sectionHeader("Alojamientos");
-        const fmtDateTime = (iso: unknown) => {
-          if (!iso) return null;
-          const d = new Date(iso as string);
-          if (isNaN(d.getTime())) return null;
-          return `${d.toLocaleDateString("es-ES", { day: "2-digit", month: "short" })}, ${d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`;
-        };
 
-        for (const item of accommodations) {
-          ensureSpace(50);
+        const CARD_GAP = 15;
+        const CARD_WIDTH = (CONTENT_WIDTH - CARD_GAP) / 2;
+        const CARD_HEIGHT = 82;
+        const CARD_PAD = 10;
+        const CARD_TEXT_WIDTH = CARD_WIDTH - CARD_PAD * 2;
+
+        const renderCard = (item: any, cardX: number, cardY: number) => {
           const a = item.accommodationDetails;
-          doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(safe(item.title), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          doc.roundedRect(cardX, cardY, CARD_WIDTH, CARD_HEIGHT, 8).lineWidth(1).strokeColor(BORDER).stroke();
 
-          const ci = fmtDateTime(a.checkInAt);
-          const co = fmtDateTime(a.checkOutAt);
+          let nights: number | null = null;
+          if (a.checkInAt && a.checkOutAt) {
+            const n = Math.round((new Date(a.checkOutAt).getTime() - new Date(a.checkInAt).getTime()) / 86400000);
+            if (n > 0) nights = n;
+          }
+
+          let ty = cardY + CARD_PAD;
+          const titleLine = nights != null ? `${safe(item.title)}  ·  ${nights} noche${nights !== 1 ? "s" : ""}` : safe(item.title);
+          doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(titleLine, cardX + CARD_PAD, ty, { width: CARD_TEXT_WIDTH });
+          ty = doc.y + 2;
+
+          const ci = fmtDateShort(a.checkInAt);
+          const cit = fmtTime(a.checkInAt);
+          const co = fmtDateShort(a.checkOutAt);
+          const cot = fmtTime(a.checkOutAt);
           if (ci || co) {
-            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(`Entrada ${ci ?? "-"}   ·   Salida ${co ?? "-"}`, MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+            doc
+              .fontSize(8)
+              .font("Helvetica")
+              .fillColor(MUTED)
+              .text(`Entrada ${ci ?? "-"}${cit ? `, ${cit}` : ""}   ·   Salida ${co ?? "-"}${cot ? `, ${cot}` : ""}`, cardX + CARD_PAD, ty, { width: CARD_TEXT_WIDTH });
+            ty = doc.y + 2;
           }
           if (a.address) {
-            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(safe(a.address), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+            doc.fontSize(8).font("Helvetica").fillColor(MUTED).text(safe(a.address), cardX + CARD_PAD, ty, { width: CARD_TEXT_WIDTH });
+            ty = doc.y + 2;
           }
           const extra: string[] = [];
           if (a.guests) extra.push(`${a.guests} huésped${a.guests !== 1 ? "es" : ""}`);
           if (a.rooms) extra.push(`${a.rooms} habitación${a.rooms !== 1 ? "es" : ""}`);
           if (item.cost != null) {
             const costLabel = fmtEuro(item.cost);
-            if (costLabel) extra.push(`Coste: ${costLabel}`);
+            if (costLabel) extra.push(costLabel);
           }
           if (extra.length) {
-            doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(extra.join("   ·   "), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+            doc.fontSize(8).font("Helvetica-Bold").fillColor(PRIMARY_DARK).text(extra.join("   ·   "), cardX + CARD_PAD, ty, { width: CARD_TEXT_WIDTH });
           }
-          doc.moveDown(0.6);
-        }
-      }
+        };
 
-      // ── Tareas ───────────────────────────────────
-      const tasks = trip.tasks ?? [];
-      if (tasks.length) {
-        sectionHeader("Tareas");
-        const taskRowHeight = 18;
-        for (const task of tasks) {
-          ensureSpace(taskRowHeight);
-          const done = task.status === "done";
+        for (let i = 0; i < accommodations.length; i += 2) {
+          ensureSpace(CARD_HEIGHT + 12);
           const rowY = doc.y;
-          doc.roundedRect(MARGIN_X, rowY + 1, 10, 10, 2).lineWidth(1).strokeColor(done ? "#16A34A" : BORDER).stroke();
-          if (done) doc.roundedRect(MARGIN_X, rowY + 1, 10, 10, 2).fill("#16A34A");
-          doc
-            .fontSize(10)
-            .font("Helvetica")
-            .fillColor(done ? MUTED : TEXT)
-            .text(safe(task.title), MARGIN_X + 16, rowY, { width: CONTENT_WIDTH - 16 });
-          doc.y = rowY + taskRowHeight;
-        }
-      }
-
-      // ── Notas ────────────────────────────────────
-      const notes = trip.notes ?? [];
-      if (notes.length) {
-        sectionHeader("Notas");
-        for (const note of notes) {
-          ensureSpace(30);
-          if (note.title) {
-            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(safe(note.title), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
+          renderCard(accommodations[i], MARGIN_X, rowY);
+          if (accommodations[i + 1]) {
+            renderCard(accommodations[i + 1], MARGIN_X + CARD_WIDTH + CARD_GAP, rowY);
           }
-          doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(safe(note.body), MARGIN_X, doc.y, { width: CONTENT_WIDTH });
-          doc.moveDown(0.4);
+          doc.x = MARGIN_X;
+          doc.y = rowY + CARD_HEIGHT + 12;
         }
       }
 
-      // ── Gastos (página final, solo si se pidió incluir) ──
+
+      // ── Gastos (sigue el contenido, solo si se pidió incluir) ──
       // Usa los costes del planning (igual que la pestaña "Gastos" de la
       // app) categorizados, no las Transaction sueltas — ese es el gasto
       // real del viaje.
       if (includeExpenses) {
-        doc.addPage();
-        doc.x = MARGIN_X;
-        doc.y = 50;
-
-        doc.rect(MARGIN_X, doc.y + 2, 4, 20).fill(PRIMARY);
-        doc.fontSize(18).font("Helvetica-Bold").fillColor(TEXT).text("Gastos", MARGIN_X + 12, doc.y);
-        doc.moveDown(1);
+        sectionHeader("Gastos");
 
         const entries = (trip.planItems ?? []).filter(
           (it: any) => !(it.metadata?.pending === true) && Number(it.cost) > 0,
@@ -1533,9 +1547,9 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
             const catDef = this.BUDGET_CATEGORY_DEFS.find((d) => d.key === this.categoryForPlanItem(it));
             const rowY = doc.y;
             doc.circle(MARGIN_X + 3, rowY + 6, 3).fill(catDef?.color ?? MUTED_LIGHT);
-            const dateLabel = it.day || it.startAt ? new Date(it.startAt ?? it.day).toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "";
-            doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateLabel ? `${dateLabel}   ` : ""}${safe(it.title)}`, MARGIN_X + 12, rowY, { width: 340 });
-            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(fmtEuro(it.cost) ?? "", 400, rowY, { width: 95, align: "right" });
+            const dateLabel = fmtDateShort(it.startAt ?? it.day) ?? "";
+            doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateLabel ? `${dateLabel}   ` : ""}${safe(it.title)}`, MARGIN_X + 12, rowY, { width: 270 });
+            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(fmtEuro(it.cost) ?? "", MARGIN_X + 300, rowY, { width: CONTENT_WIDTH - 300, align: "right" });
             doc.y = rowY + rowHeight;
           }
 
@@ -1550,16 +1564,16 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
             for (const tx of sortedTx) {
               ensureSpace(rowHeight);
               const amount = Number(tx.amount) || 0;
-              const dateStr = new Date(tx.date).toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+              const dateStr = fmtDateShort(tx.date) ?? "";
               const label = [tx.description, tx.category?.name].filter(Boolean).join(" · ") || "Gasto";
               const sign = tx.type === "income" ? "+" : tx.type === "expense" ? "-" : "";
               const rowY = doc.y;
-              doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(safe(`${dateStr}   ${label}`), MARGIN_X, rowY, { width: 340 });
+              doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(safe(`${dateStr}   ${label}`), MARGIN_X, rowY, { width: 290 });
               doc
                 .fontSize(10)
                 .font("Helvetica-Bold")
                 .fillColor(tx.type === "income" ? "#16A34A" : TEXT)
-                .text(`${sign}${fmtEuro(Math.abs(amount)) ?? ""}`, 400, rowY, { width: 95, align: "right" });
+                .text(`${sign}${fmtEuro(Math.abs(amount)) ?? ""}`, MARGIN_X + 300, rowY, { width: CONTENT_WIDTH - 300, align: "right" });
               doc.y = rowY + rowHeight;
             }
           }
