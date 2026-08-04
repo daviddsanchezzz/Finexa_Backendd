@@ -859,6 +859,11 @@ model TripPlanItem {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
+  // Evita re-notificar el mismo recordatorio en cada pasada del cron
+  departureReminderSentAt DateTime?
+  checkInReminderSentAt   DateTime?
+  checkOutReminderSentAt  DateTime?
+
   trip          Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   // ✅ details 1-1 según tipo

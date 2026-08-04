@@ -626,6 +626,107 @@ async getTripDetail(userId: number, tripId: number) {
     return { ok: true };
   }
 
+  // Dueño + compañeros aceptados de un viaje, para notificarles a todos por igual.
+  private async getTripRecipients(tripId: number): Promise<{ tripName: string; recipientIds: number[] } | null> {
+    const trip = await this.prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { name: true, userId: true, members: { where: { status: "accepted" }, select: { userId: true } } },
+    });
+    if (!trip) return null;
+    const recipientIds = [...new Set([trip.userId, ...trip.members.map((m) => m.userId)])];
+    return { tripName: trip.name, recipientIds };
+  }
+
+  // =========================================================
+  // RECORDATORIOS (cron cada 5 min, ver TripsRemindersScheduler)
+  // =========================================================
+
+  async checkUpcomingDepartures() {
+    const now = new Date();
+    const windowEnd = new Date(now.getTime() + 15 * 60000);
+
+    const items = await this.prisma.tripPlanItem.findMany({
+      where: {
+        type: { in: ["flight", "transport_destination", "transport_local"] },
+        startAt: { gte: now, lte: windowEnd },
+        departureReminderSentAt: null,
+      },
+      select: { id: true, tripId: true, title: true },
+    });
+
+    for (const item of items) {
+      const info = await this.getTripRecipients(item.tripId);
+      if (info) {
+        for (const uid of info.recipientIds) {
+          await this.notifications.notifyUser(
+            uid,
+            "Tu traslado sale pronto",
+            `"${item.title}" en "${info.tripName}" sale en unos minutos`,
+            "trip_reminder_transport",
+            { tripId: item.tripId, planItemId: item.id },
+          );
+        }
+      }
+      await this.prisma.tripPlanItem.update({ where: { id: item.id }, data: { departureReminderSentAt: now } });
+    }
+  }
+
+  async checkAccommodationEvents() {
+    const now = new Date();
+    const windowEnd15 = new Date(now.getTime() + 15 * 60000);
+    const windowEnd60 = new Date(now.getTime() + 60 * 60000);
+
+    const checkIns = await this.prisma.tripPlanItem.findMany({
+      where: {
+        type: "accommodation",
+        checkInReminderSentAt: null,
+        accommodationDetails: { checkInAt: { gte: now, lte: windowEnd15 } },
+      },
+      include: { accommodationDetails: true },
+    });
+    for (const item of checkIns) {
+      const info = await this.getTripRecipients(item.tripId);
+      const name = item.accommodationDetails?.name ?? item.title;
+      if (info) {
+        for (const uid of info.recipientIds) {
+          await this.notifications.notifyUser(
+            uid,
+            "Check-in disponible",
+            `Ya puedes hacer el check-in en "${name}" (${info.tripName})`,
+            "trip_reminder_checkin",
+            { tripId: item.tripId, planItemId: item.id },
+          );
+        }
+      }
+      await this.prisma.tripPlanItem.update({ where: { id: item.id }, data: { checkInReminderSentAt: now } });
+    }
+
+    const checkOuts = await this.prisma.tripPlanItem.findMany({
+      where: {
+        type: "accommodation",
+        checkOutReminderSentAt: null,
+        accommodationDetails: { checkOutAt: { gte: now, lte: windowEnd60 } },
+      },
+      include: { accommodationDetails: true },
+    });
+    for (const item of checkOuts) {
+      const info = await this.getTripRecipients(item.tripId);
+      const name = item.accommodationDetails?.name ?? item.title;
+      if (info) {
+        for (const uid of info.recipientIds) {
+          await this.notifications.notifyUser(
+            uid,
+            "Recuerda el check-out",
+            `Check-out en "${name}" (${info.tripName}) dentro de poco`,
+            "trip_reminder_checkout",
+            { tripId: item.tripId, planItemId: item.id },
+          );
+        }
+      }
+      await this.prisma.tripPlanItem.update({ where: { id: item.id }, data: { checkOutReminderSentAt: now } });
+    }
+  }
+
   private async recomputeTripPlannedCost(tripId: number) {
     const items = await this.prisma.tripPlanItem.findMany({
       where: { tripId },
@@ -819,6 +920,25 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
   });
 
   await this.recomputeTripPlannedCost(tripId);
+
+  const cost = created.cost != null ? Number(created.cost) : null;
+  if (cost && cost > 0) {
+    const info = await this.getTripRecipients(tripId);
+    const others = info?.recipientIds.filter((id) => id !== userId) ?? [];
+    if (others.length) {
+      const actor = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+      const costLabel = `${cost.toFixed(2).replace(".", ",")} €`;
+      for (const uid of others) {
+        await this.notifications.notifyUser(
+          uid,
+          "Nuevo gasto en el viaje",
+          `${actor?.name ?? "Alguien"} ha añadido "${created.title}" (${costLabel}) en "${info!.tripName}"`,
+          "trip_expense_added",
+          { tripId },
+        );
+      }
+    }
+  }
 
   return this.prisma.tripPlanItem.findUnique({
     where: { id: created.id },
