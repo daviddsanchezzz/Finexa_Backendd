@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as webPush from 'web-push';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RegisterTokenDto } from './dto/register-token.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
@@ -108,9 +109,15 @@ export class NotificationsService {
   // (usado por otros módulos, ej. friends)
   // ──────────────────────────────────────────
 
-  async notifyUser(userId: number, title: string, message: string, type: string) {
+  async notifyUser(
+    userId: number,
+    title: string,
+    message: string,
+    type: string,
+    data?: Record<string, unknown>,
+  ) {
     await this.prisma.notification.create({
-      data: { userId, title, message, type },
+      data: { userId, title, message, type, data: data as Prisma.InputJsonValue | undefined },
     });
 
     const tokens = await this.prisma.deviceToken.findMany({ where: { userId } });

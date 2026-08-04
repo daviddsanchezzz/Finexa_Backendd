@@ -67,6 +67,7 @@ export class FriendsService {
       "Nueva solicitud de amistad",
       `${requester?.name ?? "Alguien"} quiere ser tu amigo`,
       "friend_request",
+      { friendshipId: friendship.id },
     );
 
     return friendship;
@@ -89,7 +90,7 @@ export class FriendsService {
   }
 
   async listRequests(userId: number) {
-    const [incoming, outgoing] = await Promise.all([
+    const [incoming, outgoing, myFriends] = await Promise.all([
       this.prisma.friendship.findMany({
         where: { status: "pending", addresseeId: userId },
         include: { requester: { select: PUBLIC_USER_SELECT } },
@@ -100,10 +101,23 @@ export class FriendsService {
         include: { addressee: { select: PUBLIC_USER_SELECT } },
         orderBy: { createdAt: "desc" },
       }),
+      this.listFriends(userId),
     ]);
 
+    const myFriendIds = new Set(myFriends.map((f) => f.id));
+
+    const incomingWithMutual = await Promise.all(
+      incoming.map(async (f) => {
+        const theirFriends = await this.listFriends(f.requesterId);
+        const mutualFriends = theirFriends
+          .filter((u) => myFriendIds.has(u.id))
+          .map((u) => ({ id: u.id, name: u.name }));
+        return { id: f.id, createdAt: f.createdAt, user: f.requester, mutualFriends };
+      }),
+    );
+
     return {
-      incoming: incoming.map((f) => ({ id: f.id, createdAt: f.createdAt, user: f.requester })),
+      incoming: incomingWithMutual,
       outgoing: outgoing.map((f) => ({ id: f.id, createdAt: f.createdAt, user: f.addressee })),
     };
   }
@@ -133,6 +147,7 @@ export class FriendsService {
       "Solicitud de amistad aceptada",
       `${friendship.addressee.name} ha aceptado tu solicitud de amistad`,
       "friend_accepted",
+      { friendshipId: friendship.id },
     );
 
     return updated;

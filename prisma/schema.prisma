@@ -521,6 +521,7 @@ model Notification {
   title     String
   message   String
   type      String?
+  data      Json?
   read      Boolean  @default(false)
 
   userId    Int
