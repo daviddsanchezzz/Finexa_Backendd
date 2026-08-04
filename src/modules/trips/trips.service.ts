@@ -995,31 +995,298 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     const trip = await this.prisma.trip.findUnique({
       where: { id: tripId },
       include: {
+        user: { select: { id: true, name: true } },
+        members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true } } } },
+        countryStays: { orderBy: { order: "asc" } },
+        tasks: { orderBy: [{ status: "asc" }, { updatedAt: "desc" }] },
+        notes: { orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }] },
         planItems: {
+          orderBy: [{ day: "asc" }, { startAt: "asc" }, { createdAt: "asc" }],
           include: { flightDetails: true, accommodationDetails: true, destinationTransport: true },
         },
         transactions: includeExpenses
-          ? { include: { category: true, subcategory: true, wallet: true } }
+          ? { where: { active: true }, include: { category: true, subcategory: true, wallet: true } }
           : false,
       },
     });
 
     if (!trip) throw new NotFoundException("Viaje no encontrado");
 
-    // TODO: en tu PDF reemplaza:
-    // item.date -> item.day
-    // item.startTime -> item.startAt
-    // item.endTime -> item.endAt
     const pdfBuffer = await this.generateTripPdfMinimal(trip, includeExpenses);
 
     return { base64: pdfBuffer.toString("base64"), fileName: `viaje-${trip.id}.pdf` };
   }
 
-  // ======= aquí dejas tu PDF tal cual y luego haces el reemplazo indicado =======
+  private readonly PLAN_ITEM_TYPE_LABELS: Record<string, string> = {
+    flight: "Vuelo",
+    accommodation: "Alojamiento",
+    transport_destination: "Traslado",
+    transport_local: "Transporte",
+    museum: "Museo",
+    monument: "Monumento",
+    viewpoint: "Mirador",
+    free_tour: "Free tour",
+    guided_tour: "Tour guiado",
+    concert: "Concierto",
+    sport: "Deporte",
+    bar_party: "Fiesta",
+    nightlife: "Vida nocturna",
+    beach: "Playa",
+    hike: "Ruta",
+    restaurant: "Restaurante",
+    cafe: "Café",
+    market: "Mercado",
+    shopping: "Compras",
+    day_trip: "Excursión",
+    activity: "Actividad",
+    expense: "Gasto",
+    visit: "Visita",
+    other: "Otro",
+  };
+
   private async generateTripPdfMinimal(trip: any, includeExpenses: boolean): Promise<Buffer> {
-    // <-- tu implementación actual
-    // (mantengo tu código para que no te lo rompa; solo cambia los campos cuando quieras)
-    return new Promise((resolve) => resolve(Buffer.from("")));
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: "A4", margin: 50 });
+      const chunks: Buffer[] = [];
+      doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+      doc.on("end", () => resolve(Buffer.concat(chunks)));
+      doc.on("error", reject);
+
+      const PRIMARY = "#2563EB";
+      const TEXT = "#0F172A";
+      const MUTED = "#64748B";
+      const BORDER = "#E2E8F0";
+      const PAGE_BOTTOM = 760;
+
+      const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+      const fmtEuro = (n: unknown) => {
+        const v = typeof n === "number" ? n : Number(n);
+        return isNaN(v) ? null : `${v.toFixed(2).replace(".", ",")} €`;
+      };
+      const fmtTime = (iso: unknown) => {
+        if (!iso) return null;
+        const d = new Date(iso as string);
+        if (isNaN(d.getTime())) return null;
+        return d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+      };
+      const fmtDateLong = (d: Date) =>
+        capitalize(d.toLocaleDateString("es-ES", { weekday: "long", day: "2-digit", month: "long" }));
+      const divider = () => {
+        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(BORDER).stroke();
+      };
+      const ensureSpace = (needed: number) => {
+        if (doc.y + needed > PAGE_BOTTOM) doc.addPage();
+      };
+
+      // ── Portada ──────────────────────────────────
+      doc.fontSize(22).font("Helvetica-Bold").fillColor(TEXT).text(trip.name);
+
+      const countries: string[] = (trip.countryStays ?? []).map((c: any) => c.country).filter(Boolean);
+      const countriesLabel = countries.length ? countries.join(", ") : trip.destination ?? "";
+      if (countriesLabel) {
+        doc.moveDown(0.2);
+        doc.fontSize(11).font("Helvetica").fillColor(MUTED).text(countriesLabel);
+      }
+
+      const start = trip.startDate ? new Date(trip.startDate) : null;
+      const end = trip.endDate ? new Date(trip.endDate) : null;
+      const days =
+        start && end ? Math.round((end.getTime() - start.getTime()) / 86400000) + 1 : null;
+      if (start && end) {
+        const fmtShort = (d: Date) =>
+          d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
+        doc.moveDown(0.2);
+        doc
+          .fontSize(11)
+          .font("Helvetica")
+          .fillColor(MUTED)
+          .text(`${fmtShort(start)} — ${fmtShort(end)}${days ? ` · ${days} días` : ""}`);
+      }
+
+      const people: string[] = [
+        trip.user?.name,
+        ...((trip.members ?? []).map((m: any) => m.user?.name)),
+      ].filter(Boolean);
+      if (people.length > 1) {
+        doc.moveDown(0.2);
+        doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(`Viajeros: ${people.join(", ")}`);
+      }
+
+      if (trip.budget != null) {
+        doc.moveDown(0.2);
+        doc
+          .fontSize(10)
+          .font("Helvetica")
+          .fillColor(MUTED)
+          .text(`Presupuesto: ${fmtEuro(trip.budget)}${trip.cost != null ? ` · Coste planificado: ${fmtEuro(trip.cost)}` : ""}`);
+      }
+
+      doc.moveDown(1);
+      divider();
+      doc.moveDown(1);
+
+      // ── Itinerario ───────────────────────────────
+      doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Itinerario");
+      doc.moveDown(0.5);
+
+      const planItems = [...(trip.planItems ?? [])].sort((a: any, b: any) => {
+        const da = a.day ? new Date(a.day).getTime() : 0;
+        const db = b.day ? new Date(b.day).getTime() : 0;
+        if (da !== db) return da - db;
+        const ta = a.startAt ? new Date(a.startAt).getTime() : Infinity;
+        const tb = b.startAt ? new Date(b.startAt).getTime() : Infinity;
+        return ta - tb;
+      });
+
+      if (!planItems.length) {
+        doc.fontSize(10).font("Helvetica").fillColor(MUTED).text("Este viaje todavía no tiene actividades planificadas.");
+      }
+
+      let currentDayKey = "";
+      for (const item of planItems) {
+        const dayKey = item.day ? new Date(item.day).toDateString() : "__sin_fecha__";
+        if (dayKey !== currentDayKey) {
+          currentDayKey = dayKey;
+          ensureSpace(40);
+          doc.moveDown(0.5);
+          const label = item.day ? fmtDateLong(new Date(item.day)) : "Sin fecha asignada";
+          doc.fontSize(12).font("Helvetica-Bold").fillColor(PRIMARY).text(label);
+          doc.moveDown(0.25);
+        }
+
+        ensureSpace(30);
+
+        const timeStart = fmtTime(item.startAt);
+        const timeEnd = fmtTime(item.endAt);
+        const timeLabel = timeStart ? (timeEnd ? `${timeStart} - ${timeEnd}` : timeStart) : null;
+        const typeLabel = this.PLAN_ITEM_TYPE_LABELS[item.type] ?? item.type;
+
+        doc
+          .fontSize(10)
+          .font("Helvetica-Bold")
+          .fillColor(TEXT)
+          .text(`${timeLabel ? `${timeLabel}  ·  ` : ""}${typeLabel} — ${item.title}`);
+
+        const details: string[] = [];
+        if (item.location) details.push(item.location);
+
+        if (item.flightDetails) {
+          const f = item.flightDetails;
+          const route = [f.fromIata, f.toIata].filter(Boolean).join(" → ");
+          const line = [f.airlineName, f.flightNumberRaw, route].filter(Boolean).join(" · ");
+          if (line) details.push(line);
+        }
+        if (item.accommodationDetails) {
+          const a = item.accommodationDetails;
+          if (a.address) details.push(a.address);
+          const ci = fmtTime(a.checkInAt);
+          const co = fmtTime(a.checkOutAt);
+          if (ci || co) details.push(`Entrada ${ci ?? "-"} · Salida ${co ?? "-"}`);
+        }
+        if (item.destinationTransport) {
+          const t = item.destinationTransport;
+          const route = [t.fromName, t.toName].filter(Boolean).join(" → ");
+          if (route) details.push(route);
+        }
+        const stops = item.metadata?.stops;
+        if (Array.isArray(stops) && stops.length) {
+          details.push(`Paradas: ${stops.map((s: any) => s.label).filter(Boolean).join(", ")}`);
+        }
+        if (item.notes) details.push(item.notes);
+        if (item.cost != null) {
+          const costLabel = fmtEuro(item.cost);
+          if (costLabel) details.push(`Coste: ${costLabel}`);
+        }
+
+        if (details.length) {
+          doc.fontSize(9).font("Helvetica").fillColor(MUTED).text(details.join("  ·  "));
+        }
+        doc.moveDown(0.4);
+      }
+
+      // ── Tareas ───────────────────────────────────
+      const tasks = trip.tasks ?? [];
+      if (tasks.length) {
+        ensureSpace(60);
+        doc.moveDown(0.6);
+        doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Tareas");
+        doc.moveDown(0.4);
+        for (const task of tasks) {
+          ensureSpace(20);
+          doc
+            .fontSize(10)
+            .font("Helvetica")
+            .fillColor(task.status === "done" ? MUTED : TEXT)
+            .text(`${task.status === "done" ? "☑" : "☐"} ${task.title}`);
+        }
+      }
+
+      // ── Notas ────────────────────────────────────
+      const notes = trip.notes ?? [];
+      if (notes.length) {
+        ensureSpace(60);
+        doc.moveDown(0.6);
+        doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Notas");
+        doc.moveDown(0.4);
+        for (const note of notes) {
+          ensureSpace(30);
+          if (note.title) {
+            doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(note.title);
+          }
+          doc.fontSize(10).font("Helvetica").fillColor(MUTED).text(note.body);
+          doc.moveDown(0.3);
+        }
+      }
+
+      // ── Gastos (página final, solo si se pidió incluir) ──
+      if (includeExpenses) {
+        doc.addPage();
+        doc.fontSize(15).font("Helvetica-Bold").fillColor(TEXT).text("Gastos");
+        doc.moveDown(0.6);
+
+        const transactions: any[] = trip.transactions ?? [];
+        if (!transactions.length) {
+          doc
+            .fontSize(10)
+            .font("Helvetica")
+            .fillColor(MUTED)
+            .text("No hay gastos registrados para este viaje.");
+        } else {
+          const sorted = [...transactions].sort(
+            (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+          );
+
+          let total = 0;
+          const rowHeight = 18;
+          for (const tx of sorted) {
+            ensureSpace(rowHeight);
+            const amount = Number(tx.amount) || 0;
+            if (tx.type === "expense") total += amount;
+
+            const dateStr = new Date(tx.date).toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+            const label = [tx.description, tx.category?.name].filter(Boolean).join(" · ") || "Gasto";
+            const sign = tx.type === "income" ? "+" : tx.type === "expense" ? "-" : "";
+            const amountLabel = `${sign}${fmtEuro(Math.abs(amount)) ?? ""}`;
+
+            const rowY = doc.y;
+            doc.fontSize(10).font("Helvetica").fillColor(TEXT).text(`${dateStr}   ${label}`, 50, rowY, { width: 350 });
+            doc
+              .fontSize(10)
+              .font("Helvetica-Bold")
+              .fillColor(tx.type === "income" ? "#16A34A" : TEXT)
+              .text(amountLabel, 400, rowY, { width: 145, align: "right" });
+            doc.y = rowY + rowHeight;
+          }
+
+          doc.moveDown(0.4);
+          divider();
+          doc.moveDown(0.4);
+          doc.fontSize(12).font("Helvetica-Bold").fillColor(TEXT).text(`Total gastado: ${fmtEuro(total)}`, { align: "right" });
+        }
+      }
+
+      doc.end();
+    });
   }
 
 
