@@ -15,7 +15,6 @@ import { CreateTripPlanItemDto, PaymentStatus } from "./dto/create-trip-plan-ite
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import { InviteTripMemberDto } from "./dto/invite-trip-member.dto";
 import PDFDocument = require("pdfkit");
-import axios from "axios";
 import { AerodataboxService } from "./aviationstack.service";
 
   import { DateTime } from "luxon";
@@ -1146,6 +1145,14 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     other: "Otro",
   };
 
+  private readonly TRANSPORT_MODE_LABELS: Record<string, string> = {
+    car: "En coche",
+    train: "En tren",
+    bus: "En autobús",
+    ferry: "En ferry",
+    taxi: "En taxi",
+  };
+
   // Misma taxonomía y mismo mapeo tipo→categoría que TripExpensesSection.tsx
   // (la pantalla "Gastos" del viaje en la app), para que el PDF coincida con
   // lo que el usuario ve ahí en vez de con las Transaction adjuntas.
@@ -1185,23 +1192,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     }
   }
 
-  private async fetchFlagPng(iso2: string): Promise<Buffer | null> {
-    const code = iso2.trim().toLowerCase();
-    if (!/^[a-z]{2}$/.test(code)) return null;
-    try {
-      const res = await axios.get(`https://flagcdn.com/48x36/${code}.png`, {
-        responseType: "arraybuffer",
-        timeout: 3000,
-      });
-      return Buffer.from(res.data);
-    } catch {
-      return null;
-    }
-  }
-
   private async generateTripPdfMinimal(trip: any, includeExpenses: boolean): Promise<Buffer> {
-    const primaryCountry: string | null = (trip.countryStays ?? [])[0]?.country ?? trip.destination ?? null;
-    const flagBuffer = primaryCountry ? await this.fetchFlagPng(primaryCountry) : null;
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ size: "A4", margin: 0 });
@@ -1232,7 +1223,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       // (~Latin-1): la flecha "→" no existe ahí y sale como basura ("!'").
       // Los títulos vienen de datos guardados (p.ej. autofill de vuelos:
       // "BCN → PMO"), así que hay que sanear cualquier texto dinámico.
-      const safe = (s: unknown): string => (typeof s === "string" ? s.replace(/→/g, "-") : String(s ?? ""));
+      const safe = (s: unknown): string => (typeof s === "string" ? s.replace(/\s*→\s*/g, " > ") : String(s ?? ""));
       const fmtEuro = (n: unknown) => {
         const v = typeof n === "number" ? n : Number(n);
         return isNaN(v) ? null : `${v.toFixed(2).replace(".", ",")} €`;
@@ -1283,21 +1274,11 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       const fmtShort = (d: Date) => d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric", timeZone: TZ });
       const dateRangeLabel = start && end ? `${fmtShort(start)} — ${fmtShort(end)}${days ? ` · ${days} días` : ""}` : "";
 
-      let subtitleX = MARGIN_X;
-      if (flagBuffer) {
-        try {
-          doc.image(flagBuffer, MARGIN_X, 79, { width: 20, height: 14 });
-          subtitleX = MARGIN_X + 26;
-        } catch {
-          // imagen corrupta o formato no soportado: seguimos sin bandera
-        }
-      }
-
       doc
         .fontSize(11)
         .font("Helvetica")
         .fillColor("#DBEAFE")
-        .text([countriesLabel, dateRangeLabel].filter(Boolean).join("   ·   "), subtitleX, 78, { width: CONTENT_WIDTH - (subtitleX - MARGIN_X) });
+        .text([countriesLabel, dateRangeLabel].filter(Boolean).join("   ·   "), MARGIN_X, 78, { width: CONTENT_WIDTH });
 
       doc.x = MARGIN_X;
       doc.y = 145;
@@ -1318,6 +1299,32 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       // va lo que es estrictamente itinerario del día.
       const itineraryItems = planItems.filter((it: any) => it.type !== "accommodation" && it.type !== "expense");
 
+      // Para la línea "Noche en X" al cierre de cada día: qué alojamiento
+      // cubre esa noche (check-in ese día o antes, check-out después).
+      const accommodationStays = planItems
+        .filter((it: any) => it.accommodationDetails?.checkInAt && it.accommodationDetails?.checkOutAt)
+        .map((it: any) => {
+          const a = it.accommodationDetails;
+          return {
+            city: a.city || a.name || null,
+            checkInDayKey: new Date(a.checkInAt).toLocaleDateString("en-CA", { timeZone: TZ }),
+            checkOutDayKey: new Date(a.checkOutAt).toLocaleDateString("en-CA", { timeZone: TZ }),
+          };
+        });
+      const cityForNight = (dayKey: string): string | null => {
+        const stay = accommodationStays.find((a) => dayKey >= a.checkInDayKey && dayKey < a.checkOutDayKey);
+        return stay?.city ?? null;
+      };
+      const nightColor = this.BUDGET_CATEGORY_DEFS.find((d) => d.key === "accommodation")?.color ?? MUTED_LIGHT;
+      const printNightLine = (dayKey: string) => {
+        const city = cityForNight(dayKey);
+        if (!city) return;
+        ensureSpace(20);
+        doc.circle(MARGIN_X + 3, doc.y + 4, 3).fill(nightColor);
+        doc.fontSize(10).font("Helvetica-Bold").fillColor(TEXT).text(`Noche en ${safe(city)}`, MARGIN_X + 12, doc.y, { width: CONTENT_WIDTH - 12 });
+        doc.moveDown(0.55);
+      };
+
       if (!itineraryItems.length) {
         doc.fontSize(10).font("Helvetica").fillColor(MUTED).text("Este viaje todavía no tiene actividades planificadas.", MARGIN_X, doc.y, { width: CONTENT_WIDTH });
       }
@@ -1326,6 +1333,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       for (const item of itineraryItems) {
         const dayKey = item.day ? new Date(item.day).toLocaleDateString("en-CA", { timeZone: TZ }) : "__sin_fecha__";
         if (dayKey !== currentDayKey) {
+          if (currentDayKey) printNightLine(currentDayKey);
           currentDayKey = dayKey;
           ensureSpace(36);
           doc.moveDown(0.5);
@@ -1347,27 +1355,30 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         const timeStart = fmtTime(item.startAt);
         const timeEnd = fmtTime(item.endAt);
         const timeLabel = timeStart ? (timeEnd ? `${timeStart} - ${timeEnd}` : timeStart) : null;
-        const typeLabel = this.PLAN_ITEM_TYPE_LABELS[item.type] ?? item.type;
+        // "Visita — Visitar Palermo" repite la idea dos veces; el título ya
+        // deja claro que es una visita.
+        const typeLabel = item.type === "visit" ? null : (this.PLAN_ITEM_TYPE_LABELS[item.type] ?? item.type);
 
         doc
           .fontSize(10)
           .font("Helvetica-Bold")
           .fillColor(TEXT)
-          .text(`${timeLabel ? `${timeLabel}  ·  ` : ""}${typeLabel} — ${safe(item.title)}`, rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
+          .text(`${timeLabel ? `${timeLabel}  ·  ` : ""}${typeLabel ? `${typeLabel} — ` : ""}${safe(item.title)}`, rowX + 12, doc.y, { width: CONTENT_WIDTH - 12 });
 
         const details: string[] = [];
         if (item.location) details.push(item.location);
 
         if (item.flightDetails) {
           const f = item.flightDetails;
-          const route = [f.fromIata, f.toIata].filter(Boolean).join(" - ");
+          const route = [f.fromIata, f.toIata].filter(Boolean).join(" > ");
           const line = [f.airlineName, f.flightNumberRaw, route].filter(Boolean).join(" · ");
           if (line) details.push(line);
         }
         if (item.destinationTransport) {
-          const t = item.destinationTransport;
-          const route = [t.fromName, t.toName].filter(Boolean).join(" - ");
-          if (route) details.push(route);
+          // El título ya muestra la ruta (p.ej. "Traslado — Palermo > Cafelu");
+          // aquí solo aporta info nueva: el medio de transporte.
+          const modeLabel = this.TRANSPORT_MODE_LABELS[item.destinationTransport.mode];
+          if (modeLabel) details.push(modeLabel);
         }
         const stops = item.metadata?.stops;
         if (Array.isArray(stops) && stops.length) {
@@ -1380,6 +1391,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         }
         doc.moveDown(0.55);
       }
+      if (currentDayKey) printNightLine(currentDayKey);
 
       // ── Alojamientos ─────────────────────────────
       // Rejilla a 2 columnas para aprovechar todo el ancho de la página en
