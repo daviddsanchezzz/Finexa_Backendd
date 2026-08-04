@@ -11,12 +11,14 @@ import {
   Body,
   ParseIntPipe,
   Query,
+  HttpCode,
 } from "@nestjs/common";
 import { User } from "src/common/decorators/user.decorator";
 import { TripsService } from "./trips.service";
 import { CreateTripDto, UpdateTripDto } from "./dto/create-trip.dto";
 import { CreateTripPlanItemDto, SetPaymentStatusDto } from "./dto/create-trip-plan-item.dto";
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
+import { InviteTripMemberDto } from "./dto/invite-trip-member.dto";
 import { AerodataboxService } from "./aviationstack.service";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
 import { TripDocumentType, UpsertTripDocumentDto } from "./dto/trip-document.dto";
@@ -368,7 +370,7 @@ async listChecklist(
   @Param("tripId", ParseIntPipe) tripId: number
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
-  return this.tripsService.listTripChecklist(tripId);
+  return this.tripsService.listTripChecklist(tripId, userId);
 }
 
 @Post(":tripId/checklist/seed")
@@ -378,7 +380,7 @@ async seedChecklist(
   @Body() dto: SeedTripChecklistDto
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
-  return this.tripsService.seedTripChecklist(tripId, dto);
+  return this.tripsService.seedTripChecklist(tripId, userId, dto);
 }
 
 @Post(":tripId/checklist")
@@ -388,7 +390,7 @@ async createChecklistItem(
   @Body() dto: CreateTripChecklistItemDto
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
-  return this.tripsService.createTripChecklistItem(tripId, dto);
+  return this.tripsService.createTripChecklistItem(tripId, userId, dto);
 }
 
 @Patch(":tripId/checklist/:itemId")
@@ -399,7 +401,7 @@ async updateChecklistItem(
   @Body() dto: UpdateTripChecklistItemDto
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
-  return this.tripsService.updateTripChecklistItem(tripId, itemId, dto);
+  return this.tripsService.updateTripChecklistItem(tripId, userId, itemId, dto);
 }
 
 @Delete(":tripId/checklist/:itemId")
@@ -409,7 +411,57 @@ async deleteChecklistItem(
   @Param("itemId", ParseIntPipe) itemId: number
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
-  return this.tripsService.deleteTripChecklistItem(tripId, itemId);
+  return this.tripsService.deleteTripChecklistItem(tripId, userId, itemId);
+}
+
+// =========================================================
+// Compañeros de viaje
+// =========================================================
+
+@Get(":tripId/members")
+listMembers(@User("id") userId: number, @Param("tripId", ParseIntPipe) tripId: number) {
+  return this.tripsService.listTripMembers(userId, tripId);
+}
+
+@Get(":tripId/invite-candidates")
+listInviteCandidates(@User("id") userId: number, @Param("tripId", ParseIntPipe) tripId: number) {
+  return this.tripsService.listTripInviteCandidates(userId, tripId);
+}
+
+@Post(":tripId/invite")
+inviteMember(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Body() dto: InviteTripMemberDto
+) {
+  return this.tripsService.inviteTripMember(userId, tripId, dto);
+}
+
+@Delete(":tripId/members/:memberUserId")
+@HttpCode(200)
+removeMember(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("memberUserId", ParseIntPipe) memberUserId: number
+) {
+  return this.tripsService.removeTripMember(userId, tripId, memberUserId);
+}
+
+@Get("invites/:memberId")
+getInviteDetail(@User("id") userId: number, @Param("memberId", ParseIntPipe) memberId: number) {
+  return this.tripsService.getTripInviteDetail(userId, memberId);
+}
+
+@Patch("invites/:memberId/accept")
+@HttpCode(200)
+acceptInvite(@User("id") userId: number, @Param("memberId", ParseIntPipe) memberId: number) {
+  return this.tripsService.respondTripInvite(userId, memberId, true);
+}
+
+@Patch("invites/:memberId/reject")
+@HttpCode(200)
+rejectInvite(@User("id") userId: number, @Param("memberId", ParseIntPipe) memberId: number) {
+  return this.tripsService.respondTripInvite(userId, memberId, false);
 }
 
 }

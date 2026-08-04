@@ -4,13 +4,16 @@ import {
   ForbiddenException,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "src/common/prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { CreateTripDto, StatusDto, UpdateTripDto, CountryStayDto } from "./dto/create-trip.dto";
 import { CreateTripPlanItemDto, PaymentStatus } from "./dto/create-trip-plan-item.dto";
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
+import { InviteTripMemberDto } from "./dto/invite-trip-member.dto";
 import PDFDocument = require("pdfkit");
 import { AerodataboxService } from "./aviationstack.service";
 
@@ -135,7 +138,16 @@ function deriveFromStays(stays: CountryStayDto[]): DerivedFromStays {
 
 @Injectable()
 export class TripsService {
-  constructor(private prisma: PrismaService, private aerodatabox: AerodataboxService) {}
+  constructor(
+    private prisma: PrismaService,
+    private aerodatabox: AerodataboxService,
+    private notifications: NotificationsService,
+  ) {}
+
+  // A trip is accessible to its creator and to any accepted TripMember.
+  private tripAccessFilter(userId: number) {
+    return { OR: [{ userId }, { members: { some: { userId, status: "accepted" as const } } }] };
+  }
 
   private wrapChecklistError(error: unknown): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
@@ -187,9 +199,12 @@ export class TripsService {
     }
   }
 
-  // ✅ util para controller
+  // ✅ util para controller — dueño original o compañero aceptado, mismo acceso
   async assertTripOwnership(userId: number, tripId: number) {
-    const trip = await this.prisma.trip.findFirst({ where: { id: tripId, userId }, select: { id: true } });
+    const trip = await this.prisma.trip.findFirst({
+      where: { id: tripId, ...this.tripAccessFilter(userId) },
+      select: { id: true },
+    });
     if (!trip) throw new ForbiddenException();
     return true;
   }
@@ -264,18 +279,24 @@ export class TripsService {
     // si no hay fechas, ordena por createdAt para wishlist
     return this.prisma.trip.findMany({
       where: {
-        userId,
+        ...this.tripAccessFilter(userId),
         ...(country ? { countryStays: { some: { country: country.trim().toUpperCase() } } } : {}),
       },
-      include: { countryStays: { orderBy: { order: "asc" } } },
+      include: {
+        countryStays: { orderBy: { order: "asc" } },
+        members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true } } } },
+      },
       orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],
     });
   }
 
 async getTripDetail(userId: number, tripId: number) {
   const trip = await this.prisma.trip.findFirst({
-    where: { id: tripId, userId },
+    where: { id: tripId, ...this.tripAccessFilter(userId) },
     include: {
+      user: { select: { id: true, name: true, email: true } },
+      members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true } } } },
+
       notes: { orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }] },
       tasks: { orderBy: [{ status: "asc" }, { updatedAt: "desc" }] },
 
@@ -303,7 +324,7 @@ async getTripDetail(userId: number, tripId: number) {
 }
 
   async updateTrip(userId: number, tripId: number, dto: UpdateTripDto) {
-    const existing = await this.prisma.trip.findFirst({ where: { id: tripId, userId } });
+    const existing = await this.prisma.trip.findFirst({ where: { id: tripId, ...this.tripAccessFilter(userId) } });
     if (!existing) throw new ForbiddenException();
 
     const { countryStays, ...rest } = dto;
@@ -341,7 +362,7 @@ async getTripDetail(userId: number, tripId: number) {
   }
 
   async deleteTrip(userId: number, tripId: number) {
-    const existing = await this.prisma.trip.findFirst({ where: { id: tripId, userId } });
+    const existing = await this.prisma.trip.findFirst({ where: { id: tripId, ...this.tripAccessFilter(userId) } });
     if (!existing) throw new ForbiddenException();
 
     await this.prisma.transaction.updateMany({
@@ -350,6 +371,157 @@ async getTripDetail(userId: number, tripId: number) {
     });
 
     return this.prisma.trip.delete({ where: { id: tripId } });
+  }
+
+  // =========================================================
+  // COMPAÑEROS DE VIAJE
+  // =========================================================
+
+  async listTripMembers(userId: number, tripId: number) {
+    await this.assertTripOwnership(userId, tripId);
+    const trip = await this.prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { userId: true, user: { select: { id: true, name: true, email: true } } },
+    });
+    if (!trip) throw new NotFoundException("Trip not found");
+
+    const members = await this.prisma.tripMember.findMany({
+      where: { tripId, status: "accepted" },
+      include: { user: { select: { id: true, name: true, email: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return { owner: trip.user, members: members.map((m) => m.user) };
+  }
+
+  async listTripInviteCandidates(userId: number, tripId: number) {
+    await this.assertTripOwnership(userId, tripId);
+    const trip = await this.prisma.trip.findUnique({ where: { id: tripId }, select: { userId: true } });
+    if (!trip) throw new NotFoundException("Trip not found");
+
+    const friendships = await this.prisma.friendship.findMany({
+      where: { status: "accepted", OR: [{ requesterId: userId }, { addresseeId: userId }] },
+      include: {
+        requester: { select: { id: true, name: true, email: true } },
+        addressee: { select: { id: true, name: true, email: true } },
+      },
+    });
+    const friends = friendships.map((f) => (f.requesterId === userId ? f.addressee : f.requester));
+
+    const members = await this.prisma.tripMember.findMany({
+      where: { tripId },
+      select: { userId: true, status: true },
+    });
+    const statusByUserId = new Map(members.map((m) => [m.userId, m.status]));
+
+    return friends
+      .filter((f) => f.id !== trip.userId)
+      .map((f) => ({ ...f, inviteStatus: statusByUserId.get(f.id) ?? null }));
+  }
+
+  async inviteTripMember(userId: number, tripId: number, dto: InviteTripMemberDto) {
+    await this.assertTripOwnership(userId, tripId);
+
+    const trip = await this.prisma.trip.findUnique({ where: { id: tripId }, select: { id: true, name: true, userId: true } });
+    if (!trip) throw new NotFoundException("Trip not found");
+
+    if (dto.userId === userId) throw new BadRequestException("No puedes invitarte a ti mismo");
+    if (dto.userId === trip.userId) throw new ConflictException("Ya es el organizador de este viaje");
+
+    const isFriend = await this.prisma.friendship.findFirst({
+      where: {
+        status: "accepted",
+        OR: [
+          { requesterId: userId, addresseeId: dto.userId },
+          { requesterId: dto.userId, addresseeId: userId },
+        ],
+      },
+    });
+    if (!isFriend) throw new BadRequestException("Solo puedes invitar a amigos");
+
+    const existing = await this.prisma.tripMember.findUnique({
+      where: { tripId_userId: { tripId, userId: dto.userId } },
+    });
+    if (existing?.status === "accepted") throw new ConflictException("Ya es compañero de este viaje");
+    if (existing?.status === "pending") throw new ConflictException("Ya tiene una invitación pendiente");
+
+    const member = await this.prisma.tripMember.create({
+      data: { tripId, userId: dto.userId, status: "pending", invitedBy: userId },
+    });
+
+    const inviter = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    await this.notifications.notifyUser(
+      dto.userId,
+      "Invitación a un viaje",
+      `${inviter?.name ?? "Alguien"} te invitó a "${trip.name}"`,
+      "trip_invite",
+      { tripMemberId: member.id },
+    );
+
+    return member;
+  }
+
+  async getTripInviteDetail(userId: number, memberId: number) {
+    const member = await this.prisma.tripMember.findFirst({
+      where: { id: memberId, userId, status: "pending" },
+      include: { trip: { include: { countryStays: { orderBy: { order: "asc" } } } } },
+    });
+    if (!member) throw new NotFoundException("Invitación no encontrada");
+
+    const inviter = await this.prisma.user.findUnique({ where: { id: member.invitedBy }, select: { id: true, name: true } });
+
+    return {
+      id: member.id,
+      trip: {
+        id: member.trip.id,
+        name: member.trip.name,
+        destination: member.trip.destination,
+        coverImageUrl: member.trip.coverImageUrl,
+        startDate: member.trip.startDate,
+        endDate: member.trip.endDate,
+        countryStays: member.trip.countryStays,
+      },
+      inviter,
+    };
+  }
+
+  async respondTripInvite(userId: number, memberId: number, accept: boolean) {
+    const member = await this.prisma.tripMember.findFirst({
+      where: { id: memberId, userId, status: "pending" },
+      include: { trip: { select: { id: true, name: true, userId: true } } },
+    });
+    if (!member) throw new NotFoundException("Invitación no encontrada");
+
+    if (!accept) {
+      await this.prisma.tripMember.delete({ where: { id: memberId } });
+      return { ok: true, status: "rejected" };
+    }
+
+    const updated = await this.prisma.tripMember.update({
+      where: { id: memberId },
+      data: { status: "accepted" },
+    });
+
+    const accepter = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    await this.notifications.notifyUser(
+      member.trip.userId,
+      "Invitación aceptada",
+      `${accepter?.name ?? "Alguien"} se ha unido a "${member.trip.name}"`,
+      "trip_invite_accepted",
+      { tripId: member.trip.id },
+    );
+
+    return updated;
+  }
+
+  async removeTripMember(userId: number, tripId: number, memberUserId: number) {
+    await this.assertTripOwnership(userId, tripId);
+    const trip = await this.prisma.trip.findUnique({ where: { id: tripId }, select: { userId: true } });
+    if (!trip) throw new NotFoundException("Trip not found");
+    if (trip.userId === memberUserId) throw new BadRequestException("No puedes eliminar al organizador del viaje");
+
+    await this.prisma.tripMember.deleteMany({ where: { tripId, userId: memberUserId } });
+    return { ok: true };
   }
 
   private async recomputeTripPlannedCost(tripId: number) {
@@ -555,7 +727,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
   async updatePlanItem(userId: number, tripId: number, planItemId: number, dto: CreateTripPlanItemDto) {
     // ownership + existence
     const existing = await this.prisma.tripPlanItem.findFirst({
-      where: { id: planItemId, tripId, trip: { userId } },
+      where: { id: planItemId, tripId, trip: this.tripAccessFilter(userId) },
       include: { flightDetails: true, accommodationDetails: true, destinationTransport: true },
     });
     if (!existing) throw new ForbiddenException();
@@ -732,7 +904,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
 
   async deletePlanItem(userId: number, tripId: number, planItemId: number) {
     const existing = await this.prisma.tripPlanItem.findFirst({
-      where: { id: planItemId, tripId, trip: { userId } },
+      where: { id: planItemId, tripId, trip: this.tripAccessFilter(userId) },
     });
     if (!existing) throw new ForbiddenException();
 
@@ -1134,10 +1306,10 @@ async deleteTripContact(tripId: number, contactId: number) {
 // Trip checklist (Maleta)
 // =========================================================
 
-async listTripChecklist(tripId: number) {
+async listTripChecklist(tripId: number, userId: number) {
   try {
     return await this.prisma.tripChecklistItem.findMany({
-      where: { tripId },
+      where: { tripId, userId },
       orderBy: [{ category: "asc" }, { order: "asc" }, { createdAt: "asc" }],
     });
   } catch (error) {
@@ -1145,11 +1317,12 @@ async listTripChecklist(tripId: number) {
   }
 }
 
-async seedTripChecklist(tripId: number, dto: SeedTripChecklistDto) {
+async seedTripChecklist(tripId: number, userId: number, dto: SeedTripChecklistDto) {
   try {
     const items = dto.items
       .map((item, index) => ({
         tripId,
+        userId,
         category: item.category,
         label: item.label.trim(),
         order: item.order ?? index,
@@ -1160,23 +1333,23 @@ async seedTripChecklist(tripId: number, dto: SeedTripChecklistDto) {
       throw new BadRequestException("Debes enviar al menos un artículo válido.");
     }
 
-    const existingCount = await this.prisma.tripChecklistItem.count({ where: { tripId } });
-    if (existingCount > 0) return this.listTripChecklist(tripId);
+    const existingCount = await this.prisma.tripChecklistItem.count({ where: { tripId, userId } });
+    if (existingCount > 0) return this.listTripChecklist(tripId, userId);
 
     await this.prisma.tripChecklistItem.createMany({ data: items });
-    return this.listTripChecklist(tripId);
+    return this.listTripChecklist(tripId, userId);
   } catch (error) {
     this.wrapChecklistError(error);
   }
 }
 
-async createTripChecklistItem(tripId: number, dto: CreateTripChecklistItemDto) {
+async createTripChecklistItem(tripId: number, userId: number, dto: CreateTripChecklistItemDto) {
   const label = dto.label.trim();
   if (!label) throw new BadRequestException("El artículo no puede estar vacío.");
 
   try {
     const lastItem = await this.prisma.tripChecklistItem.findFirst({
-      where: { tripId, category: dto.category },
+      where: { tripId, userId, category: dto.category },
       orderBy: { order: "desc" },
       select: { order: true },
     });
@@ -1184,6 +1357,7 @@ async createTripChecklistItem(tripId: number, dto: CreateTripChecklistItemDto) {
     return await this.prisma.tripChecklistItem.create({
       data: {
         tripId,
+        userId,
         category: dto.category,
         label,
         order: dto.order ?? (lastItem?.order ?? -1) + 1,
@@ -1194,8 +1368,8 @@ async createTripChecklistItem(tripId: number, dto: CreateTripChecklistItemDto) {
   }
 }
 
-async updateTripChecklistItem(tripId: number, itemId: number, dto: UpdateTripChecklistItemDto) {
-  const existing = await this.prisma.tripChecklistItem.findFirst({ where: { id: itemId, tripId }, select: { id: true } });
+async updateTripChecklistItem(tripId: number, userId: number, itemId: number, dto: UpdateTripChecklistItemDto) {
+  const existing = await this.prisma.tripChecklistItem.findFirst({ where: { id: itemId, tripId, userId }, select: { id: true } });
   if (!existing) throw new NotFoundException("Checklist item not found");
 
   const data: any = {};
@@ -1214,8 +1388,8 @@ async updateTripChecklistItem(tripId: number, itemId: number, dto: UpdateTripChe
   }
 }
 
-async deleteTripChecklistItem(tripId: number, itemId: number) {
-  const existing = await this.prisma.tripChecklistItem.findFirst({ where: { id: itemId, tripId }, select: { id: true } });
+async deleteTripChecklistItem(tripId: number, userId: number, itemId: number) {
+  const existing = await this.prisma.tripChecklistItem.findFirst({ where: { id: itemId, tripId, userId }, select: { id: true } });
   if (!existing) throw new NotFoundException("Checklist item not found");
 
   try {

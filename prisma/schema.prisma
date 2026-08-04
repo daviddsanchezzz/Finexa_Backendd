@@ -119,6 +119,7 @@ model User {
   debts                  Debt[]                  // 👈 RELACIÓN INVERSA A Debt.user
 
   trips         Trip[]
+  tripMemberships TripMember[]
   projects      Project[]
 
   refreshToken  String?
@@ -637,6 +638,32 @@ model Trip {
   checklistItems TripChecklistItem[]
   wonderVisits WonderVisit[]
   countryStays TripCountryStay[]
+  members      TripMember[]
+}
+
+// A trip can be shared with other users (friends) who become full co-owners
+// once they accept — same access as the trip creator to notes/tasks/plan/
+// expenses/documents/contacts. Packing lists (TripChecklistItem) stay
+// per-member; everything else is shared identically.
+enum TripMemberStatus {
+  pending
+  accepted
+}
+
+model TripMember {
+  id        Int              @id @default(autoincrement())
+  tripId    Int
+  trip      Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    TripMemberStatus @default(pending)
+  invitedBy Int
+
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([tripId, userId])
+  @@index([userId])
 }
 
 // A trip can span several countries, each with its own date range within the
@@ -685,6 +712,7 @@ enum ChecklistCategory {
 model TripChecklistItem {
   id        Int               @id @default(autoincrement())
   tripId    Int
+  userId    Int               // per-companion packing list
   category  ChecklistCategory
   label     String
   checked   Boolean           @default(false)
@@ -695,6 +723,7 @@ model TripChecklistItem {
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   @@index([tripId, category])
+  @@index([tripId, userId])
 }
 
 model WonderVisit {
