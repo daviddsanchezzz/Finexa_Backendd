@@ -15,6 +15,7 @@ import { CreateTripPlanItemDto, PaymentStatus } from "./dto/create-trip-plan-ite
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import { InviteTripMemberDto } from "./dto/invite-trip-member.dto";
 import PDFDocument = require("pdfkit");
+import axios from "axios";
 import { AerodataboxService } from "./aviationstack.service";
 
   import { DateTime } from "luxon";
@@ -1176,7 +1177,32 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     return "other";
   }
 
+  private countryNameEs(iso2: string): string {
+    try {
+      return new Intl.DisplayNames(["es"], { type: "region" }).of(iso2.toUpperCase()) || iso2;
+    } catch {
+      return iso2;
+    }
+  }
+
+  private async fetchFlagPng(iso2: string): Promise<Buffer | null> {
+    const code = iso2.trim().toLowerCase();
+    if (!/^[a-z]{2}$/.test(code)) return null;
+    try {
+      const res = await axios.get(`https://flagcdn.com/48x36/${code}.png`, {
+        responseType: "arraybuffer",
+        timeout: 3000,
+      });
+      return Buffer.from(res.data);
+    } catch {
+      return null;
+    }
+  }
+
   private async generateTripPdfMinimal(trip: any, includeExpenses: boolean): Promise<Buffer> {
+    const primaryCountry: string | null = (trip.countryStays ?? [])[0]?.country ?? trip.destination ?? null;
+    const flagBuffer = primaryCountry ? await this.fetchFlagPng(primaryCountry) : null;
+
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ size: "A4", margin: 0 });
       const chunks: Buffer[] = [];
