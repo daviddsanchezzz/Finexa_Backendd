@@ -607,6 +607,29 @@ model Trip {
   contacts    TripContact[]
   checklistItems TripChecklistItem[]
   wonderVisits WonderVisit[]
+  countryStays TripCountryStay[]
+}
+
+// A trip can span several countries, each with its own date range within the
+// trip's overall dates (e.g. a "Baltics" trip: EE Aug 1-5, LV Aug 5-10),
+// while the trip keeps a single shared budget/cost. Trip.destination/continent
+// stay in sync as the "primary" (earliest) stay for backward compatibility
+// with every screen that only shows one country per trip.
+model TripCountryStay {
+  id        Int        @id @default(autoincrement())
+  tripId    Int
+  country   String     // ISO country code
+  continent Continent?
+  startDate DateTime?
+  endDate   DateTime?
+  order     Int        @default(0)
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
 }
 
 model TripContact {
