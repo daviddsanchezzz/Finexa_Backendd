@@ -104,6 +104,26 @@ export class NotificationsService {
   }
 
   // ──────────────────────────────────────────
+  // GENERIC: crea notificación in-app + push
+  // (usado por otros módulos, ej. friends)
+  // ──────────────────────────────────────────
+
+  async notifyUser(userId: number, title: string, message: string, type: string) {
+    await this.prisma.notification.create({
+      data: { userId, title, message, type },
+    });
+
+    const tokens = await this.prisma.deviceToken.findMany({ where: { userId } });
+    if (!tokens.length) return;
+
+    const nativeTokens = tokens.filter((t) => t.platform !== 'web').map((t) => t.token);
+    const webTokens = tokens.filter((t) => t.platform === 'web').map((t) => t.token);
+
+    if (nativeTokens.length) await this.sendExpoNotifications(nativeTokens, title, message, { type });
+    if (webTokens.length) await this.sendWebPushNotifications(webTokens, title, message);
+  }
+
+  // ──────────────────────────────────────────
   // TEST: dispara notificación real al usuario
   // ──────────────────────────────────────────
 
