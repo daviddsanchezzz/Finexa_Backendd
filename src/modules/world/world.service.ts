@@ -105,6 +105,7 @@ export class WorldService {
         visitedAt: visit?.visitedAt ? visit.visitedAt.toISOString() : null,
         photoUrl: visit?.photoUrl ?? null,
         photoOffset: visit?.photoOffset ?? null,
+        photoOffsetX: visit?.photoOffsetX ?? null,
         tripId: visit?.tripId ?? null,
       };
     });
@@ -137,12 +138,14 @@ export class WorldService {
           visitedAt: dto.visitedAt ? new Date(dto.visitedAt) : new Date(),
           photoUrl: dto.photoUrl ?? null,
           photoOffset: dto.photoOffset ?? null,
+          photoOffsetX: dto.photoOffsetX ?? null,
           tripId: dto.tripId ?? null,
         },
         update: {
           visitedAt: dto.visitedAt ? new Date(dto.visitedAt) : new Date(),
           photoUrl: dto.photoUrl ?? null,
           photoOffset: dto.photoOffset ?? null,
+          photoOffsetX: dto.photoOffsetX ?? null,
           tripId: dto.tripId ?? null,
         },
       });

@@ -19,6 +19,12 @@ export class UpdateWonderVisitDto {
   photoOffset?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  photoOffsetX?: number;
+
+  @IsOptional()
   @IsInt()
   @IsPositive()
   tripId?: number;

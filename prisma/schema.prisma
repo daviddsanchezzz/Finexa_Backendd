@@ -736,6 +736,7 @@ model WonderVisit {
   visitedAt DateTime?
   photoUrl  String?
   photoOffset Float? // vertical crop focal point, 0 (top) .. 1 (bottom), null = 0.5 (center)
+  photoOffsetX Float? // horizontal crop focal point, 0 (left) .. 1 (right), null = 0.5 (center)
   tripId    Int?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
