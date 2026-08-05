@@ -20,6 +20,7 @@ export interface QuickTransactionPayload {
   merchant?: string;
   cardName?: string;
   qid: string;
+  rawQuery?: string;
 }
 
 @Injectable()
@@ -144,7 +145,7 @@ export class NotificationsService {
   // ──────────────────────────────────────────
 
   async createQuickTransactionNotification(payload: QuickTransactionPayload) {
-    const { userId, amount, merchant, cardName, qid } = payload;
+    const { userId, amount, merchant, cardName, qid, rawQuery } = payload;
 
     const amountStr = `${amount.toFixed(2).replace('.', ',')} €`;
     const title = 'Nuevo gasto detectado';
@@ -156,7 +157,7 @@ export class NotificationsService {
         title,
         message,
         type: 'quick_transaction',
-        data: { amount, merchant, cardName, qid } as Prisma.InputJsonValue,
+        data: { amount, merchant, cardName, qid, rawQuery } as Prisma.InputJsonValue,
       },
     });
 
