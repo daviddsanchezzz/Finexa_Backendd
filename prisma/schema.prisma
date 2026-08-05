@@ -847,6 +847,7 @@ model TripPlanItem {
   payed         Boolean?         @default(false)
   currency      String?          // "EUR"
   logistics     Boolean          @default(false)
+  isReservation Boolean          @default(false)
   paymentStatus PaymentStatus    @default(pending)
 
   // ✅ para guardar cualquier cosa extra sin migraciones

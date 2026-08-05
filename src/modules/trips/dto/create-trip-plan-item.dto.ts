@@ -156,6 +156,10 @@ export class CreateTripPlanItemDto {
   logistics?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  isReservation?: boolean;
+
+  @IsOptional()
   metadata?: any;
 
   @IsOptional()

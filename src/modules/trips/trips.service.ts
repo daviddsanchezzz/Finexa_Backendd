@@ -781,6 +781,10 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
   const timezone = (dto as any).timezone ?? null;
   const currency = (dto as any).currency ?? null;
   const logistics = typeof (dto as any).logistics === "boolean" ? (dto as any).logistics : false;
+  const isReservation =
+    typeof (dto as any).isReservation === "boolean"
+      ? (dto as any).isReservation
+      : dto.type === "flight" || dto.type === "accommodation";
   const metadata = (dto as any).metadata ?? null;
 
   // ✅ Location normalizada por tipo
@@ -826,6 +830,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
         cost: (dto as any).cost ?? null,
         currency,
         logistics,
+        isReservation,
         metadata,
       },
     });
@@ -980,6 +985,8 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     const timezone = (dto as any).timezone ?? null;
     const currency = (dto as any).currency ?? null;
     const logistics = typeof (dto as any).logistics === "boolean" ? (dto as any).logistics : existing.logistics;
+    const isReservation =
+      typeof (dto as any).isReservation === "boolean" ? (dto as any).isReservation : existing.isReservation;
     let metadata: any = (dto as any).metadata ?? existing.metadata;
     // Un "gasto pendiente de clasificar" (metadata.pending) deja de tener
     // sentido en cuanto se promociona a un item real de itinerario — si no,
@@ -1017,6 +1024,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
           cost: (dto as any).cost ?? null,
           currency,
           logistics,
+          isReservation,
           metadata,
         },
       });
