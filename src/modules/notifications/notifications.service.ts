@@ -147,7 +147,7 @@ export class NotificationsService {
     const { userId, amount, merchant, cardName, qid } = payload;
 
     const amountStr = `${amount.toFixed(2).replace('.', ',')} €`;
-    const title = '💳 Nuevo gasto detectado';
+    const title = 'Nuevo gasto detectado';
     const message = merchant ? `${merchant} · ${amountStr}` : amountStr;
 
     const notification = await this.prisma.notification.create({
