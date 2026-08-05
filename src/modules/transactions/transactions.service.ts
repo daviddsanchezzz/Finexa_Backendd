@@ -135,8 +135,8 @@ export class TransactionsService {
           startTime: rawDate,
           transactionId: transaction.id,
           metadata: tripExpenseCategory
-            ? { expenseCategory: tripExpenseCategory }
-            : { expenseCategory: 'other', pending: true },
+            ? { expenseCategory: tripExpenseCategory, autoCreatedFromTransaction: true }
+            : { expenseCategory: 'other', pending: true, autoCreatedFromTransaction: true },
         },
       }).catch(() => null);
     }
@@ -411,8 +411,8 @@ if (filters?.dateFrom || filters?.dateTo) {
             startTime: updated.date,
             transactionId: id,
             metadata: tripExpenseCategory
-              ? { expenseCategory: tripExpenseCategory }
-              : { expenseCategory: 'other', pending: true },
+              ? { expenseCategory: tripExpenseCategory, autoCreatedFromTransaction: true }
+              : { expenseCategory: 'other', pending: true, autoCreatedFromTransaction: true },
           },
         }).catch(() => null);
       }
@@ -507,10 +507,35 @@ if (filters?.dateFrom || filters?.dateTo) {
       data: { active: false },
     });
 
-    // Remove linked TripPlanItem if this transaction auto-created one
-    await this.prisma.tripPlanItem.deleteMany({
+    // Un plan item ligado a esta transacción puede venir de dos sitios muy
+    // distintos: (a) se creó automáticamente junto con la transacción (gasto
+    // pendiente o clasificado) — al borrar la transacción no tiene sentido
+    // que sobreviva solo, se borra también; (b) ya existía en el itinerario
+    // (vuelo, alojamiento...) y el usuario solo lo vinculó desde "Vincular al
+    // plan" — ese item es del itinerario, no de la transacción: solo se
+    // desvincula (se le quita el coste), nunca se borra.
+    const linkedItems = await this.prisma.tripPlanItem.findMany({
       where: { transactionId: id },
-    }).catch(() => null);
+      select: { id: true, metadata: true },
+    });
+    const autoCreatedIds = linkedItems
+      .filter((it) => (it.metadata as any)?.autoCreatedFromTransaction === true)
+      .map((it) => it.id);
+    const manuallyLinkedIds = linkedItems
+      .filter((it) => (it.metadata as any)?.autoCreatedFromTransaction !== true)
+      .map((it) => it.id);
+
+    if (autoCreatedIds.length) {
+      await this.prisma.tripPlanItem.deleteMany({
+        where: { id: { in: autoCreatedIds } },
+      }).catch(() => null);
+    }
+    if (manuallyLinkedIds.length) {
+      await this.prisma.tripPlanItem.updateMany({
+        where: { id: { in: manuallyLinkedIds } },
+        data: { transactionId: null, cost: null },
+      }).catch(() => null);
+    }
 
     return PrismaDateTransformer.toPlain(removed);
   }
