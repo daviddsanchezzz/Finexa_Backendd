@@ -44,7 +44,7 @@ export class TransactionsService {
     }
 
     // Extraer info de recurrencia del DTO
-    const { isRecurring, recurrence, parentId, tripExpenseCategory, ...rest } = dto as any;
+    const { isRecurring, recurrence, parentId, tripExpenseCategory, quickAddId, ...rest } = dto as any;
 
     // Auto-link to trip when subcategory belongs to a "Viajes" category
     // We capture tripId here but do NOT set it on the transaction —
@@ -118,6 +118,12 @@ export class TransactionsService {
         where: { id: wallet.id },
         data: { balance: newBalance },
       });
+    }
+
+    // 2b) Si venimos del flujo "quick add" (link de Shortcuts), resolver la
+    // notificación de "nuevo gasto" pendiente con ese mismo qid (no bloqueante).
+    if (quickAddId) {
+      this.notifications.resolveQuickTransaction(userId, quickAddId).catch(() => null);
     }
 
     // 3) Si hay auto-trip y NO es recurrente, crear TripPlanItem integrado.

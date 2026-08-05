@@ -14,6 +14,14 @@ export interface RecurringNotificationPayload {
   type: 'income' | 'expense' | 'transfer';
 }
 
+export interface QuickTransactionPayload {
+  userId: number;
+  amount: number;
+  merchant?: string;
+  cardName?: string;
+  qid: string;
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -128,6 +136,70 @@ export class NotificationsService {
 
     if (nativeTokens.length) await this.sendExpoNotifications(nativeTokens, title, message, { type });
     if (webTokens.length) await this.sendWebPushNotifications(webTokens, title, message);
+  }
+
+  // ──────────────────────────────────────────
+  // QUICK ADD: link de la automatización de Shortcuts
+  // (pago con tarjeta → abre la app con amount/merchant/card)
+  // ──────────────────────────────────────────
+
+  async createQuickTransactionNotification(payload: QuickTransactionPayload) {
+    const { userId, amount, merchant, cardName, qid } = payload;
+
+    const amountStr = `${amount.toFixed(2).replace('.', ',')} €`;
+    const title = '💳 Nuevo gasto detectado';
+    const message = merchant ? `${merchant} · ${amountStr}` : amountStr;
+
+    const notification = await this.prisma.notification.create({
+      data: {
+        userId,
+        title,
+        message,
+        type: 'quick_transaction',
+        data: { amount, merchant, cardName, qid } as Prisma.InputJsonValue,
+      },
+    });
+
+    const tokens = await this.prisma.deviceToken.findMany({ where: { userId } });
+    if (!tokens.length) return notification;
+
+    const nativeTokens = tokens.filter((t) => t.platform !== 'web').map((t) => t.token);
+    const webTokens = tokens.filter((t) => t.platform === 'web').map((t) => t.token);
+
+    if (nativeTokens.length) {
+      await this.sendExpoNotifications(nativeTokens, title, message, {
+        type: 'quick_transaction',
+        amount,
+        merchant,
+        cardName,
+        qid,
+      });
+    }
+
+    if (webTokens.length) {
+      const qs = new URLSearchParams({
+        qa: '1',
+        amount: String(amount),
+        merchant: merchant ?? '',
+        ...(cardName ? { card: cardName } : {}),
+        nid: qid,
+      });
+      await this.sendWebPushNotifications(webTokens, title, message, `/?${qs.toString()}`);
+    }
+
+    return notification;
+  }
+
+  async resolveQuickTransaction(userId: number, qid: string) {
+    return this.prisma.notification.updateMany({
+      where: {
+        userId,
+        type: 'quick_transaction',
+        read: false,
+        data: { path: ['qid'], equals: qid },
+      },
+      data: { read: true },
+    });
   }
 
   // ──────────────────────────────────────────
@@ -259,13 +331,13 @@ export class NotificationsService {
   // Los tokens web son el JSON del PushSubscription
   // ──────────────────────────────────────────
 
-  private async sendWebPushNotifications(subscriptionJsons: string[], title: string, body: string) {
+  private async sendWebPushNotifications(subscriptionJsons: string[], title: string, body: string, url?: string) {
     if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
       this.logger.warn('VAPID keys no configuradas, saltando web push');
       return;
     }
 
-    const payload = JSON.stringify({ title, body, icon: '/icon.png' });
+    const payload = JSON.stringify({ title, body, icon: '/icon.png', data: url ? { url } : undefined });
 
     for (const json of subscriptionJsons) {
       try {

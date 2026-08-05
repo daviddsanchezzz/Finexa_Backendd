@@ -72,4 +72,11 @@ export class CreateTransactionDto {
   @IsOptional()
   @IsIn(['accommodation', 'transport_local', 'food', 'activities', 'leisure', 'shopping', 'other'])
   tripExpenseCategory?: string;
+
+  // Id de correlación del flujo "quick add" (link de la automatización de
+  // Shortcuts). Si viene relleno, marca como leída la notificación de
+  // "nuevo gasto" pendiente con ese mismo qid. No se persiste en la tabla.
+  @IsOptional()
+  @IsString()
+  quickAddId?: string;
 }

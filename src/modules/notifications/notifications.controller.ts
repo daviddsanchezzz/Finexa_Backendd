@@ -13,6 +13,7 @@ import {
 import { NotificationsService } from './notifications.service';
 import { RegisterTokenDto } from './dto/register-token.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+import { CreateQuickTransactionDto } from './dto/create-quick-transaction.dto';
 import { User } from '../../common/decorators/user.decorator';
 
 @Controller('notifications')
@@ -53,6 +54,14 @@ export class NotificationsController {
     @Body() dto: UpdatePreferencesDto,
   ) {
     return this.notificationsService.updatePreferences(userId, dto);
+  }
+
+  // ── Quick add (link de la automatización de Shortcuts) ───────
+
+  @Post('quick-transaction')
+  @HttpCode(200)
+  createQuickTransaction(@User('id') userId: number, @Body() dto: CreateQuickTransactionDto) {
+    return this.notificationsService.createQuickTransactionNotification({ userId, ...dto });
   }
 
   // ── Test (dispara una notificación real al usuario autenticado) ──
