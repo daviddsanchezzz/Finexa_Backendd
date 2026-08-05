@@ -65,4 +65,11 @@ export class CreateTransactionDto {
   @IsOptional()
   @IsInt()
   parentId?: number;
+
+  // Si la subcategoría elegida pertenece a un viaje y esto viene relleno,
+  // el gasto se clasifica directamente en el itinerario del viaje (sin
+  // pasar por el estado "pendiente de clasificar").
+  @IsOptional()
+  @IsIn(['accommodation', 'transport_local', 'food', 'activities', 'leisure', 'shopping', 'other'])
+  tripExpenseCategory?: string;
 }

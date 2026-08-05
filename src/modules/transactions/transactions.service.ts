@@ -21,16 +21,16 @@ export class TransactionsService {
   // HELPERS
   // ============================================================
   private async autoResolveTripId(userId: number, subcategoryId: number): Promise<number | undefined> {
+    // Antes esto comparaba el nombre de la subcategoría con el nombre del
+    // viaje (frágil: se rompía si renombrabas el viaje). Subcategory.tripId
+    // es el enlace real y ya viene puesto por TripsService al crear la
+    // subcategoría del viaje.
     const sub = await this.prisma.subcategory.findFirst({
       where: { id: subcategoryId },
-      include: { category: { select: { name: true } } },
+      select: { tripId: true, trip: { select: { userId: true } } },
     });
-    if (!sub || !sub.category.name.toLowerCase().includes('viaje')) return undefined;
-    const trip = await this.prisma.trip.findFirst({
-      where: { userId, name: sub.name },
-      select: { id: true },
-    });
-    return trip?.id;
+    if (!sub?.tripId || sub.trip?.userId !== userId) return undefined;
+    return sub.tripId;
   }
 
   // ============================================================
@@ -44,7 +44,7 @@ export class TransactionsService {
     }
 
     // Extraer info de recurrencia del DTO
-    const { isRecurring, recurrence, parentId, ...rest } = dto as any;
+    const { isRecurring, recurrence, parentId, tripExpenseCategory, ...rest } = dto as any;
 
     // Auto-link to trip when subcategory belongs to a "Viajes" category
     // We capture tripId here but do NOT set it on the transaction —
@@ -120,7 +120,10 @@ export class TransactionsService {
       });
     }
 
-    // 3) Si hay auto-trip y NO es recurrente, crear TripPlanItem integrado
+    // 3) Si hay auto-trip y NO es recurrente, crear TripPlanItem integrado.
+    // Si el usuario ya eligió la categoría de viaje al crear la transacción,
+    // queda clasificado directamente; si no, se crea "pendiente" para
+    // clasificarlo luego desde la pestaña Gastos del viaje.
     if (autoTripIdForPlanItem != null && !isRecurring) {
       await this.prisma.tripPlanItem.create({
         data: {
@@ -131,7 +134,9 @@ export class TransactionsService {
           date: rawDate,
           startTime: rawDate,
           transactionId: transaction.id,
-          metadata: { expenseCategory: 'other', pending: true },
+          metadata: tripExpenseCategory
+            ? { expenseCategory: tripExpenseCategory }
+            : { expenseCategory: 'other', pending: true },
         },
       }).catch(() => null);
     }
@@ -373,7 +378,7 @@ if (filters?.dateFrom || filters?.dateTo) {
     }
 
     // 2️⃣ ACTUALIZAR TRANSACCIÓN
-    const dtoAny = dto as any;
+    const { tripExpenseCategory, ...dtoAny } = dto as any;
     const updated = await this.prisma.transaction.update({
       where: { id },
       data: dtoAny,
@@ -405,7 +410,9 @@ if (filters?.dateFrom || filters?.dateTo) {
             date: updated.date,
             startTime: updated.date,
             transactionId: id,
-            metadata: { expenseCategory: 'other', pending: true },
+            metadata: tripExpenseCategory
+              ? { expenseCategory: tripExpenseCategory }
+              : { expenseCategory: 'other', pending: true },
           },
         }).catch(() => null);
       }

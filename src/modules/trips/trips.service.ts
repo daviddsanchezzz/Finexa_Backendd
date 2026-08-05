@@ -10,6 +10,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "src/common/prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { TransactionsService } from "../transactions/transactions.service";
 import { CreateTripDto, StatusDto, UpdateTripDto, CountryStayDto } from "./dto/create-trip.dto";
 import { CreateTripPlanItemDto, PaymentStatus } from "./dto/create-trip-plan-item.dto";
 import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
@@ -142,6 +143,7 @@ export class TripsService {
     private prisma: PrismaService,
     private aerodatabox: AerodataboxService,
     private notifications: NotificationsService,
+    private transactionsService: TransactionsService,
   ) {}
 
   // A trip is accessible to its creator and to any accepted TripMember.
@@ -961,7 +963,15 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     const timezone = (dto as any).timezone ?? null;
     const currency = (dto as any).currency ?? null;
     const logistics = typeof (dto as any).logistics === "boolean" ? (dto as any).logistics : existing.logistics;
-    const metadata = (dto as any).metadata ?? existing.metadata;
+    let metadata: any = (dto as any).metadata ?? existing.metadata;
+    // Un "gasto pendiente de clasificar" (metadata.pending) deja de tener
+    // sentido en cuanto se promociona a un item real de itinerario — si no,
+    // seguiría apareciendo en "Nuevos gastos" aunque ya sea, p.ej., un
+    // alojamiento con sus propios datos.
+    if (dto.type !== "expense" && metadata && typeof metadata === "object" && "pending" in metadata) {
+      const { pending, ...rest } = metadata;
+      metadata = rest;
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const base = await tx.tripPlanItem.update({
@@ -982,7 +992,10 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
 
           location: dto.location ?? null,
           notes: dto.notes ?? null,
-          transactionId: (dto as any).transactionId ?? null,
+          // Si el body no trae transactionId explícito, no lo toques — si no,
+          // cualquier edición del item (p.ej. cambiar el título) desvincula
+          // silenciosamente su transacción ligada.
+          transactionId: (dto as any).transactionId !== undefined ? (dto as any).transactionId : existing.transactionId,
 
           cost: (dto as any).cost ?? null,
           currency,
@@ -1118,6 +1131,31 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
 
     await this.recomputeTripPlannedCost(tripId);
 
+    // Si este item viene de una transacción real, refleja los cambios de
+    // coste/título ahí también — sin esto el gasto real y el del viaje se
+    // desincronizan. Solo si la transacción es del propio usuario que edita:
+    // en un viaje compartido, otro compañero puede editar el item del plan,
+    // pero nunca debe poder tocar la transacción/cartera privada de otro.
+    if (existing.transactionId) {
+      const newCost = (dto as any).cost != null ? Number((dto as any).cost) : null;
+      const costChanged = newCost != null && Number(existing.cost ?? 0) !== newCost;
+      const titleChanged = !!dto.title && dto.title !== existing.title;
+      if (costChanged || titleChanged) {
+        const linkedTx = await this.prisma.transaction.findUnique({
+          where: { id: existing.transactionId },
+          select: { userId: true },
+        });
+        if (linkedTx && linkedTx.userId === userId) {
+          await this.transactionsService
+            .update(userId, existing.transactionId, {
+              ...(costChanged ? { amount: newCost as number } : {}),
+              ...(titleChanged ? { description: dto.title } : {}),
+            } as any)
+            .catch(() => null);
+        }
+      }
+    }
+
     return this.prisma.tripPlanItem.findUnique({
       where: { id: updated.id },
       include: { flightDetails: true, accommodationDetails: true, destinationTransport: true, attachments: true },
@@ -1130,7 +1168,23 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     });
     if (!existing) throw new ForbiddenException();
 
-    await this.prisma.tripPlanItem.delete({ where: { id: planItemId } });
+    // Si el item está ligado a una transacción real, bórrala también
+    // (revierte el saldo de la cartera) — su propio side-effect ya borra
+    // este plan item, así que el delete de abajo solo actúa de red de
+    // seguridad si algo falla ahí. Solo si la transacción es del propio
+    // usuario: un compañero de viaje puede borrar el item del plan
+    // compartido, pero nunca la cartera privada de otro.
+    if (existing.transactionId) {
+      const linkedTx = await this.prisma.transaction.findUnique({
+        where: { id: existing.transactionId },
+        select: { userId: true },
+      });
+      if (linkedTx && linkedTx.userId === userId) {
+        await this.transactionsService.remove(userId, existing.transactionId).catch(() => null);
+      }
+    }
+
+    await this.prisma.tripPlanItem.delete({ where: { id: planItemId } }).catch(() => null);
     await this.recomputeTripPlannedCost(tripId);
 
     return { success: true };
@@ -1278,8 +1332,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
   // lo que el usuario ve ahí en vez de con las Transaction adjuntas.
   private readonly BUDGET_CATEGORY_DEFS: { key: string; label: string; color: string }[] = [
     { key: "accommodation", label: "Alojamiento", color: "#22C55E" },
-    { key: "transport_main", label: "Transporte principal", color: "#2563EB" },
-    { key: "transport_local", label: "Transporte local", color: "#0EA5E9" },
+    { key: "transport_local", label: "Transporte", color: "#0EA5E9" },
     { key: "food", label: "Comida", color: "#F97316" },
     { key: "activities", label: "Actividades / visitas", color: "#A855F7" },
     { key: "leisure", label: "Ocio", color: "#EF4444" },
@@ -1293,8 +1346,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     }
     const t = item.type;
     if (t === "accommodation") return "accommodation";
-    if (t === "flight" || t === "transport_destination") return "transport_main";
-    if (t === "transport_local" || t === "transport" || t === "taxi") return "transport_local";
+    if (t === "flight" || t === "transport_destination" || t === "transport_local" || t === "transport" || t === "taxi") return "transport_local";
     if (t === "restaurant" || t === "cafe" || t === "market") return "food";
     if (["museum", "monument", "viewpoint", "free_tour", "guided_tour", "day_trip", "hike", "beach", "activity"].includes(t)) {
       return "activities";
@@ -1560,7 +1612,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
           const extra: string[] = [];
           if (a.guests) extra.push(`${a.guests} huésped${a.guests !== 1 ? "es" : ""}`);
           if (a.rooms) extra.push(`${a.rooms} habitación${a.rooms !== 1 ? "es" : ""}`);
-          if (item.cost != null) {
+          if (includeExpenses && item.cost != null) {
             const costLabel = fmtEuro(item.cost);
             if (costLabel) extra.push(costLabel);
           }
