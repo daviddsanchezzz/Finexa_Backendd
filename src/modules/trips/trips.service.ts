@@ -1100,27 +1100,33 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
       }
 
       if (dto.type === "transport_destination" || dto.type === "transport_local") {
+        // Igual que flight/accommodation: si esta edición no trae detalles de
+        // transporte (p.ej. un PATCH que solo cambia el coste al vincular un
+        // gasto), no se tocan — así no exigimos "mode" para ediciones que no
+        // tienen nada que ver con el transporte.
         const td = (dto as any).destinationTransportDetails;
-        if (!td?.mode) throw new BadRequestException("destinationTransportDetails.mode requerido");
+        if (td) {
+          if (!td.mode) throw new BadRequestException("destinationTransportDetails.mode requerido");
 
-        await tx.destinationTransportDetails.upsert({
-          where: { planItemId },
-          create: { planItemId, mode: td.mode },
-          update: { mode: td.mode },
-        });
+          await tx.destinationTransportDetails.upsert({
+            where: { planItemId },
+            create: { planItemId, mode: td.mode },
+            update: { mode: td.mode },
+          });
 
-        await tx.destinationTransportDetails.update({
-          where: { planItemId },
-          data: {
-            company: td.company ?? null,
-            bookingRef: td.bookingRef ?? null,
-            fromName: td.fromName ?? null,
-            toName: td.toName ?? null,
-            depAt: td.depAt ? new Date(td.depAt) : null,
-            arrAt: td.arrAt ? new Date(td.arrAt) : null,
-            metadata: td.metadata ?? null,
-          },
-        });
+          await tx.destinationTransportDetails.update({
+            where: { planItemId },
+            data: {
+              company: td.company ?? null,
+              bookingRef: td.bookingRef ?? null,
+              fromName: td.fromName ?? null,
+              toName: td.toName ?? null,
+              depAt: td.depAt ? new Date(td.depAt) : null,
+              arrAt: td.arrAt ? new Date(td.arrAt) : null,
+              metadata: td.metadata ?? null,
+            },
+          });
+        }
       } else {
         await tx.destinationTransportDetails.deleteMany({ where: { planItemId } });
       }
@@ -1191,13 +1197,23 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     // seguridad si algo falla ahí. Solo si la transacción es del propio
     // usuario: un compañero de viaje puede borrar el item del plan
     // compartido, pero nunca la cartera privada de otro.
+    // Excepción: si otro plan item YA referencia esta misma transacción
+    // (p.ej. "Vincular al plan" acaba de traspasársela a un item real del
+    // itinerario, y este item pendiente es solo el sobrante a limpiar), no
+    // se borra la transacción — ahora pertenece a ese otro item.
     if (existing.transactionId) {
-      const linkedTx = await this.prisma.transaction.findUnique({
-        where: { id: existing.transactionId },
-        select: { userId: true },
+      const stillReferencedElsewhere = await this.prisma.tripPlanItem.findFirst({
+        where: { transactionId: existing.transactionId, id: { not: planItemId } },
+        select: { id: true },
       });
-      if (linkedTx && linkedTx.userId === userId) {
-        await this.transactionsService.remove(userId, existing.transactionId).catch(() => null);
+      if (!stillReferencedElsewhere) {
+        const linkedTx = await this.prisma.transaction.findUnique({
+          where: { id: existing.transactionId },
+          select: { userId: true },
+        });
+        if (linkedTx && linkedTx.userId === userId) {
+          await this.transactionsService.remove(userId, existing.transactionId).catch(() => null);
+        }
       }
     }
 
