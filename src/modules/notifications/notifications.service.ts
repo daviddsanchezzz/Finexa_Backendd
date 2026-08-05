@@ -190,16 +190,28 @@ export class NotificationsService {
     return notification;
   }
 
+  // Se llama en paralelo (no bloqueante) desde la creación de la
+  // transacción. La notificación se crea con otra llamada HTTP que va por
+  // su cuenta desde el móvil (al abrir el link) — con mala cobertura esa
+  // llamada puede tardar más que lo que tarda el usuario en guardar el
+  // gasto, así que la notificación puede que TODAVÍA no exista en la BD
+  // cuando llegamos aquí. Reintentamos unas veces con pequeño margen antes
+  // de rendirnos, en vez de fallar a la primera.
   async resolveQuickTransaction(userId: number, qid: string) {
-    return this.prisma.notification.updateMany({
-      where: {
-        userId,
-        type: 'quick_transaction',
-        read: false,
-        data: { path: ['qid'], equals: qid },
-      },
-      data: { read: true },
-    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const result = await this.prisma.notification.updateMany({
+        where: {
+          userId,
+          type: 'quick_transaction',
+          read: false,
+          data: { path: ['qid'], equals: qid },
+        },
+        data: { read: true },
+      });
+      if (result.count > 0) return result;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return { count: 0 };
   }
 
   // ──────────────────────────────────────────
