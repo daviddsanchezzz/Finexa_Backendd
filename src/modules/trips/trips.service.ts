@@ -422,7 +422,20 @@ async getTripDetail(userId: number, tripId: number) {
   });
 
   if (!trip) throw new NotFoundException("Trip not found");
-  return trip;
+
+  // Subcategoría "de viajes" dedicada a este trip (si existe), para que el
+  // frontend pueda pre-seleccionar categoría/subcategoría al crear un gasto
+  // directamente desde la tarjeta de "viaje en curso".
+  const linkedSubcategory = await this.prisma.subcategory.findFirst({
+    where: { tripId, active: true },
+    select: { id: true, categoryId: true },
+  });
+
+  return {
+    ...trip,
+    subcategoryId: linkedSubcategory?.id ?? null,
+    categoryId: linkedSubcategory?.categoryId ?? null,
+  };
 }
 
   async updateTrip(userId: number, tripId: number, dto: UpdateTripDto) {
