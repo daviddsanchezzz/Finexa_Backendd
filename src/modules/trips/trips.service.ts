@@ -732,11 +732,15 @@ async getTripDetail(userId: number, tripId: number) {
   private async recomputeTripPlannedCost(tripId: number) {
     const items = await this.prisma.tripPlanItem.findMany({
       where: { tripId },
-      select: { cost: true },
+      select: { cost: true, metadata: true },
     });
 
+    // Los "nuevos gastos" sin clasificar (metadata.pending) todavía no están
+    // asignados al viaje, no deben sumar al total hasta que se clasifiquen.
+    const countedItems = items.filter((item) => !(item.metadata as any)?.pending);
+
     // cost puede ser Float o Decimal según tu schema real
-    const total = items.reduce((sum, item) => {
+    const total = countedItems.reduce((sum, item) => {
       const v: any = item.cost;
       if (v == null) return sum;
       const n = typeof v === "number" ? v : Number(v);
