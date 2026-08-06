@@ -1167,18 +1167,25 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     // desincronizan. Solo si la transacción es del propio usuario que edita:
     // en un viaje compartido, otro compañero puede editar el item del plan,
     // pero nunca debe poder tocar la transacción/cartera privada de otro.
-    if (existing.transactionId) {
+    //
+    // Usamos updated.transactionId (el valor ya persistido), no
+    // existing.transactionId (el de antes de este PATCH): si este mismo PATCH
+    // está desvinculando el item (p.ej. al acumular varios gastos en un
+    // mismo plan item, donde el coste ya no coincide con una única
+    // transacción), no debe sincronizar el coste nuevo contra la transacción
+    // que se acaba de desvincular.
+    if (updated.transactionId) {
       const newCost = (dto as any).cost != null ? Number((dto as any).cost) : null;
       const costChanged = newCost != null && Number(existing.cost ?? 0) !== newCost;
       const titleChanged = !!dto.title && dto.title !== existing.title;
       if (costChanged || titleChanged) {
         const linkedTx = await this.prisma.transaction.findUnique({
-          where: { id: existing.transactionId },
+          where: { id: updated.transactionId },
           select: { userId: true },
         });
         if (linkedTx && linkedTx.userId === userId) {
           await this.transactionsService
-            .update(userId, existing.transactionId, {
+            .update(userId, updated.transactionId, {
               ...(costChanged ? { amount: newCost as number } : {}),
               ...(titleChanged ? { description: dto.title } : {}),
             } as any)
