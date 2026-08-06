@@ -124,6 +124,12 @@ model User {
 
   refreshToken  String?
 
+  // Token largo y no-rotativo para automatizaciones externas (ej. Shortcuts
+  // de iOS por NFC) que necesitan identificar al usuario sin sesión activa.
+  // Deliberadamente distinto del JWT de login: ese caduca en 15 min y el
+  // refresh token rota en cada uso, ninguno sirve para un enlace estático.
+  quickAddToken String? @unique
+
   manualMonthData ManualMonthData[]
 
   investmentAssets     InvestmentAsset[]

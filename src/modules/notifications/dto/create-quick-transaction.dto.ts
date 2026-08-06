@@ -22,3 +22,11 @@ export class CreateQuickTransactionDto {
   @IsString()
   rawQuery?: string;
 }
+
+export class CreateQuickTransactionViaTokenDto extends CreateQuickTransactionDto {
+  // Token largo del usuario (ver User.quickAddToken) — identifica al usuario
+  // sin sesión activa, para automatizaciones externas (Shortcuts por NFC).
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+}

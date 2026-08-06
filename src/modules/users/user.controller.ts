@@ -47,4 +47,14 @@ export class UserController {
   deleteDocument(@User('id') userId: number, @Param('id', ParseIntPipe) documentId: number) {
     return this.userService.deleteUserDocument(userId, documentId);
   }
+
+  @Get('me/quick-add-token')
+  getQuickAddToken(@User('id') userId: number) {
+    return this.userService.getQuickAddToken(userId);
+  }
+
+  @Post('me/quick-add-token/regenerate')
+  regenerateQuickAddToken(@User('id') userId: number) {
+    return this.userService.regenerateQuickAddToken(userId);
+  }
 }

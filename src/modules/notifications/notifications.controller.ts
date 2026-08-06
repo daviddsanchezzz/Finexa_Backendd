@@ -13,8 +13,9 @@ import {
 import { NotificationsService } from './notifications.service';
 import { RegisterTokenDto } from './dto/register-token.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
-import { CreateQuickTransactionDto } from './dto/create-quick-transaction.dto';
+import { CreateQuickTransactionDto, CreateQuickTransactionViaTokenDto } from './dto/create-quick-transaction.dto';
 import { User } from '../../common/decorators/user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 
 @Controller('notifications')
 export class NotificationsController {
@@ -62,6 +63,17 @@ export class NotificationsController {
   @HttpCode(200)
   createQuickTransaction(@User('id') userId: number, @Body() dto: CreateQuickTransactionDto) {
     return this.notificationsService.createQuickTransactionNotification({ userId, ...dto });
+  }
+
+  // Variante sin sesión activa: identifica al usuario por su quickAddToken
+  // en vez de por JWT, para que la automatización de Shortcuts funcione
+  // aunque el navegador/webview que la abre no tenga sesión iniciada.
+  @Public()
+  @Post('quick-transaction/via-token')
+  @HttpCode(200)
+  createQuickTransactionViaToken(@Body() dto: CreateQuickTransactionViaTokenDto) {
+    const { token, ...rest } = dto;
+    return this.notificationsService.createQuickTransactionViaToken(token, rest);
   }
 
   // ── Test (dispara una notificación real al usuario autenticado) ──

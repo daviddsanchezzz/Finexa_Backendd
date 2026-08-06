@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import * as webPush from 'web-push';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -143,6 +143,12 @@ export class NotificationsService {
   // QUICK ADD: link de la automatización de Shortcuts
   // (pago con tarjeta → abre la app con amount/merchant/card)
   // ──────────────────────────────────────────
+
+  async createQuickTransactionViaToken(token: string, dto: Omit<QuickTransactionPayload, 'userId'>) {
+    const user = await this.prisma.user.findUnique({ where: { quickAddToken: token }, select: { id: true } });
+    if (!user) throw new UnauthorizedException('Token inválido');
+    return this.createQuickTransactionNotification({ userId: user.id, ...dto });
+  }
 
   async createQuickTransactionNotification(payload: QuickTransactionPayload) {
     const { userId, amount, merchant, cardName, qid, rawQuery } = payload;

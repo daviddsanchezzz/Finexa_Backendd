@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { FinanceModuleKeyDto } from './dto/pin-finance-tab.dto';
 import { CreateUserDocumentDto, UpdateUserDocumentDto } from './dto/user-document.dto';
@@ -75,5 +76,21 @@ export class UserService {
   async deleteUserDocument(userId: number, documentId: number) {
     await this.prisma.userDocument.deleteMany({ where: { id: documentId, userId } });
     return { success: true };
+  }
+
+  // =========================================================
+  // Quick-add token (automatizaciones externas, ej. Shortcuts por NFC)
+  // =========================================================
+
+  async getQuickAddToken(userId: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { quickAddToken: true } });
+    if (user?.quickAddToken) return { token: user.quickAddToken };
+    return this.regenerateQuickAddToken(userId);
+  }
+
+  async regenerateQuickAddToken(userId: number) {
+    const token = randomBytes(24).toString('hex');
+    await this.prisma.user.update({ where: { id: userId }, data: { quickAddToken: token } });
+    return { token };
   }
 }
