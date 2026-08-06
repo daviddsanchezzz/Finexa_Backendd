@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, Param, ParseEnumPipe, Patch, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
 import { UserService } from './user.service';
 import { User } from '../../common/decorators/user.decorator';
 import { PinFinanceTabDto } from './dto/pin-finance-tab.dto';
-import { UserDocumentTypeDto, UpsertUserDocumentDto } from './dto/user-document.dto';
+import { CreateUserDocumentDto, UpdateUserDocumentDto } from './dto/user-document.dto';
 
 @Controller('users')
 export class UserController {
@@ -29,20 +29,22 @@ export class UserController {
     return this.userService.getUserDocuments(userId);
   }
 
-  @Put('me/documents/:type')
-  upsertDocument(
-    @User('id') userId: number,
-    @Param('type', new ParseEnumPipe(UserDocumentTypeDto)) type: UserDocumentTypeDto,
-    @Body() dto: UpsertUserDocumentDto,
-  ) {
-    return this.userService.upsertUserDocument(userId, type, dto);
+  @Post('me/documents')
+  createDocument(@User('id') userId: number, @Body() dto: CreateUserDocumentDto) {
+    return this.userService.createUserDocument(userId, dto);
   }
 
-  @Delete('me/documents/:type')
-  deleteDocument(
+  @Patch('me/documents/:id')
+  updateDocument(
     @User('id') userId: number,
-    @Param('type', new ParseEnumPipe(UserDocumentTypeDto)) type: UserDocumentTypeDto,
+    @Param('id', ParseIntPipe) documentId: number,
+    @Body() dto: UpdateUserDocumentDto,
   ) {
-    return this.userService.deleteUserDocument(userId, type);
+    return this.userService.updateUserDocument(userId, documentId, dto);
+  }
+
+  @Delete('me/documents/:id')
+  deleteDocument(@User('id') userId: number, @Param('id', ParseIntPipe) documentId: number) {
+    return this.userService.deleteUserDocument(userId, documentId);
   }
 }

@@ -141,19 +141,28 @@ model User {
   wonderVisits WonderVisit[]
 }
 
+// type se valida a nivel de aplicación (UserDocumentTypeDto), no como enum de
+// Postgres: la columna ya tenía filas reales como texto libre ("passport",
+// "dni") y convertirla a enum obligaría a recrear la columna con pérdida de
+// datos si Postgres no puede castear algún valor existente.
 model UserDocument {
   id             Int       @id @default(autoincrement())
   userId         Int
-  type           String    // "passport" | "dni"
-  country        String    // país emisor, ISO2 (ES, FR...)
+  type           String    // "passport" | "dni" | "visa" | "vaccine" | "ehic" | "private_health_insurance" | "driving_license" | "driving_license_international"
+  provider       String?   // aseguradora (tarjeta sanitaria privada)
+  country        String?   // país emisor (pasaporte/DNI) o país de destino (visado), ISO2
   documentNumber String?
   expiryDate     DateTime?
+  metadata       Json?     // campos específicos del tipo (tipo de visado, vigencia de vacuna...)
+  fileUrl        String?   // escaneo/PDF adjunto (Supabase Storage)
+  fileName       String?
+  fileMimeType   String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, type])
+  @@index([userId, type])
 }
 
 //////////////////////////////////////////////////////////////
