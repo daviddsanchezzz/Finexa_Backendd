@@ -1,4 +1,5 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import * as webPush from 'web-push';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -19,7 +20,7 @@ export interface QuickTransactionPayload {
   amount: number;
   merchant?: string;
   cardName?: string;
-  qid: string;
+  qid?: string;
   rawQuery?: string;
 }
 
@@ -151,7 +152,8 @@ export class NotificationsService {
   }
 
   async createQuickTransactionNotification(payload: QuickTransactionPayload) {
-    const { userId, amount, merchant, cardName, qid, rawQuery } = payload;
+    const { userId, amount, merchant, cardName, rawQuery } = payload;
+    const qid = payload.qid || randomUUID();
 
     const amountStr = `${amount.toFixed(2).replace('.', ',')} €`;
     const title = 'Nuevo gasto detectado';
