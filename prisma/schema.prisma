@@ -647,6 +647,7 @@ model Trip {
   documents   TripDocument[]
   contacts    TripContact[]
   checklistItems TripChecklistItem[]
+  galleryPhotos  TripGalleryPhoto[]
   wonderVisits WonderVisit[]
   countryStays TripCountryStay[]
   members      TripMember[]
@@ -793,6 +794,20 @@ model TripDocument {
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   @@index([tripId, type])
+}
+
+model TripGalleryPhoto {
+  id        Int       @id @default(autoincrement())
+  tripId    Int
+  url       String
+  fileName  String?
+  mimeType  String?
+  dayDate   DateTime? // día del viaje al que pertenece; null = "general del viaje"
+  createdAt DateTime  @default(now())
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId, dayDate])
 }
 
 // =========================

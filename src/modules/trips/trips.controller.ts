@@ -21,6 +21,7 @@ import { InviteTripMemberDto } from "./dto/invite-trip-member.dto";
 import { AerodataboxService } from "./aviationstack.service";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
 import { CreateTripDocumentDto, UpdateTripDocumentDto } from "./dto/trip-document.dto";
+import { CreateTripGalleryPhotoDto } from "./dto/trip-gallery-photo.dto";
 import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
 import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 
@@ -323,6 +324,39 @@ async deleteDocument(
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
   return this.tripsService.deleteTripDocument(tripId, documentId);
+}
+
+// =========================================================
+// Trip gallery
+// =========================================================
+
+@Get(":tripId/gallery")
+async listGalleryPhotos(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.getTripGalleryPhotos(tripId);
+}
+
+@Post(":tripId/gallery")
+async createGalleryPhoto(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Body() dto: CreateTripGalleryPhotoDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.createTripGalleryPhoto(tripId, dto);
+}
+
+@Delete(":tripId/gallery/:id")
+async deleteGalleryPhoto(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("id", ParseIntPipe) photoId: number
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.deleteTripGalleryPhoto(tripId, photoId);
 }
 
 // =========================================================

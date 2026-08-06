@@ -21,6 +21,7 @@ import { AerodataboxService } from "./aviationstack.service";
   import { DateTime } from "luxon";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
 import { TripDocumentType, CreateTripDocumentDto, UpdateTripDocumentDto } from "./dto/trip-document.dto";
+import { CreateTripGalleryPhotoDto } from "./dto/trip-gallery-photo.dto";
 import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
 import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 
@@ -2083,6 +2084,31 @@ async updateTripDocument(tripId: number, documentId: number, dto: UpdateTripDocu
 
 async deleteTripDocument(tripId: number, documentId: number) {
   await this.prisma.tripDocument.deleteMany({ where: { id: documentId, tripId } });
+  return { success: true };
+}
+
+// =========================================================
+// Trip gallery
+// =========================================================
+
+async getTripGalleryPhotos(tripId: number) {
+  return this.prisma.tripGalleryPhoto.findMany({ where: { tripId }, orderBy: { createdAt: "asc" } });
+}
+
+async createTripGalleryPhoto(tripId: number, dto: CreateTripGalleryPhotoDto) {
+  return this.prisma.tripGalleryPhoto.create({
+    data: {
+      tripId,
+      url: dto.url,
+      fileName: dto.fileName ?? null,
+      mimeType: dto.mimeType ?? null,
+      dayDate: dto.dayDate ? new Date(dto.dayDate) : null,
+    },
+  });
+}
+
+async deleteTripGalleryPhoto(tripId: number, photoId: number) {
+  await this.prisma.tripGalleryPhoto.deleteMany({ where: { id: photoId, tripId } });
   return { success: true };
 }
 
