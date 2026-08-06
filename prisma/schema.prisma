@@ -753,6 +753,12 @@ enum TripDocumentType {
   car_rental
   accommodation_booking
   activity_booking
+  visa
+  vaccine
+  ehic // tarjeta sanitaria europea
+  private_health_insurance
+  driving_license
+  driving_license_international
 }
 
 model TripDocument {
@@ -762,6 +768,11 @@ model TripDocument {
   provider       String?          // aseguradora / empresa de alquiler / alojamiento / actividad
   referenceCode  String?          // nº de póliza / nº de reserva / localizador
   expiryDate     DateTime?        // caducidad (seguro) o fecha del servicio, según el tipo
+  country        String?          // ISO2 opcional: liga el documento a un TripCountryStay concreto (ej. visado)
+  metadata       Json?            // campos específicos del tipo (tipo de visado, vigencia de vacuna, cobertura...)
+  fileUrl        String?          // escaneo/PDF adjunto (Supabase Storage)
+  fileName       String?
+  fileMimeType   String?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
@@ -772,7 +783,7 @@ model TripDocument {
 
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
-  @@unique([tripId, type])
+  @@index([tripId, type])
 }
 
 // =========================

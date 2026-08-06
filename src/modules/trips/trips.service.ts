@@ -20,7 +20,7 @@ import { AerodataboxService } from "./aviationstack.service";
 
   import { DateTime } from "luxon";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
-import { TripDocumentType, UpsertTripDocumentDto } from "./dto/trip-document.dto";
+import { TripDocumentType, CreateTripDocumentDto, UpdateTripDocumentDto } from "./dto/trip-document.dto";
 import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
 import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 
@@ -2026,11 +2026,10 @@ async setTripNotePinned(tripId: number, noteId: number, pinned: boolean) {
 // =========================================================
 
 async getTripDocuments(tripId: number) {
-  return this.prisma.tripDocument.findMany({ where: { tripId } });
+  return this.prisma.tripDocument.findMany({ where: { tripId }, orderBy: { createdAt: "asc" } });
 }
 
-async upsertTripDocument(tripId: number, type: TripDocumentType, dto: UpsertTripDocumentDto) {
-  // si viene planItemId, comprobamos que sea un plan item real de este viaje
+async createTripDocument(tripId: number, dto: CreateTripDocumentDto) {
   if (dto.planItemId != null) {
     const planItem = await this.prisma.tripPlanItem.findFirst({
       where: { id: dto.planItemId, tripId },
@@ -2039,27 +2038,51 @@ async upsertTripDocument(tripId: number, type: TripDocumentType, dto: UpsertTrip
     if (!planItem) throw new BadRequestException("planItemId no pertenece a este viaje");
   }
 
-  return this.prisma.tripDocument.upsert({
-    where: { tripId_type: { tripId, type } },
-    create: {
+  return this.prisma.tripDocument.create({
+    data: {
       tripId,
-      type,
+      type: dto.type,
       provider: dto.provider ?? null,
       referenceCode: dto.referenceCode ?? null,
       expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
-      planItemId: dto.planItemId ?? null,
-    },
-    update: {
-      provider: dto.provider ?? null,
-      referenceCode: dto.referenceCode ?? null,
-      expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
+      country: dto.country ?? null,
+      metadata: dto.metadata ?? undefined,
+      fileUrl: dto.fileUrl ?? null,
+      fileName: dto.fileName ?? null,
+      fileMimeType: dto.fileMimeType ?? null,
       planItemId: dto.planItemId ?? null,
     },
   });
 }
 
-async deleteTripDocument(tripId: number, type: TripDocumentType) {
-  await this.prisma.tripDocument.deleteMany({ where: { tripId, type } });
+async updateTripDocument(tripId: number, documentId: number, dto: UpdateTripDocumentDto) {
+  const existing = await this.prisma.tripDocument.findFirst({ where: { id: documentId, tripId }, select: { id: true } });
+  if (!existing) throw new NotFoundException("Document not found");
+
+  if (dto.planItemId != null) {
+    const planItem = await this.prisma.tripPlanItem.findFirst({
+      where: { id: dto.planItemId, tripId },
+      select: { id: true },
+    });
+    if (!planItem) throw new BadRequestException("planItemId no pertenece a este viaje");
+  }
+
+  const data: any = {};
+  if (dto.provider !== undefined) data.provider = dto.provider ?? null;
+  if (dto.referenceCode !== undefined) data.referenceCode = dto.referenceCode ?? null;
+  if (dto.expiryDate !== undefined) data.expiryDate = dto.expiryDate ? new Date(dto.expiryDate) : null;
+  if (dto.country !== undefined) data.country = dto.country ?? null;
+  if (dto.metadata !== undefined) data.metadata = dto.metadata ?? null;
+  if (dto.fileUrl !== undefined) data.fileUrl = dto.fileUrl ?? null;
+  if (dto.fileName !== undefined) data.fileName = dto.fileName ?? null;
+  if (dto.fileMimeType !== undefined) data.fileMimeType = dto.fileMimeType ?? null;
+  if (dto.planItemId !== undefined) data.planItemId = dto.planItemId ?? null;
+
+  return this.prisma.tripDocument.update({ where: { id: documentId }, data });
+}
+
+async deleteTripDocument(tripId: number, documentId: number) {
+  await this.prisma.tripDocument.deleteMany({ where: { id: documentId, tripId } });
   return { success: true };
 }
 

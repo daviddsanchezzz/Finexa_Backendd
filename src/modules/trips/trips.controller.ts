@@ -7,7 +7,6 @@ import {
   Patch,
   Delete,
   Param,
-  ParseEnumPipe,
   Body,
   ParseIntPipe,
   Query,
@@ -21,7 +20,7 @@ import { AttachTransactionsDto } from "./dto/attach-transactions.dto";
 import { InviteTripMemberDto } from "./dto/invite-trip-member.dto";
 import { AerodataboxService } from "./aviationstack.service";
 import { CreateTripNoteDto, CreateTripTaskDto, TaskStatus, UpdateTripNoteDto, UpdateTripTaskDto } from "./dto/trip-notes-tasks.dto";
-import { TripDocumentType, UpsertTripDocumentDto } from "./dto/trip-document.dto";
+import { CreateTripDocumentDto, UpdateTripDocumentDto } from "./dto/trip-document.dto";
 import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
 import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 
@@ -295,25 +294,35 @@ async listDocuments(
   return this.tripsService.getTripDocuments(tripId);
 }
 
-@Put(":tripId/documents/:type")
-async upsertDocument(
+@Post(":tripId/documents")
+async createDocument(
   @User("id") userId: number,
   @Param("tripId", ParseIntPipe) tripId: number,
-  @Param("type", new ParseEnumPipe(TripDocumentType)) type: TripDocumentType,
-  @Body() dto: UpsertTripDocumentDto
+  @Body() dto: CreateTripDocumentDto
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
-  return this.tripsService.upsertTripDocument(tripId, type, dto);
+  return this.tripsService.createTripDocument(tripId, dto);
 }
 
-@Delete(":tripId/documents/:type")
+@Patch(":tripId/documents/:id")
+async updateDocument(
+  @User("id") userId: number,
+  @Param("tripId", ParseIntPipe) tripId: number,
+  @Param("id", ParseIntPipe) documentId: number,
+  @Body() dto: UpdateTripDocumentDto
+) {
+  await this.tripsService.assertTripOwnership(userId, tripId);
+  return this.tripsService.updateTripDocument(tripId, documentId, dto);
+}
+
+@Delete(":tripId/documents/:id")
 async deleteDocument(
   @User("id") userId: number,
   @Param("tripId", ParseIntPipe) tripId: number,
-  @Param("type", new ParseEnumPipe(TripDocumentType)) type: TripDocumentType
+  @Param("id", ParseIntPipe) documentId: number
 ) {
   await this.tripsService.assertTripOwnership(userId, tripId);
-  return this.tripsService.deleteTripDocument(tripId, type);
+  return this.tripsService.deleteTripDocument(tripId, documentId);
 }
 
 // =========================================================
