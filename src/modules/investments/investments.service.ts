@@ -1696,9 +1696,12 @@ async createMonthlySnapshot(userId: number, monthStartInput: Date, isAuto: boole
   }
 }
 
-private async buildMonthlySnapshotPayload(userId: number, monthStartInput: Date, isAuto: boolean) {
-  const monthStart = this.normalizeToMonthStartUTC(monthStartInput);
-  const periodEnd = this.addMonthsUTC(monthStart, 1);
+// Calcula start/end/cashflow/profit/returnPct para un mes dado, cortando la
+// valoración en `periodEnd` — que para un mes ya cerrado es el día 1 del mes
+// siguiente, y para "cómo va el mes actual" es simplemente "ahora mismo".
+// Compartido entre el snapshot persistido (mes cerrado) y el cálculo en vivo
+// del mes en curso, para no duplicar la lógica entre ambos.
+private async computeSnapshotValues(userId: number, monthStart: Date, periodEnd: Date) {
   const prevMonthStart = this.addMonthsUTC(monthStart, -1);
 
   const prevSnap = await this.prisma.portfolioSnapshot.findUnique({
@@ -1714,18 +1717,31 @@ private async buildMonthlySnapshotPayload(userId: number, monthStartInput: Date,
       ? profit / startValue
       : null;
 
+  return { monthStart, currency: 'EUR', startValue, endValue, cashflowNet, profit, returnPct };
+}
+
+private async buildMonthlySnapshotPayload(userId: number, monthStartInput: Date, isAuto: boolean) {
+  const monthStart = this.normalizeToMonthStartUTC(monthStartInput);
+  const periodEnd = this.addMonthsUTC(monthStart, 1);
+  const values = await this.computeSnapshotValues(userId, monthStart, periodEnd);
+
   return {
     userId,
-    monthStart,
-    currency: 'EUR',
-    startValue,
-    endValue,
-    cashflowNet,
-    profit,
-    returnPct,
+    ...values,
     isAuto,
     active: true,
   };
+}
+
+// Rentabilidad del mes en curso, calculada en vivo (no persistida): mismo
+// cálculo que el snapshot mensual pero cortando "ahora" en vez de esperar a
+// que el mes cierre. Cuando el mes cierre de verdad, el cron la sustituye
+// por el snapshot final — este método nunca escribe en PortfolioSnapshot.
+async getCurrentMonthReturn(userId: number) {
+  const now = new Date();
+  const monthStart = this.normalizeToMonthStartUTC(now);
+  const values = await this.computeSnapshotValues(userId, monthStart, now);
+  return { ...values, isCurrent: true };
 }
 
 async rebuildMonthlySnapshot(userId: number, monthStartInput: Date) {

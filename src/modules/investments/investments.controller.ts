@@ -43,6 +43,14 @@ export class InvestmentsController {
     return this.investmentsService.listMonthlySnapshots(userId, q);
   }
 
+  // Rentabilidad del mes en curso, calculada en vivo — no es un snapshot
+  // guardado, así que va antes de "snapshots/rebuild" pero no choca con él
+  // (rutas estáticas, Nest las resuelve por coincidencia exacta).
+  @Get('snapshots/current')
+  async getCurrentSnapshot(@User('id') userId: number) {
+    return this.investmentsService.getCurrentMonthReturn(userId);
+  }
+
   @Post('snapshots/rebuild')
   async rebuildSnapshot(
     @User('id') userId: number,
