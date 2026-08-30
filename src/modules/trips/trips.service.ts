@@ -491,6 +491,7 @@ async getTripDetail(userId: number, tripId: number) {
           accommodationDetails: true,
           destinationTransport: true,
           attachments: true,
+          transaction: { select: { date: true, createdAt: true } },
         },
       },
 
