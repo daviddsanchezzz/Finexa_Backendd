@@ -459,7 +459,7 @@ export class TripsService {
   async getTrips(userId: number, country?: string) {
     await this.syncAutomaticTripStatuses(userId);
     // si no hay fechas, ordena por createdAt para wishlist
-    return this.prisma.trip.findMany({
+    const trips = await this.prisma.trip.findMany({
       where: {
         ...this.tripAccessFilter(userId),
         ...(country ? { countryStays: { some: { country: country.trim().toUpperCase() } } } : {}),
@@ -468,8 +468,32 @@ export class TripsService {
         countryStays: { orderBy: { order: "asc" } },
         user: { select: { id: true, name: true, email: true } },
         members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true } } } },
+        planItems: { select: { cost: true, metadata: true } },
+        transactions: {
+          where: { active: true, type: "expense" },
+          select: { amount: true },
+        },
       },
       orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],
+    });
+
+    return trips.map(({ planItems, transactions, ...trip }) => {
+      const plannedCost = planItems.reduce((total, item) => {
+        if ((item.metadata as any)?.pending) return total;
+        return total + Number(item.cost || 0);
+      }, 0);
+      const transactionsCost = transactions.reduce(
+        (total, transaction) => total + Number(transaction.amount || 0),
+        0,
+      );
+      const liveCost = plannedCost + transactionsCost;
+
+      return {
+        ...trip,
+        // El detalle calcula el gasto desde planning + transacciones. Usamos
+        // el coste guardado solo como respaldo para viajes antiguos/manuales.
+        cost: liveCost > 0 ? liveCost : Number(trip.cost || 0),
+      };
     });
   }
 
