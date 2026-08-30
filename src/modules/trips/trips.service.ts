@@ -52,6 +52,16 @@ function startOfDay(d: Date) {
   return x;
 }
 
+function inferTripStatus(startDate?: Date | null, endDate?: Date | null): StatusDto {
+  if (!startDate && !endDate) return StatusDto.wishlist;
+
+  const today = startOfDay(new Date());
+  const completionDate = endDate ?? startDate;
+  if (completionDate && startOfDay(completionDate) < today) return StatusDto.seen;
+
+  return StatusDto.planning;
+}
+
 function parseNullableDate(v?: string | Date | null) {
   if (!v) return null;
   const d = v instanceof Date ? v : new Date(v);
@@ -150,6 +160,70 @@ export class TripsService {
   // A trip is accessible to its creator and to any accepted TripMember.
   private tripAccessFilter(userId: number) {
     return { OR: [{ userId }, { members: { some: { userId, status: "accepted" as const } } }] };
+  }
+
+  private async syncAutomaticTripStatuses(userId: number, tripId?: number) {
+    const today = startOfDay(new Date());
+    const scope = {
+      AND: [
+        this.tripAccessFilter(userId),
+        tripId != null ? { id: tripId } : {},
+        { statusManuallySet: false },
+      ],
+    };
+
+    // Un viaje automático termina al comenzar el día posterior a su fecha
+    // final. Si solo tiene una fecha, esa fecha actúa como inicio y fin.
+    await this.prisma.trip.updateMany({
+      where: {
+        ...scope,
+        status: { in: [StatusDto.wishlist, StatusDto.planning] },
+        OR: [
+          { endDate: { lt: today } },
+          { endDate: null, startDate: { lt: today } },
+        ],
+      },
+      data: { status: StatusDto.seen },
+    });
+
+    // Los wishlist automáticos que ya tienen alguna fecha vigente pasan a
+    // planificación. Guardamos antes los datos necesarios para crear su
+    // subcategoría de gastos igual que en una edición normal.
+    const tripsStartingPlanning = await this.prisma.trip.findMany({
+      where: {
+        ...scope,
+        status: StatusDto.wishlist,
+        OR: [{ startDate: { not: null } }, { endDate: { not: null } }],
+      },
+      select: { id: true, userId: true, name: true, destination: true },
+    });
+
+    if (tripsStartingPlanning.length > 0) {
+      await this.prisma.trip.updateMany({
+        where: { id: { in: tripsStartingPlanning.map((trip) => trip.id) } },
+        data: { status: StatusDto.planning },
+      });
+      await Promise.all(
+        tripsStartingPlanning.map((trip) =>
+          this.syncTripSubcategory(trip.userId, trip.id, trip.name, trip.destination).catch(() => {})
+        )
+      );
+    }
+  }
+
+  async syncExpiredAutomaticTrips() {
+    const today = startOfDay(new Date());
+    return this.prisma.trip.updateMany({
+      where: {
+        statusManuallySet: false,
+        status: { in: [StatusDto.wishlist, StatusDto.planning] },
+        OR: [
+          { endDate: { lt: today } },
+          { endDate: null, startDate: { lt: today } },
+        ],
+      },
+      data: { status: StatusDto.seen },
+    });
   }
 
   private wrapChecklistError(error: unknown): never {
@@ -347,6 +421,10 @@ export class TripsService {
     const continent = derived ? (derived.continent as any) : dto.continent;
 
     const year = startDate?.getFullYear() ?? endDate?.getFullYear() ?? undefined;
+    const statusWasManuallySet = dto.autoStatus !== true && dto.status != null;
+    const status = statusWasManuallySet
+      ? dto.status!
+      : inferTripStatus(startDate, endDate);
 
     const trip = await this.prisma.trip.create({
       data: {
@@ -360,14 +438,15 @@ export class TripsService {
         cost: dto.cost,
         continent,
         year,
-        status: dto.status,
+        status,
+        statusManuallySet: statusWasManuallySet,
         coverImageUrl: dto.coverImageUrl ?? null,
       },
     });
 
     await this.syncCountryStays(trip.id, dto, { startDate, endDate });
 
-    if (dto.status === StatusDto.planning) {
+    if (status === StatusDto.planning) {
       await this.syncTripSubcategory(userId, trip.id, dto.name, destination).catch(() => {});
     }
 
@@ -378,6 +457,7 @@ export class TripsService {
   }
 
   async getTrips(userId: number, country?: string) {
+    await this.syncAutomaticTripStatuses(userId);
     // si no hay fechas, ordena por createdAt para wishlist
     return this.prisma.trip.findMany({
       where: {
@@ -394,6 +474,7 @@ export class TripsService {
   }
 
 async getTripDetail(userId: number, tripId: number) {
+  await this.syncAutomaticTripStatuses(userId, tripId);
   const trip = await this.prisma.trip.findFirst({
     where: { id: tripId, ...this.tripAccessFilter(userId) },
     include: {
@@ -448,12 +529,32 @@ async getTripDetail(userId: number, tripId: number) {
     const existing = await this.prisma.trip.findFirst({ where: { id: tripId, ...this.tripAccessFilter(userId) } });
     if (!existing) throw new ForbiddenException();
 
-    const { countryStays, ...rest } = dto;
+    const { countryStays, autoStatus, ...rest } = dto;
     const derived = countryStays?.length ? deriveFromStays(countryStays) : null;
 
     const startDate = derived?.startDate ?? (dto.startDate ? new Date(dto.startDate) : undefined);
     const endDate = derived?.endDate ?? (dto.endDate ? new Date(dto.endDate) : undefined);
-    const year = startDate?.getFullYear() ?? endDate?.getFullYear() ?? undefined;
+    const datesWereProvided =
+      countryStays !== undefined || dto.startDate !== undefined || dto.endDate !== undefined;
+    const nextStartDate = countryStays !== undefined
+      ? startDate ?? null
+      : dto.startDate !== undefined
+        ? startDate ?? null
+        : existing.startDate;
+    const nextEndDate = countryStays !== undefined
+      ? endDate ?? null
+      : dto.endDate !== undefined
+        ? endDate ?? null
+        : existing.endDate;
+    const year = nextStartDate?.getFullYear() ?? nextEndDate?.getFullYear() ?? null;
+
+    const statusWasManuallySet = autoStatus !== true && dto.status != null;
+    const useAutomaticStatus = autoStatus === true || (!existing.statusManuallySet && !statusWasManuallySet);
+    const nextStatus = statusWasManuallySet
+      ? dto.status!
+      : useAutomaticStatus
+        ? inferTripStatus(nextStartDate, nextEndDate)
+        : existing.status;
 
     const updated = await this.prisma.trip.update({
       where: { id: tripId },
@@ -461,15 +562,17 @@ async getTripDetail(userId: number, tripId: number) {
         ...rest,
         destination: derived ? derived.destination : dto.destination ? normalizeCountryCode(dto.destination) : undefined,
         continent: derived ? (derived.continent as any) : dto.continent,
-        startDate,
-        endDate,
-        year,
+        startDate: datesWereProvided ? nextStartDate : undefined,
+        endDate: datesWereProvided ? nextEndDate : undefined,
+        year: datesWereProvided ? year : undefined,
+        status: nextStatus,
+        statusManuallySet: autoStatus === true ? false : statusWasManuallySet ? true : existing.statusManuallySet,
       },
     });
 
     await this.syncCountryStays(tripId, dto, {
-      startDate: startDate ?? existing.startDate ?? undefined,
-      endDate: endDate ?? existing.endDate ?? undefined,
+      startDate: nextStartDate ?? undefined,
+      endDate: nextEndDate ?? undefined,
     });
 
     if (updated.status === StatusDto.planning) {
@@ -1270,6 +1373,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
   // SUMMARY (igual que el tuyo)
   // =========================================================
   async getSummary(userId: number) {
+    await this.syncAutomaticTripStatuses(userId);
     const TOTAL_COUNTRIES = 195;
 
     const today = new Date();
@@ -2330,6 +2434,7 @@ async toggleTripTaskStatus(tripId: number, taskId: number) {
 
 
 async getContinentsStats(userId: number) {
+  await this.syncAutomaticTripStatuses(userId);
   // 1) Trae los stays (país + continente propios) de cada viaje visto —
   // un viaje puede tener varios países, cada uno con su propio continente.
   const seenStays = await this.prisma.tripCountryStay.findMany({

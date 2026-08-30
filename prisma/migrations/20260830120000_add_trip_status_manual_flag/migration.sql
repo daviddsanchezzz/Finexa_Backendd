@@ -1,0 +1,2 @@
+ALTER TABLE "Trip"
+ADD COLUMN "statusManuallySet" BOOLEAN NOT NULL DEFAULT false;

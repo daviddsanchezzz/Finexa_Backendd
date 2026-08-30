@@ -19,4 +19,15 @@ export class TripsRemindersScheduler {
       this.logger.error("Error al procesar recordatorios de viaje", error);
     }
   }
+
+  // Mantiene los estados automáticos al día incluso aunque nadie abra la
+  // pantalla de viajes. Las lecturas también sincronizan como respaldo.
+  @Cron("0 5 0 * * *", { timeZone: "Europe/Madrid" })
+  async handleAutomaticTripStatuses() {
+    try {
+      await this.tripsService.syncExpiredAutomaticTrips();
+    } catch (error) {
+      this.logger.error("Error al actualizar estados automáticos de viajes", error);
+    }
+  }
 }

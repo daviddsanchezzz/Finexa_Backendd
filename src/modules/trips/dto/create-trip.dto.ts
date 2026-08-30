@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsDateString, IsArray, IsNumber, Length, Matches, IsEnum, IsInt, ValidateNested } from "class-validator";
+import { IsString, IsOptional, IsDateString, IsArray, IsNumber, IsBoolean, Length, Matches, IsEnum, IsInt, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
 
 export enum ContinentDto {
@@ -53,6 +53,12 @@ continent?: ContinentDto;
   @IsOptional()
 @IsEnum(StatusDto)
 status?: StatusDto;
+
+  // Permite volver al modo automático después de haber elegido un estado
+  // manualmente. No se persiste como campo del viaje.
+  @IsOptional()
+  @IsBoolean()
+  autoStatus?: boolean;
 
 @IsOptional()
 @IsInt()

@@ -633,6 +633,7 @@ model Trip {
 
   companions  String[]
   status      TripStatus @default(wishlist)
+  statusManuallySet Boolean @default(false)
 
   cost        Float      @default(0)
   budget      Float?
