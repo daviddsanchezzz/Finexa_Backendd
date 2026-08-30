@@ -415,7 +415,12 @@ async getTripDetail(userId: number, tripId: number) {
 
       transactions: {
         where: { active: true },
-        include: { category: true, subcategory: true, wallet: true },
+        include: {
+          category: true,
+          subcategory: true,
+          wallet: true,
+          planItems: { select: { transactionId: true, metadata: true } },
+        },
       },
 
       countryStays: { orderBy: { order: "asc" } },

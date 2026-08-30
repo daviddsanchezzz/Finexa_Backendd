@@ -318,6 +318,7 @@ if (filters?.dateFrom || filters?.dateTo) {
           fromWallet: true,
           toWallet: true,
           project: true,
+          planItems: { select: { transactionId: true, metadata: true } },
         },
         orderBy: { date: 'desc' },
       });
@@ -339,6 +340,9 @@ if (filters?.dateFrom || filters?.dateTo) {
   async findOne(userId: number, id: number) {
     const tx = await this.prisma.transaction.findFirst({
       where: { id, userId, active: true },
+      include: {
+        planItems: { select: { transactionId: true, metadata: true } },
+      },
     });
 
     if (!tx) throw new NotFoundException('Transaction not found');
@@ -385,6 +389,10 @@ if (filters?.dateFrom || filters?.dateTo) {
 
     // 2️⃣ ACTUALIZAR TRANSACCIÓN
     const { tripExpenseCategory, ...dtoAny } = dto as any;
+    const hasTripExpenseCategory = Object.prototype.hasOwnProperty.call(
+      dto,
+      'tripExpenseCategory',
+    );
     const updated = await this.prisma.transaction.update({
       where: { id },
       data: dtoAny,
@@ -393,14 +401,36 @@ if (filters?.dateFrom || filters?.dateTo) {
     // Sync linked TripPlanItem cost if one exists for this transaction
     const linkedPlanItem = await this.prisma.tripPlanItem.findFirst({
       where: { transactionId: id },
-      select: { id: true },
+      select: { id: true, metadata: true },
     });
     if (linkedPlanItem) {
+      const currentMetadata =
+        linkedPlanItem.metadata &&
+        typeof linkedPlanItem.metadata === 'object' &&
+        !Array.isArray(linkedPlanItem.metadata)
+          ? (linkedPlanItem.metadata as Record<string, unknown>)
+          : {};
+
       await this.prisma.tripPlanItem.update({
         where: { id: linkedPlanItem.id },
         data: {
           cost: updated.amount,
           ...(dtoAny.description ? { title: dtoAny.description } : {}),
+          ...(hasTripExpenseCategory
+            ? {
+                metadata: tripExpenseCategory
+                  ? {
+                      ...currentMetadata,
+                      expenseCategory: tripExpenseCategory,
+                      pending: false,
+                    }
+                  : {
+                      ...currentMetadata,
+                      expenseCategory: 'other',
+                      pending: true,
+                    },
+              }
+            : {}),
         },
       }).catch(() => null);
     } else if (dtoAny.subcategoryId) {
