@@ -24,6 +24,7 @@ import { TripDocumentType, CreateTripDocumentDto, UpdateTripDocumentDto } from "
 import { CreateTripGalleryPhotoDto } from "./dto/trip-gallery-photo.dto";
 import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
 import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
+import { hasTripEnded, tripTodayStartUtc } from "./trip-date.utils";
 
 function parseProviderLocalToUtcJsDate(localStr?: string | null) {
   // "2026-04-03 16:00+02:00" -> ISO -> Date
@@ -55,9 +56,8 @@ function startOfDay(d: Date) {
 function inferTripStatus(startDate?: Date | null, endDate?: Date | null): StatusDto {
   if (!startDate && !endDate) return StatusDto.wishlist;
 
-  const today = startOfDay(new Date());
   const completionDate = endDate ?? startDate;
-  if (completionDate && startOfDay(completionDate) < today) return StatusDto.seen;
+  if (completionDate && hasTripEnded(completionDate)) return StatusDto.seen;
 
   return StatusDto.planning;
 }
@@ -163,7 +163,7 @@ export class TripsService {
   }
 
   private async syncAutomaticTripStatuses(userId: number, tripId?: number) {
-    const today = startOfDay(new Date());
+    const today = tripTodayStartUtc();
     const scope = {
       AND: [
         this.tripAccessFilter(userId),
@@ -171,6 +171,20 @@ export class TripsService {
         { statusManuallySet: false },
       ],
     };
+
+    // Repara estados automáticos calculados con el antiguo corte UTC: durante
+    // todo el último día natural el viaje todavía está en planificación/curso.
+    await this.prisma.trip.updateMany({
+      where: {
+        ...scope,
+        status: StatusDto.seen,
+        OR: [
+          { endDate: { gte: today } },
+          { endDate: null, startDate: { gte: today } },
+        ],
+      },
+      data: { status: StatusDto.planning },
+    });
 
     // Un viaje automático termina al comenzar el día posterior a su fecha
     // final. Si solo tiene una fecha, esa fecha actúa como inicio y fin.
@@ -212,7 +226,20 @@ export class TripsService {
   }
 
   async syncExpiredAutomaticTrips() {
-    const today = startOfDay(new Date());
+    const today = tripTodayStartUtc();
+
+    await this.prisma.trip.updateMany({
+      where: {
+        statusManuallySet: false,
+        status: StatusDto.seen,
+        OR: [
+          { endDate: { gte: today } },
+          { endDate: null, startDate: { gte: today } },
+        ],
+      },
+      data: { status: StatusDto.planning },
+    });
+
     return this.prisma.trip.updateMany({
       where: {
         statusManuallySet: false,
@@ -1401,8 +1428,7 @@ async addPlanItem(userId: number, tripId: number, dto: CreateTripPlanItemDto) {
     await this.syncAutomaticTripStatuses(userId);
     const TOTAL_COUNTRIES = 195;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = tripTodayStartUtc();
 
     const nextTrip = await this.prisma.trip.findFirst({
       where: {
