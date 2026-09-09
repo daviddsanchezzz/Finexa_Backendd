@@ -121,9 +121,12 @@ export class TransactionsService {
     }
 
     // 2b) Si venimos del flujo "quick add" (link de Shortcuts), resolver la
-    // notificación de "nuevo gasto" pendiente con ese mismo qid (no bloqueante).
+    // notificación de "nuevo gasto" pendiente con ese mismo qid. Esperamos a
+    // que termine (normalmente es instantáneo, la notificación ya existe)
+    // para que cuando el frontend reciba la respuesta y refresque su lista
+    // de notificaciones, el cambio ya esté aplicado en BD.
     if (quickAddId) {
-      this.notifications.resolveQuickTransaction(userId, quickAddId).catch(() => null);
+      await this.notifications.resolveQuickTransaction(userId, quickAddId).catch(() => null);
     }
 
     // 3) Si hay auto-trip y NO es recurrente, crear TripPlanItem integrado.
