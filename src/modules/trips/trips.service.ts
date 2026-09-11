@@ -826,6 +826,9 @@ async getTripDetail(userId: number, tripId: number) {
         type: { in: ["flight", "transport_destination", "transport_local"] },
         startAt: { gte: now, lte: windowEnd },
         departureReminderSentAt: null,
+        // Solo viajes en organización: uno ya visitado o en wishlist no
+        // debe generar recordatorios aunque sus fechas coincidan con hoy.
+        trip: { status: StatusDto.planning },
       },
       select: { id: true, tripId: true, title: true },
     });
@@ -857,6 +860,7 @@ async getTripDetail(userId: number, tripId: number) {
         type: "accommodation",
         checkInReminderSentAt: null,
         accommodationDetails: { checkInAt: { gte: now, lte: windowEnd15 } },
+        trip: { status: StatusDto.planning },
       },
       include: { accommodationDetails: true },
     });
@@ -882,6 +886,7 @@ async getTripDetail(userId: number, tripId: number) {
         type: "accommodation",
         checkOutReminderSentAt: null,
         accommodationDetails: { checkOutAt: { gte: now, lte: windowEnd60 } },
+        trip: { status: StatusDto.planning },
       },
       include: { accommodationDetails: true },
     });
