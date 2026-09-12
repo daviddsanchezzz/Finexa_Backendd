@@ -322,6 +322,7 @@ if (filters?.dateFrom || filters?.dateTo) {
           toWallet: true,
           project: true,
           planItems: { select: { transactionId: true, metadata: true } },
+          investmentAsset: { select: { id: true, name: true, abbreviation: true } },
         },
         orderBy: { date: 'desc' },
       });
