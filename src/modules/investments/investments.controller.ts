@@ -267,14 +267,24 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
 timeline(
   @User('id') userId: number,
   @Query('days') days?: string,
+  @Query('asOf') asOf?: string,
 ) {
+  const parsedAsOf = asOf ? new Date(asOf) : undefined;
+  if (parsedAsOf && !Number.isFinite(parsedAsOf.getTime())) {
+    throw new BadRequestException('Invalid asOf');
+  }
+
+  if (days === 'all') {
+    return this.investmentsService.getPortfolioTimeline(userId, null, parsedAsOf);
+  }
+
   const n = Number(days);
 
   if (days !== undefined && !Number.isFinite(n)) {
     throw new BadRequestException('Invalid days');
   }
 
-  return this.investmentsService.getPortfolioTimeline(userId, Number.isFinite(n) ? n : 90);
+  return this.investmentsService.getPortfolioTimeline(userId, Number.isFinite(n) ? n : 90, parsedAsOf);
 }
 
 

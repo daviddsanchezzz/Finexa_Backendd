@@ -11,6 +11,13 @@ import { CreateInvestmentValuationDto } from './dto/create-valuation.dto';
 import { CreateInvestmentValuationsBatchDto } from './dto/create-valuations-batch.dto';
 import { UpdateInvestmentValuationDto } from './dto/update-valuation.dto';
 import { Prisma, PrismaClient } from '@prisma/client';
+import {
+  addUtcDays as addPerformanceUtcDays,
+  buildPortfolioPerformanceSeries,
+  calculatePeriodPerformance,
+  externalFlowForOperation,
+  startOfUtcDay as startOfPerformanceUtcDay,
+} from './investment-performance';
 type Tx = Prisma.TransactionClient;
 
 /**
@@ -204,6 +211,68 @@ private async adjustAssetQuantityTx(
   // Portfolio Value (for snapshots)
   // =============================
 
+  private async getPortfolioPerformanceData(userId: number, asOf: Date) {
+    const assets = await this.prisma.investmentAsset.findMany({
+      where: { userId, active: true, archived: false },
+      select: { id: true, createdAt: true, initialInvested: true },
+    });
+    const assetIds = assets.map((asset) => asset.id);
+
+    if (!assetIds.length) {
+      return {
+        ...buildPortfolioPerformanceSeries({ assets: [], operations: [], valuations: [], asOf }),
+        assetReturns: new Map<number, number>(),
+      };
+    }
+
+    const [operations, valuations] = await Promise.all([
+      this.prisma.investmentOperation.findMany({
+        where: { userId, active: true, assetId: { in: assetIds }, date: { lte: asOf } },
+        select: { id: true, assetId: true, type: true, date: true, amount: true, fee: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.investmentValuationSnapshot.findMany({
+        where: { userId, active: true, assetId: { in: assetIds }, date: { lte: asOf } },
+        select: { id: true, assetId: true, date: true, value: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+
+    const normalizedAssets = assets.map((asset) => ({
+        id: asset.id,
+        createdAt: asset.createdAt,
+        initialInvested: Number(asset.initialInvested || 0),
+      }));
+    const normalizedOperations = operations.map((operation) => ({
+        ...operation,
+        type: String(operation.type),
+        amount: Number(operation.amount || 0),
+        fee: Number(operation.fee || 0),
+      }));
+    const normalizedValuations = valuations.map((valuation) => ({
+        ...valuation,
+        value: Number(valuation.value || 0),
+      }));
+    const portfolio = buildPortfolioPerformanceSeries({
+      assets: normalizedAssets,
+      operations: normalizedOperations,
+      valuations: normalizedValuations,
+      asOf,
+    });
+    const assetReturns = new Map<number, number>();
+    normalizedAssets.forEach((asset) => {
+      const assetPerformance = buildPortfolioPerformanceSeries({
+        assets: [asset],
+        operations: normalizedOperations.filter((operation) => operation.assetId === asset.id),
+        valuations: normalizedValuations.filter((valuation) => valuation.assetId === asset.id),
+        asOf,
+      });
+      assetReturns.set(asset.id, assetPerformance.points.at(-1)?.twr ?? 0);
+    });
+
+    return { ...portfolio, assetReturns };
+  }
+
   /**
    * Portfolio mark-to-model at a target date:
    * - For each asset: last valuation <= target (if exists), else fallback to "book value"
@@ -211,68 +280,8 @@ private async adjustAssetQuantityTx(
    *   (swaps are included here to keep per-asset allocation coherent when user swaps)
    */
   private async getPortfolioValueAt(userId: number, target: Date): Promise<number> {
-    const assets = await this.prisma.investmentAsset.findMany({
-      where: { userId, active: true, archived: false },
-      select: { id: true, initialInvested: true },
-    });
-
-    const assetIds = assets.map((a) => a.id);
-    if (assetIds.length === 0) return 0;
-
-    const ops = await this.prisma.investmentOperation.findMany({
-      where: {
-        userId,
-        active: true,
-        assetId: { in: assetIds },
-        date: { lte: target },
-        type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell', 'swap_in', 'swap_out'] as any },
-      },
-      select: { assetId: true, type: true, amount: true },
-    });
-
-    // Book value allocation (includes swaps)
-    const inflow = new Set(['transfer_in', 'buy', 'swap_in']);
-    const outflow = new Set(['transfer_out', 'sell', 'swap_out']);
-
-    const bookByAsset = new Map<number, number>();
-    for (const a of assets) bookByAsset.set(a.id, Number(a.initialInvested ?? 0));
-
-    for (const o of ops) {
-      const t = String(o.type);
-      const amt = Number(o.amount ?? 0);
-      const delta = inflow.has(t) ? amt : outflow.has(t) ? -amt : 0;
-      if (delta) bookByAsset.set(o.assetId, (bookByAsset.get(o.assetId) ?? 0) + delta);
-    }
-
-    const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
-      by: ['assetId'],
-      where: { userId, active: true, assetId: { in: assetIds }, date: { lte: target } },
-      _max: { date: true },
-    });
-
-    const pairs = latestDates
-      .filter((r) => r._max.date)
-      .map((r) => ({ assetId: r.assetId, date: r._max.date! }));
-
-    const snaps = pairs.length
-      ? await this.prisma.investmentValuationSnapshot.findMany({
-          where: { userId, active: true, OR: pairs },
-          select: { assetId: true, date: true, value: true },
-        })
-      : [];
-
-    const snapMap = new Map<number, { date: Date; value: number }>();
-    for (const s of snaps) {
-      const prev = snapMap.get(s.assetId);
-      if (!prev || s.date > prev.date) snapMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
-    }
-
-    let total = 0;
-    for (const assetId of assetIds) {
-      const v = snapMap.get(assetId)?.value;
-      total += v ?? (bookByAsset.get(assetId) ?? 0);
-    }
-    return total;
+    const { points } = await this.getPortfolioPerformanceData(userId, target);
+    return points.at(-1)?.equity ?? 0;
   }
 
   // =============================
@@ -285,75 +294,7 @@ private async adjustAssetQuantityTx(
    */
   public async recalcInvestmentWalletBalance(userId: number) {
     const investmentWalletId = await this.getSingleInvestmentWallet(userId);
-
-    const assets = await this.prisma.investmentAsset.findMany({
-      where: { userId, active: true, archived: false },
-      select: { id: true, initialInvested: true },
-    });
-
-    if (assets.length === 0) {
-      await this.prisma.wallet.update({ where: { id: investmentWalletId }, data: { balance: 0 } });
-      return;
-    }
-
-    const assetIds = assets.map((a) => a.id);
-
-    const ops = await this.prisma.investmentOperation.findMany({
-      where: { userId, active: true, assetId: { in: assetIds } },
-      select: { assetId: true, type: true, amount: true },
-    });
-
-    // Book value allocation (includes swaps)
-    const inflowTypes = new Set(['transfer_in', 'buy', 'swap_in']);
-    const outflowTypes = new Set(['transfer_out', 'sell', 'swap_out']);
-
-    const aggMap = new Map<number, { inflow: number; outflow: number }>();
-    for (const o of ops) {
-      const prev = aggMap.get(o.assetId) ?? { inflow: 0, outflow: 0 };
-      const t = String(o.type);
-      const amt = Number(o.amount ?? 0);
-
-      if (inflowTypes.has(t)) prev.inflow += amt;
-      else if (outflowTypes.has(t)) prev.outflow += amt;
-      aggMap.set(o.assetId, prev);
-    }
-
-    const latestDates = await this.prisma.investmentValuationSnapshot.groupBy({
-      by: ['assetId'],
-      where: { userId, active: true, assetId: { in: assetIds } },
-      _max: { date: true },
-    });
-
-    const latestPairs = latestDates
-      .filter((r) => r._max.date)
-      .map((r) => ({ assetId: r.assetId, date: r._max.date! }));
-
-    const latestSnapshots = latestPairs.length
-      ? await this.prisma.investmentValuationSnapshot.findMany({
-          where: { userId, active: true, OR: latestPairs },
-          select: { assetId: true, value: true, date: true },
-        })
-      : [];
-
-    const snapshotMap = new Map<number, { value: number; date: Date }>();
-    for (const s of latestSnapshots) {
-      const prev = snapshotMap.get(s.assetId);
-      if (!prev || s.date > prev.date) snapshotMap.set(s.assetId, { value: Number(s.value ?? 0), date: s.date });
-    }
-
-    let totalCurrentValue = 0;
-
-    for (const a of assets) {
-      const agg = aggMap.get(a.id) ?? { inflow: 0, outflow: 0 };
-
-      const initial = Number(a.initialInvested ?? 0);
-      const bookValue = initial + agg.inflow - agg.outflow;
-
-      const snap = snapshotMap.get(a.id);
-      const currentValue = snap?.value ?? bookValue;
-
-      totalCurrentValue += Number(currentValue ?? 0);
-    }
+    const totalCurrentValue = await this.getPortfolioValueAt(userId, new Date());
 
     await this.prisma.wallet.update({
       where: { id: investmentWalletId },
@@ -706,6 +647,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
   // Summary (cash flows vs book allocation)
   // =============================
   async getSummary(userId: number) {
+    const asOf = new Date();
     const assets = await this.prisma.investmentAsset.findMany({
       where: { userId, active: true, archived: false },
       orderBy: { name: 'asc' },
@@ -732,45 +674,40 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
         totalContributed: 0,
         totalWithdrawn: 0,
         totalNetContributed: 0,
+        returnPct: 0,
+        asOf: asOf.toISOString(),
         assets: [],
       };
     }
 
-    // Cash flows (true contributions/withdrawals)
-    const cashInTypes = new Set(['transfer_in', 'buy']);
-    const cashOutTypes = new Set(['transfer_out', 'sell']);
-
-    // Book allocation (includes swaps)
-    const bookInTypes = new Set(['transfer_in', 'buy', 'swap_in']);
-    const bookOutTypes = new Set(['transfer_out', 'sell', 'swap_out']);
-
-    const [ops, latestDates] = await Promise.all([
+    const [ops, latestDates, performance] = await Promise.all([
       this.prisma.investmentOperation.findMany({
-        where: { userId, active: true, assetId: { in: assetIds } },
-        select: { assetId: true, type: true, amount: true },
+        where: { userId, active: true, assetId: { in: assetIds }, date: { lte: asOf } },
+        select: { id: true, assetId: true, type: true, amount: true, fee: true, date: true },
       }),
       this.prisma.investmentValuationSnapshot.groupBy({
         by: ['assetId'],
-        where: { userId, active: true, assetId: { in: assetIds } },
+        where: { userId, active: true, assetId: { in: assetIds }, date: { lte: asOf } },
         _max: { date: true },
       }),
+      this.getPortfolioPerformanceData(userId, asOf),
     ]);
 
     const agg = new Map<
       number,
-      { cashIn: number; cashOut: number; bookIn: number; bookOut: number }
+      { cashIn: number; cashOut: number }
     >();
 
     for (const o of ops) {
-      const t = String(o.type);
-      const amt = Number(o.amount ?? 0);
-      const prev = agg.get(o.assetId) ?? { cashIn: 0, cashOut: 0, bookIn: 0, bookOut: 0 };
-
-      if (cashInTypes.has(t)) prev.cashIn += amt;
-      else if (cashOutTypes.has(t)) prev.cashOut += amt;
-
-      if (bookInTypes.has(t)) prev.bookIn += amt;
-      else if (bookOutTypes.has(t)) prev.bookOut += amt;
+      const flow = externalFlowForOperation({
+        ...o,
+        type: String(o.type),
+        amount: Number(o.amount || 0),
+        fee: Number(o.fee || 0),
+      });
+      const prev = agg.get(o.assetId) ?? { cashIn: 0, cashOut: 0 };
+      if (flow > 0) prev.cashIn += flow;
+      else if (flow < 0) prev.cashOut += Math.abs(flow);
       agg.set(o.assetId, prev);
     }
 
@@ -792,7 +729,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
     }
 
     const perAsset = assets.map((a) => {
-      const aAgg = agg.get(a.id) ?? { cashIn: 0, cashOut: 0, bookIn: 0, bookOut: 0 };
+      const aAgg = agg.get(a.id) ?? { cashIn: 0, cashOut: 0 };
 
       const initial = Number(a.initialInvested ?? 0);
 
@@ -800,11 +737,8 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       const totalWithdrawn = aAgg.cashOut;            // true cash withdrawn
       const netContributed = totalContributed - totalWithdrawn;
 
-      // book value allocation (used as fallback if no valuations)
-      const bookValue = initial + aAgg.bookIn - aAgg.bookOut;
-
       const snap = snapshotMap.get(a.id);
-      const currentValue = snap?.value ?? bookValue;
+      const currentValue = performance.assetValues.get(a.id) ?? 0;
       const pnl = currentValue - netContributed; // PnL vs true net cash contributed
 
       return {
@@ -825,6 +759,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
         invested: netContributed, // kept for backward compatibility: "true invested"
         currentValue,
         pnl,
+        returnPct: performance.assetReturns.get(a.id) ?? 0,
         lastValuationDate: snap?.date ?? null,
       };
     });
@@ -833,7 +768,8 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
     const totalWithdrawn = perAsset.reduce((acc, x) => acc + x.totalWithdrawn, 0);
     const totalNetContributed = totalContributed - totalWithdrawn;
 
-    const totalCurrentValue = perAsset.reduce((acc, x) => acc + x.currentValue, 0);
+    const lastPerformancePoint = performance.points.at(-1);
+    const totalCurrentValue = lastPerformancePoint?.equity ?? 0;
     const totalPnL = totalCurrentValue - totalNetContributed;
 
     return {
@@ -843,6 +779,8 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       totalContributed,
       totalWithdrawn,
       totalNetContributed,
+      returnPct: lastPerformancePoint?.twr ?? 0,
+      asOf: asOf.toISOString(),
       assets: perAsset,
     };
   }
@@ -876,138 +814,25 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
     return x;
   }
 
-  async getPortfolioTimeline(userId: number, days = 90) {
-    const n = Math.max(7, Math.min(365, Number(days) || 90));
+  async getPortfolioTimeline(userId: number, days: number | null = 90, requestedAsOf?: Date) {
     const now = new Date();
-    const toExclusive = this.addUtcDays(this.startOfUtcDay(now), 1);
-    const from = this.addUtcDays(this.startOfUtcDay(now), -n + 1);
+    const asOf = requestedAsOf && Number.isFinite(requestedAsOf.getTime()) && requestedAsOf < now
+      ? requestedAsOf
+      : now;
+    const performance = await this.getPortfolioPerformanceData(userId, asOf);
+    let points = performance.points;
 
-    const assets = await this.prisma.investmentAsset.findMany({
-      where: { userId, active: true, archived: false },
-      select: { id: true, initialInvested: true },
-    });
-
-    const assetIds = assets.map((a) => a.id);
-    if (assetIds.length === 0) return { points: [] };
-
-    const bookInTypes = new Set(['transfer_in', 'buy', 'swap_in']);
-    const bookOutTypes = new Set(['transfer_out', 'sell', 'swap_out']);
-
-    // Seed equity, valuations in range, and ops all run in parallel
-    const [seedDates, valuations, ops] = await Promise.all([
-      this.prisma.investmentValuationSnapshot.groupBy({
-        by: ['assetId'],
-        where: { userId, active: true, assetId: { in: assetIds }, date: { lte: from } },
-        _max: { date: true },
-      }),
-      this.prisma.investmentValuationSnapshot.findMany({
-        where: { userId, active: true, assetId: { in: assetIds }, date: { gte: from, lt: toExclusive } },
-        orderBy: { date: 'asc' },
-        select: { assetId: true, date: true, value: true },
-      }),
-      this.prisma.investmentOperation.findMany({
-        where: { userId, active: true, assetId: { in: assetIds }, date: { lt: toExclusive } },
-        select: { assetId: true, type: true, amount: true, date: true },
-        orderBy: { date: 'asc' },
-      }),
-    ]);
-
-    const seedPairs = seedDates
-      .filter((r) => r._max.date)
-      .map((r) => ({ assetId: r.assetId, date: r._max.date! }));
-
-    const seedSnaps = seedPairs.length
-      ? await this.prisma.investmentValuationSnapshot.findMany({
-          where: { userId, active: true, OR: seedPairs },
-          select: { assetId: true, date: true, value: true },
-        })
-      : [];
-
-    const seedValueMap = new Map<number, { date: Date; value: number }>();
-    for (const s of seedSnaps) {
-      const prev = seedValueMap.get(s.assetId);
-      if (!prev || s.date > prev.date) seedValueMap.set(s.assetId, { date: s.date, value: Number(s.value ?? 0) });
+    if (days != null) {
+      const n = Math.max(1, Math.floor(Number(days) || 90));
+      const cutoff = addPerformanceUtcDays(startOfPerformanceUtcDay(asOf), -n + 1)
+        .toISOString()
+        .slice(0, 10);
+      const firstInside = points.findIndex((point) => point.date >= cutoff);
+      if (firstInside > 0) points = points.slice(firstInside - 1);
+      else if (firstInside < 0) points = points.slice(-1);
     }
 
-    const valuationsByDay = new Map<string, Map<number, number>>();
-    for (const v of valuations) {
-      const dayKey = this.toDayKeyUTC(v.date);
-      if (!valuationsByDay.has(dayKey)) valuationsByDay.set(dayKey, new Map());
-      valuationsByDay.get(dayKey)!.set(v.assetId, Number(v.value ?? 0));
-    }
-
-    // Book value by asset as "netContributions" line (includes swaps to keep allocation)
-    const bookByAsset = new Map<number, number>();
-    for (const a of assets) bookByAsset.set(a.id, Number(a.initialInvested ?? 0));
-
-    const opsByDay = new Map<string, Array<{ assetId: number; delta: number }>>();
-
-    for (const o of ops) {
-      const t = String(o.type);
-      const amt = Number(o.amount ?? 0);
-      const delta = bookInTypes.has(t) ? amt : bookOutTypes.has(t) ? -amt : 0;
-      if (!delta) continue;
-
-      const dayKey = this.toDayKeyUTC(o.date);
-
-      // seed < from
-      if (o.date < from) {
-        bookByAsset.set(o.assetId, (bookByAsset.get(o.assetId) ?? 0) + delta);
-        continue;
-      }
-
-      if (!opsByDay.has(dayKey)) opsByDay.set(dayKey, []);
-      opsByDay.get(dayKey)!.push({ assetId: o.assetId, delta });
-    }
-
-    const lastKnown = new Map<number, number>();
-    for (const assetId of assetIds) {
-      const seedSnap = seedValueMap.get(assetId)?.value;
-      const fallback = bookByAsset.get(assetId) ?? 0;
-      lastKnown.set(assetId, seedSnap ?? fallback);
-    }
-
-    const points: Array<{
-      date: string;
-      totalCurrentValue: number;
-      equity: number;
-      netContributions: number;
-    }> = [];
-
-    let cursor = new Date(from);
-
-    while (cursor < toExclusive) {
-      const dayKey = this.toDayKeyUTC(cursor);
-
-      const dayOps = opsByDay.get(dayKey);
-      if (dayOps) {
-        for (const { assetId, delta } of dayOps) {
-          bookByAsset.set(assetId, (bookByAsset.get(assetId) ?? 0) + delta);
-        }
-      }
-
-      const updates = valuationsByDay.get(dayKey);
-      if (updates) {
-        for (const [assetId, val] of updates.entries()) lastKnown.set(assetId, val);
-      }
-
-      let equity = 0;
-      for (const assetId of assetIds) equity += lastKnown.get(assetId) ?? 0;
-
-      let netContributions = 0;
-      for (const assetId of assetIds) netContributions += bookByAsset.get(assetId) ?? 0;
-
-      points.push({
-        date: dayKey,
-        totalCurrentValue: equity, // compatibility
-        equity,
-        netContributions,
-      });
-
-      cursor = this.addUtcDays(cursor, 1);
-    }
-
-    return { points };
+    return { asOf: asOf.toISOString(), points };
   }
 
 // =============================
@@ -1659,29 +1484,6 @@ private addMonthsUTC(d: Date, months: number) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1, 0, 0, 0, 0));
 }
 
-private async getCashflowNetForMonth(userId: number, from: Date, to: Date): Promise<number> {
-  const ops = await this.prisma.investmentOperation.findMany({
-    where: {
-      userId,
-      active: true,
-      date: { gte: from, lt: to },
-      type: { in: ['transfer_in', 'buy', 'transfer_out', 'sell'] as any }, // excluye swaps
-    },
-    select: { type: true, amount: true },
-  });
-
-  let net = 0;
-  for (const o of ops) {
-    const amt = Number(o.amount ?? 0);
-    const t = String(o.type);
-
-    if (t === 'transfer_in' || t === 'buy') net += amt;
-    else if (t === 'transfer_out' || t === 'sell') net -= amt;
-  }
-  return net;
-}
-
-
 async createMonthlySnapshot(userId: number, monthStartInput: Date, isAuto: boolean) {
   const payload = await this.buildMonthlySnapshotPayload(userId, monthStartInput, isAuto);
 
@@ -1702,22 +1504,16 @@ async createMonthlySnapshot(userId: number, monthStartInput: Date, isAuto: boole
 // Compartido entre el snapshot persistido (mes cerrado) y el cálculo en vivo
 // del mes en curso, para no duplicar la lógica entre ambos.
 private async computeSnapshotValues(userId: number, monthStart: Date, periodEnd: Date) {
-  const prevMonthStart = this.addMonthsUTC(monthStart, -1);
+  const now = new Date();
+  const isClosedPeriod = periodEnd <= now;
+  const asOf = isClosedPeriod ? new Date(periodEnd.getTime() - 1) : now;
+  const metricsEnd = isClosedPeriod
+    ? periodEnd
+    : addPerformanceUtcDays(startOfPerformanceUtcDay(asOf), 1);
+  const { points } = await this.getPortfolioPerformanceData(userId, asOf);
+  const metrics = calculatePeriodPerformance(points, monthStart, metricsEnd);
 
-  const prevSnap = await this.prisma.portfolioSnapshot.findUnique({
-    where: { userId_monthStart: { userId, monthStart: prevMonthStart } },
-    select: { endValue: true },
-  });
-  const startValue = prevSnap?.endValue ?? 2654.04;
-  const endValue = await this.getPortfolioValueAt(userId, periodEnd);
-  const cashflowNet = await this.getCashflowNetForMonth(userId, monthStart, periodEnd);
-  const profit = startValue == null ? null : endValue - startValue - cashflowNet;
-  const returnPct =
-    startValue != null && startValue > 0 && profit != null
-      ? profit / startValue
-      : null;
-
-  return { monthStart, currency: 'EUR', startValue, endValue, cashflowNet, profit, returnPct };
+  return { monthStart, currency: 'EUR', ...metrics };
 }
 
 private async buildMonthlySnapshotPayload(userId: number, monthStartInput: Date, isAuto: boolean) {
@@ -1740,7 +1536,7 @@ private async buildMonthlySnapshotPayload(userId: number, monthStartInput: Date,
 async getCurrentMonthReturn(userId: number) {
   const now = new Date();
   const monthStart = this.normalizeToMonthStartUTC(now);
-  const values = await this.computeSnapshotValues(userId, monthStart, now);
+  const values = await this.computeSnapshotValues(userId, monthStart, this.addMonthsUTC(monthStart, 1));
   return { ...values, isCurrent: true };
 }
 
@@ -1795,8 +1591,19 @@ async listMonthlySnapshots(userId: number, q: { from?: string; to?: string; limi
     },
   });
 
-  // Si quieres, puedes formatear returnPct a % en front; aquí lo dejas como ratio (0.042 => 4.2%)
-  return rows;
+  if (!rows.length) return rows;
+
+  // Los campos derivados se recalculan desde la misma serie TWR. Así los
+  // snapshots históricos antiguos no obligan a mutar datos para corregir la
+  // lectura, mientras los nuevos/reconstruidos ya se persisten con esta regla.
+  const now = new Date();
+  const { points } = await this.getPortfolioPerformanceData(userId, now);
+  return rows.map((row) => {
+    const monthStart = this.normalizeToMonthStartUTC(row.monthStart);
+    const monthEnd = this.addMonthsUTC(monthStart, 1);
+    const metrics = calculatePeriodPerformance(points, monthStart, monthEnd);
+    return { ...row, ...metrics };
+  });
 }
 
 

@@ -1315,7 +1315,7 @@ model PortfolioSnapshot {
 
   // Métricas derivadas (para pintar rápido)
   profit      Float?    @default(0)  // end - start - cashflow
-  returnPct   Float?              // profit / startValue (si startValue > 0)
+  returnPct   Float?              // TWR encadenado del periodo (ratio: 0.05 = 5 %)
 
   // Metadata
   isAuto      Boolean  @default(true)
