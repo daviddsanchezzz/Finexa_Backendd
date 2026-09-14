@@ -93,7 +93,7 @@ export class InvestmentExposureService {
   async getAssetMetadata(userId: number, assetId: number) {
     const asset = await this.prisma.investmentAsset.findFirst({
       where: { id: assetId, userId, active: true },
-      select: { id: true, type: true, name: true },
+      select: { id: true, type: true, name: true, updatedAt: true },
     });
     if (!asset) return null;
 
@@ -107,7 +107,12 @@ export class InvestmentExposureService {
     return {
       asset,
       metadata: meta,
-      composition: { regions, sectors, holdings },
+      composition: {
+        regions,
+        sectors,
+        holdings,
+        updatedAt: meta?.syncedAt ?? meta?.asOfDate ?? meta?.updatedAt ?? asset.updatedAt,
+      },
     };
   }
 
@@ -119,15 +124,16 @@ export class InvestmentExposureService {
     });
     if (!asset) return null;
 
-    const [regions, sectors, holdings] = await Promise.all([
+    const [regions, sectors, holdings, meta] = await Promise.all([
       this.prisma.investmentAssetRegion.findMany({ where: { assetId }, orderBy: { pct: 'desc' } }),
       this.prisma.investmentAssetSector.findMany({ where: { assetId }, orderBy: { pct: 'desc' } }),
       this.prisma.investmentAssetHolding.findMany({ where: { assetId }, orderBy: { sortOrder: 'asc' } }),
+      this.prisma.assetMetadata.findUnique({ where: { assetId } }),
     ]);
+    const updatedAt = meta?.syncedAt ?? meta?.asOfDate ?? meta?.updatedAt ?? asset.updatedAt;
 
     // If no normalized data yet, fall back to JSON blobs for backwards compat
     if (!regions.length && !sectors.length && !holdings.length) {
-      const meta = await this.prisma.assetMetadata.findUnique({ where: { assetId } });
       if (meta) {
         const fallbackRegions = meta.countriesJson
           ? Object.entries(meta.countriesJson as Record<string, number>).map(([country, pct]) => ({ country, pct }))
@@ -136,11 +142,11 @@ export class InvestmentExposureService {
           ? Object.entries(meta.sectorsJson as Record<string, number>).map(([sector, pct]) => ({ sector, pct }))
           : [];
         const fallbackHoldings = Array.isArray(meta.topHoldingsJson) ? meta.topHoldingsJson : [];
-        return { regions: fallbackRegions, sectors: fallbackSectors, holdings: fallbackHoldings, source: 'json_fallback' };
+        return { regions: fallbackRegions, sectors: fallbackSectors, holdings: fallbackHoldings, updatedAt, source: 'json_fallback' };
       }
     }
 
-    return { regions, sectors, holdings };
+    return { regions, sectors, holdings, updatedAt };
   }
 
   async upsertComposition(userId: number, assetId: number, dto: UpsertCompositionDto) {

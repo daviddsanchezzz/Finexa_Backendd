@@ -789,13 +789,63 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
   // Time series: per-asset
   // =============================
   async getAssetSeries(userId: number, assetId: number) {
-    await this.assertAssetOwned(userId, assetId);
-
-    return this.prisma.investmentValuationSnapshot.findMany({
-      where: { userId, assetId, active: true },
-      orderBy: { date: 'asc' },
-      select: { date: true, value: true, currency: true },
+    const asset = await this.prisma.investmentAsset.findFirst({
+      where: { id: assetId, userId },
+      select: { id: true, createdAt: true, initialInvested: true, currency: true },
     });
+    if (!asset) throw new NotFoundException('Investment asset not found');
+
+    const asOf = new Date();
+    const [operations, valuations] = await Promise.all([
+      this.prisma.investmentOperation.findMany({
+        where: { userId, assetId, active: true, date: { lte: asOf } },
+        select: { id: true, assetId: true, type: true, date: true, amount: true, fee: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.investmentValuationSnapshot.findMany({
+        where: { userId, assetId, active: true, date: { lte: asOf } },
+        select: { id: true, assetId: true, date: true, value: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+
+    const normalizedOperations = operations.map((operation) => ({
+      ...operation,
+      type: String(operation.type),
+      amount: Number(operation.amount || 0),
+      fee: Number(operation.fee || 0),
+    }));
+    const operationTypesByDay = new Map<string, string[]>();
+    normalizedOperations.forEach((operation) => {
+      const key = operation.date.toISOString().slice(0, 10);
+      operationTypesByDay.set(key, [...(operationTypesByDay.get(key) ?? []), operation.type]);
+    });
+
+    const performance = buildPortfolioPerformanceSeries({
+      assets: [{
+        id: asset.id,
+        createdAt: asset.createdAt,
+        initialInvested: Number(asset.initialInvested || 0),
+      }],
+      operations: normalizedOperations,
+      valuations: valuations.map((valuation) => ({
+        ...valuation,
+        value: Number(valuation.value || 0),
+      })),
+      asOf,
+    });
+
+    return performance.points.map((point) => ({
+      date: point.date,
+      value: point.equity,
+      currency: asset.currency,
+      invested: point.netContributions,
+      result: point.result,
+      dailyReturn: point.dailyReturn,
+      returnPct: point.twr,
+      externalFlow: point.externalFlow,
+      operationTypes: operationTypesByDay.get(point.date) ?? [],
+    }));
   }
 
   // =============================
