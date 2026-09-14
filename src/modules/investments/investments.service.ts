@@ -1451,8 +1451,25 @@ async deleteSwap(userId: number, swapGroupId: string) {
         createdAt: true,
         updatedAt: true,
         active: true,
+        asset: {
+          select: {
+            id: true,
+            name: true,
+            abbreviation: true,
+            currency: true,
+            description: true,
+          },
+        },
         transaction: {
-          select: { fromWalletId: true, toWalletId: true },
+          select: {
+            description: true,
+            walletId: true,
+            fromWalletId: true,
+            toWalletId: true,
+            wallet: { select: { id: true, name: true } },
+            fromWallet: { select: { id: true, name: true } },
+            toWallet: { select: { id: true, name: true } },
+          },
         },
       },
     });
