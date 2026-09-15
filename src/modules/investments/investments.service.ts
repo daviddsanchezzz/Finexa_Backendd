@@ -381,7 +381,7 @@ private async adjustAssetQuantityTx(
 
     if ('provider' in (dto as any)) {
       const raw = (dto as any).provider;
-      data.provider = raw && String(raw).trim() ? String(raw).trim().toLowerCase() : null;
+      data.provider = raw && String(raw).trim() ? String(raw).trim() : null;
     }
 
     if ('metadataUrl' in (dto as any)) {
