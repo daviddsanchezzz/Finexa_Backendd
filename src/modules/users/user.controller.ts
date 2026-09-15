@@ -3,6 +3,7 @@ import { UserService } from './user.service';
 import { User } from '../../common/decorators/user.decorator';
 import { PinFinanceTabDto } from './dto/pin-finance-tab.dto';
 import { CreateUserDocumentDto, UpdateUserDocumentDto } from './dto/user-document.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Controller('users')
 export class UserController {
@@ -56,5 +57,10 @@ export class UserController {
   @Post('me/quick-add-token/regenerate')
   regenerateQuickAddToken(@User('id') userId: number) {
     return this.userService.regenerateQuickAddToken(userId);
+  }
+
+  @Patch('me/password')
+  changePassword(@User('id') userId: number, @Body() dto: ChangePasswordDto) {
+    return this.userService.changePassword(userId, dto);
   }
 }

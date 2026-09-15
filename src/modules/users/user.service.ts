@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { FinanceModuleKeyDto } from './dto/pin-finance-tab.dto';
 import { CreateUserDocumentDto, UpdateUserDocumentDto } from './dto/user-document.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 const DEFAULT_PINNED_FINANCE_TAB = FinanceModuleKeyDto.INVESTMENTS;
 
@@ -92,5 +94,21 @@ export class UserService {
     const token = randomBytes(24).toString('hex');
     await this.prisma.user.update({ where: { id: userId }, data: { quickAddToken: token } });
     return { token };
+  }
+
+  // =========================================================
+  // Contraseña
+  // =========================================================
+
+  async changePassword(userId: number, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { password: true } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const valid = await bcrypt.compare(dto.currentPassword, user.password);
+    if (!valid) throw new BadRequestException('La contraseña actual no es correcta.');
+
+    const hashed = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
+    return { success: true };
   }
 }
