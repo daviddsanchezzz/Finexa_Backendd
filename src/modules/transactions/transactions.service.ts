@@ -206,6 +206,9 @@ export class TransactionsService {
     userId: number,
     filters?: {
       walletId?: number;
+      walletIds?: number[];
+      categoryId?: number;
+      categoryIds?: number[];
       dateFrom?: string;
       dateTo?: string;
       type?: string;
@@ -280,6 +283,18 @@ export class TransactionsService {
 
       if (filters?.walletId) {
         where.walletId = filters.walletId;
+      }
+
+      if (filters?.walletIds && filters.walletIds.length > 0) {
+        where.walletId = { in: filters.walletIds };
+      }
+
+      if (filters?.categoryId) {
+        where.categoryId = filters.categoryId;
+      }
+
+      if (filters?.categoryIds && filters.categoryIds.length > 0) {
+        where.categoryId = { in: filters.categoryIds };
       }
 
       if (filters?.isRecurring !== undefined) {

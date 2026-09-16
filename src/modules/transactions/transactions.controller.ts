@@ -27,6 +27,13 @@ export class TransactionsController {
   ) {
     const filters = {
       walletId: query.walletId ? Number(query.walletId) : undefined,
+      walletIds: query.walletIds
+        ? String(query.walletIds).split(',').map(Number).filter((n) => !isNaN(n))
+        : undefined,
+      categoryId: query.categoryId ? Number(query.categoryId) : undefined,
+      categoryIds: query.categoryIds
+        ? String(query.categoryIds).split(',').map(Number).filter((n) => !isNaN(n))
+        : undefined,
       dateFrom: query.dateFrom || undefined,
       dateTo: query.dateTo || undefined,
       type: query.type || undefined,

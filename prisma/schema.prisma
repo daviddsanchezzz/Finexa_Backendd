@@ -262,6 +262,7 @@ model Category {
   user          User?         @relation(fields: [userId], references: [id])
   transactions  Transaction[]
   budgets       Budget[]
+  budgetCategoryLimits BudgetCategoryLimit[]
 
   kind          CategoryKind @default(personal)  
   createdAt     DateTime      @default(now())
@@ -511,14 +512,19 @@ model Budget {
   id         Int          @id @default(autoincrement())
   name       String?
   period     BudgetPeriod @default(monthly)
-  limit      Float
   startDate  DateTime
 
-  categoryId Int?
-  category   Category?    @relation(fields: [categoryId], references: [id])
+  // Límite global opcional. Puede coexistir con categoryLimits (sublímites) o
+  // el presupuesto puede no tener ninguno si solo controla categorías sueltas.
+  totalLimit Float?
 
-  walletId   Int?
-  wallet     Wallet?      @relation(fields: [walletId], references: [id])
+  // Cartera(s) a las que aplica. Array vacío = todas las carteras del usuario.
+  walletIds  Int[]        @default([])
+
+  categoryLimits BudgetCategoryLimit[]
+
+  autoRenew          Boolean @default(true)
+  carryOverRemaining Boolean @default(false)
 
   userId     Int
   user       User         @relation(fields: [userId], references: [id])
@@ -528,6 +534,32 @@ model Budget {
 
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
+
+  // --- Legacy (modelo pre multi-categoría: 1 presupuesto = 1 importe + 0/1 categoría) ---
+  // Se conservan sin usar en la lógica nueva para no perder datos históricos.
+  // Migrados a totalLimit/categoryLimits/walletIds por prisma/migrate-budgets-multi-category.ts
+  limit      Float?
+  categoryId Int?
+  category   Category?    @relation(fields: [categoryId], references: [id])
+  walletId   Int?
+  wallet     Wallet?      @relation(fields: [walletId], references: [id])
+}
+
+model BudgetCategoryLimit {
+  id         Int      @id @default(autoincrement())
+
+  budgetId   Int
+  budget     Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  limit      Float
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([budgetId, categoryId])
 }
 
 //////////////////////////////////////////////////////////////

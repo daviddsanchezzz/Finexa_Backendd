@@ -1,5 +1,19 @@
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsPositive, IsString } from "class-validator";
+import { Type } from "class-transformer";
+import {
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  IsString,
+  ValidateNested,
+} from "class-validator";
 import { BudgetPeriod } from "@prisma/client";
+import { BudgetCategoryLimitDto } from "./budget-category-limit.dto";
 
 export class CreateBudgetDto {
   @IsOptional()
@@ -10,18 +24,33 @@ export class CreateBudgetDto {
   @IsEnum(BudgetPeriod)
   period?: BudgetPeriod;
 
-  @IsNumber()
-  @IsPositive()
-  limit!: number;
-
   @IsDateString()
   startDate!: string;
 
+  // Límite global opcional. Debe existir totalLimit o al menos un categoryLimit.
   @IsOptional()
   @IsNumber()
-  categoryId?: number | null;
+  @IsPositive()
+  totalLimit?: number | null;
 
   @IsOptional()
-  @IsNumber()
-  walletId?: number | null;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BudgetCategoryLimitDto)
+  categoryLimits?: BudgetCategoryLimitDto[];
+
+  // Carteras a las que aplica; vacío/omitido = todas.
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  walletIds?: number[];
+
+  @IsOptional()
+  @IsBoolean()
+  autoRenew?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  carryOverRemaining?: boolean;
 }
