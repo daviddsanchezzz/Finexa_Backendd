@@ -1,9 +1,10 @@
-﻿import { Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -13,6 +14,13 @@ import {
 } from 'class-validator';
 
 export class ProjectPartnerDto {
+  // Si se envía, actualiza ese socio existente (preservando su id y, por tanto,
+  // el vínculo con sus movimientos de aportación/retirada ya registrados). Si
+  // se omite, se crea un socio nuevo.
+  @IsOptional()
+  @IsInt()
+  id?: number;
+
   @IsString()
   @MinLength(1)
   name: string;
@@ -35,9 +43,8 @@ export class UpsertProjectPartnersDto {
 }
 
 export class ProfitDistributionLineDto {
-  @IsString()
-  @MinLength(1)
-  partnerName: string;
+  @IsInt()
+  partnerId: number;
 
   @IsNumber()
   @Min(0.01)

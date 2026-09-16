@@ -1,14 +1,19 @@
-﻿import { PartialType } from '@nestjs/mapped-types';
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { PartialType } from '@nestjs/mapped-types';
+import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
-export enum ProjectEntryTypeDto {
+// income/expense afectan al resultado del proyecto. contribution/withdrawal son
+// movimientos de capital de un socio (aportación/retirada) y nunca afectan al
+// resultado, solo a la caja disponible.
+export enum ProjectMovementKindDto {
   income = 'income',
   expense = 'expense',
+  contribution = 'contribution',
+  withdrawal = 'withdrawal',
 }
 
 export class CreateProjectManualEntryDto {
-  @IsEnum(ProjectEntryTypeDto)
-  type: ProjectEntryTypeDto;
+  @IsEnum(ProjectMovementKindDto)
+  kind: ProjectMovementKindDto;
 
   @IsString()
   @MinLength(1)
@@ -32,7 +37,11 @@ export class CreateProjectManualEntryDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  // Obligatorio (validado en el servicio) cuando kind es contribution o withdrawal.
+  @IsOptional()
+  @IsInt()
+  partnerId?: number;
 }
 
 export class UpdateProjectManualEntryDto extends PartialType(CreateProjectManualEntryDto) {}
-

@@ -89,14 +89,14 @@ enum ProjectStatus {
   cancelled
 }
 
-enum ProjectEntryType {
+// Los 4 tipos de movimiento de un proyecto. income/expense afectan al
+// resultado (P&L) del proyecto; contribution/withdrawal son movimientos de
+// capital de un socio y nunca deben sumar/restar al resultado, solo a caja.
+enum ProjectMovementKind {
   income
   expense
-}
-
-enum ProjectManualEntryKind {
-  standard
-  profit_distribution
+  contribution
+  withdrawal
 }
 
 
@@ -446,7 +446,6 @@ model Project {
 
   transactions Transaction[]
   manualEntries ProjectManualEntry[]
-  profitDistributions ProjectProfitDistribution[]
   partners     ProjectPartner[]
 
   createdAt    DateTime        @default(now())
@@ -461,21 +460,26 @@ model ProjectManualEntry {
   projectId   Int
   project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  type        ProjectEntryType
+  kind        ProjectMovementKind
   title       String
   description String?
   amount      Float
   date        DateTime         @default(now())
   category    String?
   notes       String?
-  entryKind   ProjectManualEntryKind @default(standard)
-  partnerName String?
+
+  // Solo se rellena para kind = contribution | withdrawal. SetNull para que
+  // el historial financiero de un movimiento sobreviva a que se borre o
+  // reconfigure el socio (los socios se reemplazan por completo al editarlos).
+  partnerId   Int?
+  partner     ProjectPartner?  @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
   @@index([projectId, date])
-  @@index([projectId, entryKind])
+  @@index([projectId, kind])
+  @@index([partnerId])
 }
 
 model ProjectPartner {
@@ -487,44 +491,12 @@ model ProjectPartner {
   percentage  Float
   isMe        Boolean  @default(false)
 
+  manualEntries ProjectManualEntry[]
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([projectId])
-}
-
-model ProjectProfitDistribution {
-  id          Int      @id @default(autoincrement())
-  projectId   Int
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  title       String?
-  totalAmount Float
-  date        DateTime @default(now())
-  notes       String?
-
-  lines       ProjectProfitDistributionLine[]
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([projectId, date])
-}
-
-model ProjectProfitDistributionLine {
-  id             Int      @id @default(autoincrement())
-  distributionId Int
-  distribution   ProjectProfitDistribution @relation(fields: [distributionId], references: [id], onDelete: Cascade)
-
-  partnerName    String
-  amount         Float
-  percentage     Float?
-  notes          String?
-
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@index([distributionId])
 }
 
 
