@@ -28,9 +28,6 @@ async function main() {
   const assetIds = (await prisma.investmentAsset.findMany({ where: { userId }, select: { id: true } })).map((x) => x.id);
   const budgetIds = (await prisma.budget.findMany({ where: { userId }, select: { id: true } })).map((x) => x.id);
   const planItemIds = (await prisma.tripPlanItem.findMany({ where: { tripId: { in: tripIds } }, select: { id: true } })).map((x) => x.id);
-  const distributionIds = (
-    await prisma.projectProfitDistribution.findMany({ where: { projectId: { in: projectIds } }, select: { id: true } })
-  ).map((x) => x.id);
 
   const del = async (label: string, fn: () => Promise<{ count: number }>) => {
     const { count } = await fn();
@@ -66,8 +63,6 @@ async function main() {
   await del('TripTask', () => prisma.tripTask.deleteMany({ where: { tripId: { in: tripIds } } }));
   await del('TripNote', () => prisma.tripNote.deleteMany({ where: { tripId: { in: tripIds } } }));
 
-  await del('ProjectProfitDistributionLine', () => prisma.projectProfitDistributionLine.deleteMany({ where: { distributionId: { in: distributionIds } } }));
-  await del('ProjectProfitDistribution', () => prisma.projectProfitDistribution.deleteMany({ where: { projectId: { in: projectIds } } }));
   await del('ProjectManualEntry', () => prisma.projectManualEntry.deleteMany({ where: { projectId: { in: projectIds } } }));
   await del('ProjectPartner', () => prisma.projectPartner.deleteMany({ where: { projectId: { in: projectIds } } }));
 

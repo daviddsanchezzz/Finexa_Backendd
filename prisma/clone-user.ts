@@ -100,7 +100,7 @@ async function main() {
   const assetMap = new Map<number, number>();
   const txMap = new Map<number, number>();
   const budgetMap = new Map<number, number>();
-  const distributionMap = new Map<number, number>();
+  const partnerMap = new Map<number, number>();
   const planItemMap = new Map<number, number>();
 
   // ── Wallets ──────────────────────────────────────────────────────────
@@ -342,49 +342,30 @@ async function main() {
   );
 
   // ── Project sub-entidades ───────────────────────────────────────────
-  const partners = await prisma.projectPartner.findMany({ where: { projectId: { in: projects.map((p) => p.id) } } });
-  await createManyChunked('ProjectPartner', partners, (batch) =>
-    prisma.projectPartner.createMany({
-      data: batch.map((x) => ({ projectId: projectMap.get(x.projectId)!, name: x.name, percentage: x.percentage, isMe: x.isMe })),
-    }),
-  );
+  // Los socios se crean uno a uno (no createMany) porque necesitamos el id
+  // nuevo de cada uno para remapear el partnerId de sus movimientos abajo.
+  const partners = await prisma.projectPartner.findMany({ where: { projectId: { in: projects.map((p) => p.id) } }, orderBy: { id: 'asc' } });
+  await pMap(partners, async (x) => {
+    const created = await prisma.projectPartner.create({
+      data: { projectId: projectMap.get(x.projectId)!, name: x.name, percentage: x.percentage, isMe: x.isMe },
+    });
+    partnerMap.set(x.id, created.id);
+  });
+  console.log(`ProjectPartner: ${partners.length}`);
 
   const manualEntries = await prisma.projectManualEntry.findMany({ where: { projectId: { in: projects.map((p) => p.id) } } });
   await createManyChunked('ProjectManualEntry', manualEntries, (batch) =>
     prisma.projectManualEntry.createMany({
       data: batch.map((x) => ({
         projectId: projectMap.get(x.projectId)!,
-        type: x.type,
+        kind: x.kind,
         title: x.title,
         description: x.description,
         amount: x.amount,
         date: x.date,
         category: x.category,
         notes: x.notes,
-        entryKind: x.entryKind,
-        partnerName: x.partnerName,
-      })),
-    }),
-  );
-
-  const distributions = await prisma.projectProfitDistribution.findMany({ where: { projectId: { in: projects.map((p) => p.id) } }, orderBy: { id: 'asc' } });
-  await pMap(distributions, async (d) => {
-    const created = await prisma.projectProfitDistribution.create({
-      data: { projectId: projectMap.get(d.projectId)!, title: d.title, totalAmount: d.totalAmount, date: d.date, notes: d.notes },
-    });
-    distributionMap.set(d.id, created.id);
-  });
-  console.log(`ProjectProfitDistribution: ${distributions.length}`);
-
-  const distributionLines = await prisma.projectProfitDistributionLine.findMany({ where: { distributionId: { in: distributions.map((d) => d.id) } } });
-  await createManyChunked('ProjectProfitDistributionLine', distributionLines, (batch) =>
-    prisma.projectProfitDistributionLine.createMany({
-      data: batch.map((x) => ({
-        distributionId: distributionMap.get(x.distributionId)!,
-        partnerName: x.partnerName,
-        amount: x.amount,
-        percentage: x.percentage,
-        notes: x.notes,
+        partnerId: remap(partnerMap, x.partnerId),
       })),
     }),
   );
