@@ -4,4 +4,8 @@ export class UpdatePreferencesDto {
   @IsOptional()
   @IsBoolean()
   recurringTransactions?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  budgetThresholdAlerts?: boolean;
 }

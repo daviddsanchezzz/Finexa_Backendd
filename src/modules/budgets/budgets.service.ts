@@ -5,6 +5,7 @@ import { CreateBudgetDto } from "./dto/create-budget.dto";
 import { UpdateBudgetDto } from "./dto/update-budget.dto";
 import { BudgetCategoryLimitDto } from "./dto/budget-category-limit.dto";
 import { BudgetsOverviewQueryDto } from "./dto/budgets-overview.query.dto";
+import { NotificationsService } from "../notifications/notifications.service";
 
 type PeriodRange = { from: Date; to: Date };
 
@@ -125,7 +126,10 @@ type BudgetWithLimits = Prisma.BudgetGetPayload<{ include: typeof BUDGET_WITH_LI
 
 @Injectable()
 export class BudgetsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService
+  ) {}
 
   // Un presupuesto debe tener límite global y/o al menos un límite por categoría,
   // nunca ninguno; las categorías no pueden repetirse; los sublímites no pueden
@@ -540,5 +544,122 @@ export class BudgetsService {
       },
       budgets: withWallets,
     };
+  }
+
+  // Llamado (no bloqueante) tras crear una transacción de gasto: revisa los
+  // presupuestos afectados por esa cartera y, si la categoría del gasto tiene
+  // un sublímite, ese sublímite también — y dispara aviso (>=85%) o límite
+  // (>=100%) como mucho una vez por periodo (se recuerda en lastWarning/
+  // lastLimitPeriodStart, tanto a nivel de Budget como de BudgetCategoryLimit).
+  async checkBudgetThresholds(params: {
+    userId: number;
+    walletId?: number | null;
+    categoryId?: number | null;
+    date: Date;
+  }) {
+    const { userId, walletId, categoryId, date } = params;
+
+    const budgets = await this.prisma.budget.findMany({
+      where: {
+        userId,
+        active: true,
+        ...(walletId != null
+          ? { OR: [{ walletIds: { isEmpty: true } }, { walletIds: { has: walletId } }] }
+          : {}),
+      },
+      include: BUDGET_WITH_LIMITS_INCLUDE,
+    });
+
+    for (const b of budgets) {
+      const baseRange = computeRange(b.period, date);
+      const prevRange = previousPeriodRange(b.period, baseRange);
+      const clamped = clampFromToBudgetStart(baseRange, new Date(b.startDate));
+      const progress = await this.computeBudgetProgress(userId, b, clamped, prevRange);
+
+      if (progress.effectiveTotalLimit != null) {
+        await this.maybeNotifyThreshold({
+          userId,
+          budgetId: b.id,
+          categoryId: null,
+          scopeName: b.name || "tu presupuesto",
+          spent: progress.globalSpent || 0,
+          limit: progress.effectiveTotalLimit,
+          periodStart: baseRange.from,
+          currentWarningPeriod: b.lastWarningPeriodStart,
+          currentLimitPeriod: b.lastLimitPeriodStart,
+          updateTracking: (kind) =>
+            this.prisma.budget.update({
+              where: { id: b.id },
+              data: kind === "warning" ? { lastWarningPeriodStart: baseRange.from } : { lastLimitPeriodStart: baseRange.from },
+            }),
+        });
+      }
+
+      if (categoryId != null) {
+        const clProgress = progress.categoryLimits.find((c) => c.categoryId === categoryId);
+        const clRow = b.categoryLimits.find((c) => c.categoryId === categoryId);
+        if (clProgress && clRow) {
+          await this.maybeNotifyThreshold({
+            userId,
+            budgetId: b.id,
+            categoryId,
+            scopeName: clProgress.category?.name || "una categoría",
+            spent: clProgress.spent,
+            limit: clProgress.limit,
+            periodStart: baseRange.from,
+            currentWarningPeriod: clRow.lastWarningPeriodStart,
+            currentLimitPeriod: clRow.lastLimitPeriodStart,
+            updateTracking: (kind) =>
+              this.prisma.budgetCategoryLimit.update({
+                where: { id: clRow.id },
+                data: kind === "warning" ? { lastWarningPeriodStart: baseRange.from } : { lastLimitPeriodStart: baseRange.from },
+              }),
+          });
+        }
+      }
+    }
+  }
+
+  private async maybeNotifyThreshold(args: {
+    userId: number;
+    budgetId: number;
+    categoryId: number | null;
+    scopeName: string;
+    spent: number;
+    limit: number;
+    periodStart: Date;
+    currentWarningPeriod: Date | null;
+    currentLimitPeriod: Date | null;
+    updateTracking: (kind: "warning" | "limit") => Promise<any>;
+  }) {
+    if (!(args.limit > 0)) return;
+    const ratio = args.spent / args.limit;
+    const samePeriod = (stored: Date | null) => stored != null && stored.getTime() === args.periodStart.getTime();
+
+    const notify = (kind: "warning" | "limit") =>
+      this.notifications
+        .notifyBudgetThresholdReached({
+          userId: args.userId,
+          scopeName: args.scopeName,
+          kind,
+          spent: args.spent,
+          limit: args.limit,
+          budgetId: args.budgetId,
+          categoryId: args.categoryId,
+        })
+        .catch(() => null);
+
+    if (ratio >= 1) {
+      if (samePeriod(args.currentLimitPeriod)) return;
+      await args.updateTracking("limit");
+      await notify("limit");
+      return;
+    }
+
+    if (ratio >= 0.85) {
+      if (samePeriod(args.currentWarningPeriod)) return;
+      await args.updateTracking("warning");
+      await notify("warning");
+    }
   }
 }

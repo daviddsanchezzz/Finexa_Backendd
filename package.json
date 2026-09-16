@@ -19,7 +19,9 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "migrate:composition": "ts-node -r tsconfig-paths/register prisma/migrate-composition.ts",
-    "migrate:budgets-multi-category": "ts-node -r tsconfig-paths/register prisma/migrate-budgets-multi-category.ts"
+    "migrate:budgets-multi-category": "ts-node -r tsconfig-paths/register prisma/migrate-budgets-multi-category.ts",
+    "clone-user": "ts-node -r tsconfig-paths/register prisma/clone-user.ts",
+    "clone-user-cleanup": "ts-node -r tsconfig-paths/register prisma/clone-user-cleanup.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

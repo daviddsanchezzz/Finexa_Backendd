@@ -9,12 +9,14 @@ import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import { PrismaDateTransformer } from 'src/common/prisma/prisma.transformer';
 import { NotificationsService } from '../notifications/notifications.service';
+import { BudgetsService } from '../budgets/budgets.service';
 
 @Injectable()
 export class TransactionsService {
   constructor(
     private prisma: PrismaService,
     private notifications: NotificationsService,
+    private budgets: BudgetsService,
   ) {}
 
   // ============================================================
@@ -118,6 +120,20 @@ export class TransactionsService {
         where: { id: wallet.id },
         data: { balance: newBalance },
       });
+    }
+
+    // 2c) Si es un gasto, comprobar si con este importe algún presupuesto (o
+    // sublímite de categoría) afectado llega al 85% o al 100% — no bloqueante,
+    // no debe retrasar ni poder romper la creación de la transacción.
+    if (transaction.type === 'expense') {
+      this.budgets
+        .checkBudgetThresholds({
+          userId,
+          walletId: transaction.walletId,
+          categoryId: transaction.categoryId,
+          date: transaction.date,
+        })
+        .catch(() => null);
     }
 
     // 2b) Si venimos del flujo "quick add" (link de Shortcuts), resolver la
@@ -677,6 +693,9 @@ if (filters?.dateFrom || filters?.dateTo) {
         break;
       case 'monthly':
         d.setMonth(d.getMonth() + 1);
+        break;
+      case 'quarterly':
+        d.setMonth(d.getMonth() + 3);
         break;
       case 'yearly':
         d.setFullYear(d.getFullYear() + 1);

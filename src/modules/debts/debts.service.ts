@@ -1,9 +1,9 @@
 // src/debts/debts.service.ts
 import { Injectable, NotFoundException, ForbiddenException } from "@nestjs/common";
 import { PrismaService } from "src/common/prisma/prisma.service";
-import { CreateDebtDto, DebtDirectionDto, DebtTypeDto } from "./dto/create-debt.dto";
+import { CreateDebtDto, DebtDirectionDto } from "./dto/create-debt.dto";
 import { UpdateDebtDto } from "./dto/update-debt.dto";
-import { DebtStatus } from "@prisma/client"; // generado por Prisma
+import { DebtStatus, Debt } from "@prisma/client"; // generado por Prisma
 
 @Injectable()
 export class DebtsService {
@@ -38,6 +38,15 @@ export class DebtsService {
     return category;
   }
 
+  // 🔹 Evita IDOR: una deuda no puede enlazarse a la cartera de otro usuario.
+  private async assertWalletOwnership(userId: number, walletId: number) {
+    const wallet = await this.prisma.wallet.findFirst({
+      where: { id: walletId, userId },
+      select: { id: true },
+    });
+    if (!wallet) throw new ForbiddenException("La cartera indicada no existe o no te pertenece");
+  }
+
   private computeRemaining(total: number, payed: number | undefined) {
     const safePayed = payed ?? 0;
     const remaining = total - safePayed;
@@ -62,7 +71,77 @@ export class DebtsService {
     return DebtStatus.active;
   }
 
+  // 🔹 Crea, actualiza o desactiva la transacción recurrente vinculada a la
+  // deuda según cuota/frecuencia/cartera/autoRecurringEnabled. Se llama tras
+  // cada create/update para mantenerla siempre sincronizada con la deuda.
+  private async syncRecurringTransaction(
+    userId: number,
+    debt: Debt & { subcategory?: { categoryId: number } | null },
+  ): Promise<Debt> {
+    const hasPeriodicPayments = debt.monthlyPayment != null && debt.paymentFrequency != null;
+    const shouldHaveRecurring = hasPeriodicPayments && debt.autoRecurringEnabled && debt.walletId != null;
+    const categoryId = debt.subcategory?.categoryId ?? null;
+
+    if (shouldHaveRecurring) {
+      const date = debt.nextDueDate ?? new Date();
+
+      if (debt.recurringTransactionId) {
+        await this.prisma.transaction.update({
+          where: { id: debt.recurringTransactionId },
+          data: {
+            amount: debt.monthlyPayment!,
+            recurrence: debt.paymentFrequency,
+            walletId: debt.walletId,
+            categoryId,
+            subcategoryId: debt.subcategoryId,
+            date,
+            active: true,
+          },
+        });
+        return debt;
+      }
+
+      const created = await this.prisma.transaction.create({
+        data: {
+          type: "expense",
+          amount: debt.monthlyPayment!,
+          description: debt.name,
+          date,
+          isRecurring: true,
+          recurrence: debt.paymentFrequency,
+          walletId: debt.walletId,
+          categoryId,
+          subcategoryId: debt.subcategoryId,
+          userId,
+        },
+      });
+
+      return this.prisma.debt.update({
+        where: { id: debt.id },
+        data: { recurringTransactionId: created.id },
+        include: { subcategory: true },
+      });
+    }
+
+    // No debería tener transacción recurrente: si ya había una, se desactiva.
+    if (debt.recurringTransactionId) {
+      await this.prisma.transaction.update({
+        where: { id: debt.recurringTransactionId },
+        data: { active: false },
+      });
+      return this.prisma.debt.update({
+        where: { id: debt.id },
+        data: { recurringTransactionId: null },
+        include: { subcategory: true },
+      });
+    }
+
+    return debt;
+  }
+
   async create(userId: number, dto: CreateDebtDto) {
+    if (dto.walletId != null) await this.assertWalletOwnership(userId, dto.walletId);
+
     const category = await this.getDebtCategory(userId, dto.direction);
 
     const subcategory = await this.prisma.subcategory.create({
@@ -85,18 +164,21 @@ export class DebtsService {
         direction: dto.direction,
         status,
         name: dto.name,
-        entity: dto.entity,
+        entity: dto.entity ?? null,
         emoji: dto.emoji ?? "💸",
         color: dto.color ?? "#3b82f6",
         totalAmount: dto.totalAmount,
         payed,
         remainingAmount,
-        interestRate:
-          dto.type === DebtTypeDto.PERSONAL ? null : dto.interestRate ?? null,
-        monthlyPayment:
-          dto.type === DebtTypeDto.PERSONAL ? null : dto.monthlyPayment ?? null,
+        interestRate: dto.interestRate ?? null,
+        monthlyPayment: dto.monthlyPayment ?? null,
+        paymentFrequency: dto.paymentFrequency ?? null,
+        walletId: dto.walletId ?? null,
+        autoRecurringEnabled: dto.autoRecurringEnabled ?? true,
         startDate: dto.startDate ? new Date(dto.startDate) : null,
         nextDueDate: dto.nextDueDate ? new Date(dto.nextDueDate) : null,
+        expectedEndDate: dto.expectedEndDate ? new Date(dto.expectedEndDate) : null,
+        notes: dto.notes ?? null,
         installmentsPaid: dto.installmentsPaid ?? 0,
         subcategoryId: subcategory.id,
       },
@@ -105,7 +187,7 @@ export class DebtsService {
       },
     });
 
-    return debt;
+    return this.syncRecurringTransaction(userId, debt);
   }
 
   async findAll(userId: number) {
@@ -123,7 +205,7 @@ export class DebtsService {
   private async findOwnedDebtOrThrow(userId: number, id: number) {
     const debt = await this.prisma.debt.findUnique({
       where: { id },
-      include: { subcategory: true },
+      include: { subcategory: true, wallet: true },
     });
 
     if (!debt || !debt.active) {
@@ -185,6 +267,8 @@ export class DebtsService {
   async update(userId: number, id: number, dto: UpdateDebtDto) {
     const existing = await this.findOwnedDebtOrThrow(userId, id);
 
+    if (dto.walletId != null) await this.assertWalletOwnership(userId, dto.walletId);
+
     const totalAmount = dto.totalAmount ?? existing.totalAmount;
     const payed = dto.payed ?? existing.payed ?? 0;
     const remainingAmount = this.computeRemaining(totalAmount, payed);
@@ -209,7 +293,7 @@ export class DebtsService {
         status, // 👈 aquí ya viene recalculado
 
         name: dto.name ?? existing.name,
-        entity: dto.entity ?? existing.entity,
+        entity: dto.entity !== undefined ? dto.entity : existing.entity,
         emoji: dto.emoji ?? existing.emoji,
         color: dto.color ?? existing.color,
 
@@ -217,20 +301,22 @@ export class DebtsService {
         payed,
         remainingAmount,
 
-        interestRate:
-          (dto.type ?? existing.type) === DebtTypeDto.PERSONAL
-            ? null
-            : dto.interestRate ?? existing.interestRate,
-        monthlyPayment:
-          (dto.type ?? existing.type) === DebtTypeDto.PERSONAL
-            ? null
-            : dto.monthlyPayment ?? existing.monthlyPayment,
+        interestRate: dto.interestRate !== undefined ? dto.interestRate : existing.interestRate,
+        monthlyPayment: dto.monthlyPayment !== undefined ? dto.monthlyPayment : existing.monthlyPayment,
+        paymentFrequency: dto.paymentFrequency !== undefined ? dto.paymentFrequency : existing.paymentFrequency,
+        walletId: dto.walletId !== undefined ? dto.walletId : existing.walletId,
+        autoRecurringEnabled: dto.autoRecurringEnabled ?? existing.autoRecurringEnabled,
+
         startDate: dto.startDate
           ? new Date(dto.startDate)
           : existing.startDate,
         nextDueDate: dto.nextDueDate
           ? new Date(dto.nextDueDate)
           : existing.nextDueDate,
+        expectedEndDate: dto.expectedEndDate
+          ? new Date(dto.expectedEndDate)
+          : existing.expectedEndDate,
+        notes: dto.notes !== undefined ? dto.notes : existing.notes,
         installmentsPaid:
           dto.installmentsPaid ?? existing.installmentsPaid ?? 0,
       },
@@ -239,7 +325,7 @@ export class DebtsService {
       },
     });
 
-    return updated;
+    return this.syncRecurringTransaction(userId, updated);
   }
 
   /**
@@ -266,6 +352,13 @@ export class DebtsService {
       });
     }
 
+    if (existing.recurringTransactionId) {
+      await this.prisma.transaction.update({
+        where: { id: existing.recurringTransactionId },
+        data: { active: false },
+      });
+    }
+
     return updated;
   }
 
@@ -279,6 +372,13 @@ export class DebtsService {
         active: false,
       },
     });
+
+    if (existing.recurringTransactionId) {
+      await this.prisma.transaction.update({
+        where: { id: existing.recurringTransactionId },
+        data: { active: false },
+      });
+    }
 
     return deleted;
   }

@@ -5,6 +5,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { FinanceModuleKeyDto } from './dto/pin-finance-tab.dto';
 import { CreateUserDocumentDto, UpdateUserDocumentDto } from './dto/user-document.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 const DEFAULT_PINNED_FINANCE_TAB = FinanceModuleKeyDto.INVESTMENTS;
 
@@ -94,6 +95,22 @@ export class UserService {
     const token = randomBytes(24).toString('hex');
     await this.prisma.user.update({ where: { id: userId }, data: { quickAddToken: token } });
     return { token };
+  }
+
+  // =========================================================
+  // Perfil (nombre / avatar)
+  // =========================================================
+
+  async updateProfile(userId: number, dto: UpdateProfileDto) {
+    const data: { name?: string; avatar?: string | null } = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.avatar !== undefined) data.avatar = dto.avatar;
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: { id: true, name: true, email: true, avatar: true },
+    });
   }
 
   // =========================================================

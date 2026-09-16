@@ -20,7 +20,17 @@ enum BudgetPeriod {
 
 enum DebtType {
   loan
+  mortgage
+  credit_card
   personal
+  other
+}
+
+enum DebtPaymentFrequency {
+  weekly
+  monthly
+  quarterly
+  yearly
 }
 
 enum DebtDirection {
@@ -101,6 +111,7 @@ model User {
   name          String
   email         String         @unique
   password      String
+  avatar        String?
   language      String?        @default("es")
   currency      String?        @default("EUR")
   theme         String?        @default("light")
@@ -220,6 +231,7 @@ model Wallet {
   transactions        Transaction[] @relation("TransactionWallet")       // income/expense
   transactionsFrom    Transaction[] @relation("TransactionFromWallet")   // transfer origen
   transactionsTo      Transaction[] @relation("TransactionToWallet")     // transfer destino
+  debts               Debt[]
 
   position     Int           @default(0)
 
@@ -317,7 +329,7 @@ model Debt {
   status           DebtStatus     @default(active)
 
   name             String
-  entity           String
+  entity           String?
   emoji            String?
   color            String?
 
@@ -327,9 +339,19 @@ model Debt {
 
   interestRate     Float?
   monthlyPayment   Float?
+  paymentFrequency DebtPaymentFrequency?
   startDate        DateTime?
   nextDueDate      DateTime?
+  expectedEndDate  DateTime?
   installmentsPaid Int?           @default(0)
+  notes            String?
+
+  walletId Int?
+  wallet   Wallet? @relation(fields: [walletId], references: [id])
+
+  autoRecurringEnabled   Boolean      @default(true)
+  recurringTransactionId Int?         @unique
+  recurringTransaction   Transaction? @relation("DebtRecurringTransaction", fields: [recurringTransactionId], references: [id])
 
   subcategoryId Int?
   subcategory   Subcategory? @relation("DebtSubcategory", fields: [subcategoryId], references: [id])
@@ -346,6 +368,7 @@ model Debt {
   active           Boolean        @default(true)
 
   @@index([userId])
+  @@index([walletId])
 }
 
 //////////////////////////////////////////////////////////////
@@ -391,6 +414,7 @@ model Transaction {
   investmentAssetId Int?
   investmentAsset   InvestmentAsset? @relation(fields: [investmentAssetId], references: [id])
   investmentOperation InvestmentOperation?
+  debtRecurringFor   Debt?    @relation("DebtRecurringTransaction")
   source    String   @default("user") // "user" | "investment"
 
   excludeFromStats Boolean @default(false)
@@ -526,6 +550,12 @@ model Budget {
   autoRenew          Boolean @default(true)
   carryOverRemaining Boolean @default(false)
 
+  // Marca el inicio del periodo (computeRange().from) para el que ya se avisó
+  // del límite global, para no repetir la notificación en cada gasto nuevo
+  // dentro del mismo periodo. Se compara, nunca se usa como fecha real.
+  lastWarningPeriodStart DateTime?
+  lastLimitPeriodStart   DateTime?
+
   userId     Int
   user       User         @relation(fields: [userId], references: [id])
 
@@ -555,6 +585,10 @@ model BudgetCategoryLimit {
   category   Category @relation(fields: [categoryId], references: [id])
 
   limit      Float
+
+  // Mismo mecanismo de deduplicación que Budget, pero para este sublímite.
+  lastWarningPeriodStart DateTime?
+  lastLimitPeriodStart   DateTime?
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -604,6 +638,7 @@ model NotificationPreference {
   user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   recurringTransactions Boolean @default(false)
+  budgetThresholdAlerts Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

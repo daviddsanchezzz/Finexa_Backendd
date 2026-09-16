@@ -24,6 +24,16 @@ export interface QuickTransactionPayload {
   rawQuery?: string;
 }
 
+export interface BudgetThresholdPayload {
+  userId: number;
+  scopeName: string; // nombre del presupuesto o de la categoría afectada
+  kind: 'warning' | 'limit';
+  spent: number;
+  limit: number;
+  budgetId: number;
+  categoryId?: number | null;
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -74,9 +84,9 @@ export class NotificationsService {
       where: { userId },
     });
     if (!prefs) {
-      return { recurringTransactions: false };
+      return { recurringTransactions: false, budgetThresholdAlerts: false };
     }
-    return { recurringTransactions: prefs.recurringTransactions };
+    return { recurringTransactions: prefs.recurringTransactions, budgetThresholdAlerts: prefs.budgetThresholdAlerts };
   }
 
   async updatePreferences(userId: number, dto: UpdatePreferencesDto) {
@@ -308,6 +318,62 @@ export class NotificationsService {
     if (nativeTokens.length) {
       await this.sendExpoNotifications(nativeTokens, title, body, {
         type: 'recurring_transaction',
+      });
+    }
+
+    // 5b) Enviar a suscriptores web push
+    if (webTokens.length) {
+      await this.sendWebPushNotifications(webTokens, title, body);
+    }
+  }
+
+  // ──────────────────────────────────────────
+  // SEND: BUDGET THRESHOLD REACHED (85% aviso / 100% límite)
+  // Llamado por BudgetsService tras crear una transacción de gasto
+  // ──────────────────────────────────────────
+
+  async notifyBudgetThresholdReached(payload: BudgetThresholdPayload) {
+    const { userId, scopeName, kind, spent, limit, budgetId, categoryId } = payload;
+
+    // 1) Verificar que el usuario tiene esta preferencia activa
+    const prefs = await this.getPreferences(userId);
+    if (!prefs.budgetThresholdAlerts) return;
+
+    // 2) Construir el mensaje
+    const euro = (n: number) => `${n.toFixed(2).replace('.', ',')} €`;
+    const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
+    const isLimit = kind === 'limit';
+    const title = isLimit
+      ? `⚠️ Límite alcanzado: ${scopeName}`
+      : `🔔 Aviso de presupuesto: ${scopeName}`;
+    const body = isLimit
+      ? `Has llegado al límite de ${euro(limit)}. Gastado: ${euro(spent)}.`
+      : `Llevas un ${pct}% de ${scopeName} (${euro(limit)}). Gastado: ${euro(spent)}.`;
+
+    // 3) Guardar notificación in-app
+    await this.prisma.notification.create({
+      data: {
+        userId,
+        title,
+        message: body,
+        type: 'budget_threshold',
+        data: { budgetId, categoryId: categoryId ?? null, kind } as Prisma.InputJsonValue,
+      },
+    });
+
+    // 4) Obtener tokens del dispositivo
+    const tokens = await this.prisma.deviceToken.findMany({
+      where: { userId },
+    });
+    if (!tokens.length) return;
+
+    const nativeTokens = tokens.filter((t) => t.platform !== 'web').map((t) => t.token);
+    const webTokens = tokens.filter((t) => t.platform === 'web').map((t) => t.token);
+
+    // 5a) Enviar a dispositivos nativos vía Expo Push API
+    if (nativeTokens.length) {
+      await this.sendExpoNotifications(nativeTokens, title, body, {
+        type: 'budget_threshold',
       });
     }
 

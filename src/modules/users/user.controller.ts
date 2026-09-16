@@ -4,6 +4,7 @@ import { User } from '../../common/decorators/user.decorator';
 import { PinFinanceTabDto } from './dto/pin-finance-tab.dto';
 import { CreateUserDocumentDto, UpdateUserDocumentDto } from './dto/user-document.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Controller('users')
 export class UserController {
@@ -13,6 +14,11 @@ export class UserController {
   @Get()
   findAll() {
     return this.userService.findAll();
+  }
+
+  @Patch('me')
+  updateProfile(@User('id') userId: number, @Body() dto: UpdateProfileDto) {
+    return this.userService.updateProfile(userId, dto);
   }
 
   @Get('me/pinned-finance-tab')

@@ -116,7 +116,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       name: user.name,
-      avatar: (user as any).avatar ?? null,
+      avatar: user.avatar,
     };
 
     return { access_token, refresh_token, user: userWithoutPassword };
@@ -154,7 +154,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
-        avatar: (user as any).avatar ?? null,
+        avatar: user.avatar,
       };
 
       return {
@@ -165,6 +165,16 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException("Invalid refresh token");
     }
+  }
+
+  // ============================
+  // Perfil actual (lee de BD, no del JWT — el token solo lleva un snapshot
+  // de name/email del momento del login, sin avatar)
+  // ============================
+  async getProfile(userId: number): Promise<SafeUser> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException("User not found");
+    return { id: user.id, email: user.email, name: user.name, avatar: user.avatar };
   }
 
   // ============================
