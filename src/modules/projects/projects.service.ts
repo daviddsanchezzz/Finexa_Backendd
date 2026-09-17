@@ -374,6 +374,7 @@ export class ProjectsService {
       data: {
         projectId,
         kind: dto.kind,
+        isCapitalReturn: dto.isCapitalReturn ?? false,
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
         amount: dto.amount,
@@ -410,6 +411,7 @@ export class ProjectsService {
       where: { id: entryId },
       data: {
         kind: dto.kind,
+        isCapitalReturn: dto.isCapitalReturn,
         title: dto.title?.trim(),
         description:
           dto.description !== undefined ? dto.description?.trim() || null : undefined,

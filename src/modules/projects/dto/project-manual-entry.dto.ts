@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
 // income/expense afectan al resultado del proyecto. contribution/withdrawal son
 // movimientos de capital de un socio (aportación/retirada) y nunca afectan al
@@ -14,6 +14,12 @@ export enum ProjectMovementKindDto {
 export class CreateProjectManualEntryDto {
   @IsEnum(ProjectMovementKindDto)
   kind: ProjectMovementKindDto;
+
+  // Solo relevante cuando kind es withdrawal: true = devolución de capital,
+  // false/ausente = retirada de beneficio (default).
+  @IsOptional()
+  @IsBoolean()
+  isCapitalReturn?: boolean;
 
   @IsString()
   @MinLength(1)
