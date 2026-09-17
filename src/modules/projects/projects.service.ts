@@ -52,7 +52,15 @@ export class ProjectsService {
       result: 0,
       contributions: 0,
       withdrawals: 0,
+      withdrawalsProfit: 0,
+      withdrawalsCapital: 0,
       cash: 0,
+      myPercentage: 100,
+      myProfit: 0,
+      myWithdrawnProfit: 0,
+      myCapitalContributed: 0,
+      myCapitalReturned: 0,
+      myPending: 0,
     };
   }
 
@@ -74,7 +82,7 @@ export class ProjectsService {
         _sum: { amount: true },
       }),
       this.prisma.projectManualEntry.groupBy({
-        by: ['projectId', 'kind'],
+        by: ['projectId', 'kind', 'isCapitalReturn'],
         where: {
           projectId: { in: projectIds },
         },
@@ -102,14 +110,16 @@ export class ProjectsService {
       const value = Number(row._sum.amount || 0);
       if (row.kind === 'income') data.manualIncome = value;
       if (row.kind === 'expense') data.manualExpense = value;
-      if (row.kind === 'contribution') data.contributions = value;
-      if (row.kind === 'withdrawal') data.withdrawals = value;
+      if (row.kind === 'contribution') data.contributions += value;
+      if (row.kind === 'withdrawal' && !row.isCapitalReturn) data.withdrawalsProfit += value;
+      if (row.kind === 'withdrawal' && row.isCapitalReturn) data.withdrawalsCapital += value;
     }
 
     for (const [, data] of map) {
       data.income = data.transactionsIncome + data.manualIncome;
       data.expense = data.transactionsExpense + data.manualExpense;
       data.result = data.income - data.expense;
+      data.withdrawals = data.withdrawalsProfit + data.withdrawalsCapital;
       data.cash = data.contributions + data.income - data.expense - data.withdrawals;
     }
 
