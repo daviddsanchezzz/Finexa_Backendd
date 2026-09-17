@@ -132,6 +132,7 @@ model User {
   trips         Trip[]
   tripMemberships TripMember[]
   projects      Project[]
+  goals         Goal[]
 
   refreshToken  String?
 
@@ -232,6 +233,8 @@ model Wallet {
   transactionsFrom    Transaction[] @relation("TransactionFromWallet")   // transfer origen
   transactionsTo      Transaction[] @relation("TransactionToWallet")     // transfer destino
   debts               Debt[]
+  goalAllocations     GoalAllocation[]
+  linkedGoals         Goal[] @relation("GoalLinkedWallet")
 
   position     Int           @default(0)
 
@@ -241,6 +244,71 @@ model Wallet {
   active       Boolean       @default(true)
 
   @@index([userId, position])
+}
+
+enum GoalTrackingMode {
+  MANUAL
+  ALLOCATIONS
+  WALLET_BALANCE
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model Goal {
+  id             Int              @id @default(autoincrement())
+  userId         Int
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  icon           String?
+  color          String?
+  targetAmount   Decimal          @db.Decimal(14, 2)
+  currency       String           @default("EUR")
+  trackingMode   GoalTrackingMode @default(ALLOCATIONS)
+  linkedWalletId Int?
+  linkedWallet   Wallet?          @relation("GoalLinkedWallet", fields: [linkedWalletId], references: [id], onDelete: Restrict)
+  targetDate     DateTime?
+  startDate      DateTime         @default(now())
+  status         GoalStatus       @default(ACTIVE)
+  archivedAmount Decimal?         @db.Decimal(14, 2)
+  allocations    GoalAllocation[]
+  manualEntries  GoalManualEntry[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([userId, status])
+  @@index([linkedWalletId])
+}
+
+model GoalAllocation {
+  id        Int      @id @default(autoincrement())
+  goalId    Int
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  walletId  Int
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  amount    Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([goalId, walletId])
+  @@index([walletId])
+}
+
+model GoalManualEntry {
+  id        Int      @id @default(autoincrement())
+  goalId    Int
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  amount    Decimal  @db.Decimal(14, 2)
+  date      DateTime @default(now())
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([goalId, date])
 }
 
 model WalletShare {

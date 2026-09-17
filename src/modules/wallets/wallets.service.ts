@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateWalletDto, ReorderWalletsDto } from './dto/create-wallet.dto';
 import { UpdateWalletDto } from './dto/update-wallet.dto';
+import { withGoalLock } from '../goals/goal-reservations';
 
 @Injectable()
 export class WalletsService {
@@ -64,14 +65,33 @@ export class WalletsService {
       }
     }
 
-    return this.prisma.wallet.update({ where: { id }, data: dto });
+    return withGoalLock(this.prisma, userId, async (tx) => {
+      const current = await tx.wallet.findFirst({ where: { id, userId, active: true } });
+      if (!current) throw new NotFoundException('Wallet not found');
+      if (dto.currency != null && dto.currency !== current.currency) {
+        const reserved = await tx.goal.count({ where: {
+          userId, status: { not: 'ARCHIVED' },
+          OR: [{ linkedWalletId: id }, { allocations: { some: { walletId: id, amount: { gt: 0 } } } }],
+        } });
+        if (reserved) throw new BadRequestException('Libera las reservas de los objetivos antes de cambiar la moneda de esta cartera.');
+      }
+      return tx.wallet.update({ where: { id }, data: dto });
+    });
   }
 
   async remove(userId: number, id: number) {
-    await this.findOne(userId, id);
-    return this.prisma.wallet.update({
-      where: { id },
-      data: { active: false },
+    return withGoalLock(this.prisma, userId, async (tx) => {
+      const wallet = await tx.wallet.findFirst({ where: { id, userId, active: true } });
+      if (!wallet) throw new NotFoundException('Wallet not found');
+      const reserved = await tx.goal.count({ where: {
+        userId, status: { not: 'ARCHIVED' },
+        OR: [
+          { linkedWalletId: id },
+          { allocations: { some: { walletId: id, amount: { gt: 0 } } } },
+        ],
+      } });
+      if (reserved) throw new BadRequestException('Esta cartera tiene dinero destinado a objetivos. Libera las asignaciones o archiva los objetivos antes de eliminarla.');
+      return tx.wallet.update({ where: { id }, data: { active: false } });
     });
   }
 
