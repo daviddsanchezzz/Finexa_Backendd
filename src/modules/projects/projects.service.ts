@@ -126,6 +126,100 @@ export class ProjectsService {
     return map;
   }
 
+  // Socio marcado isMe por proyecto, con su porcentaje. Si el proyecto no
+  // tiene ningún socio configurado, se asume que el usuario es dueño al
+  // 100% (partnerId=-1 no existe nunca, así que buildPartnerLedgerMap
+  // devuelve ceros para él, que es justo lo que corresponde: sin socios no
+  // puede haber aportaciones/retiradas registradas).
+  private async buildMyPartnerByProject(projectIds: number[]) {
+    const map = new Map<number, { id: number; percentage: number }>();
+    for (const projectId of projectIds) map.set(projectId, { id: -1, percentage: 100 });
+
+    if (!projectIds.length) return map;
+
+    const partners = await this.prisma.projectPartner.findMany({
+      where: { projectId: { in: projectIds }, isMe: true },
+      select: { id: true, projectId: true, percentage: true },
+    });
+
+    for (const partner of partners) {
+      map.set(partner.projectId, { id: partner.id, percentage: partner.percentage });
+    }
+
+    return map;
+  }
+
+  // Aportado/retirado-de-beneficio/capital-devuelto por socio (todos los
+  // socios de los proyectos dados, no solo "yo"). Lo reutilizan tanto el
+  // cálculo de "mi beneficio" (aquí, filtrando por el socio isMe) como el
+  // desglose por socio del detalle del proyecto.
+  private async buildPartnerLedgerMap(projectIds: number[]) {
+    const empty = () => ({ contributed: 0, withdrawnProfit: 0, capitalReturned: 0 });
+    const map = new Map<number, ReturnType<typeof empty>>();
+    if (!projectIds.length) return map;
+
+    const partners = await this.prisma.projectPartner.findMany({
+      where: { projectId: { in: projectIds } },
+      select: { id: true },
+    });
+    if (!partners.length) return map;
+
+    for (const partner of partners) map.set(partner.id, empty());
+
+    const partnerIds = partners.map((p) => p.id);
+    const rows = await this.prisma.projectManualEntry.groupBy({
+      by: ['partnerId', 'kind', 'isCapitalReturn'],
+      where: { partnerId: { in: partnerIds } },
+      _sum: { amount: true },
+    });
+
+    for (const row of rows) {
+      if (row.partnerId == null) continue;
+      const entry = map.get(row.partnerId);
+      if (!entry) continue;
+      const value = Number(row._sum.amount || 0);
+      if (row.kind === 'contribution') entry.contributed += value;
+      if (row.kind === 'withdrawal' && !row.isCapitalReturn) entry.withdrawnProfit += value;
+      if (row.kind === 'withdrawal' && row.isCapitalReturn) entry.capitalReturned += value;
+    }
+
+    return map;
+  }
+
+  // Punto único donde se combina el resultado del proyecto
+  // (buildFinancialsMap) con la posición personal del usuario (su % y su
+  // ledger de aportaciones/retiradas). Lo usan findAll y findOne, así el
+  // listado y el detalle nunca pueden desincronizarse en cómo calculan "mi
+  // beneficio".
+  private async attachFinancials<T extends { id: number }>(userId: number, projects: T[]) {
+    const projectIds = projects.map((p) => p.id);
+    const [financialsMap, myPartnerMap, ledgerMap] = await Promise.all([
+      this.buildFinancialsMap(userId, projectIds),
+      this.buildMyPartnerByProject(projectIds),
+      this.buildPartnerLedgerMap(projectIds),
+    ]);
+
+    return projects.map((project) => {
+      const financials = financialsMap.get(project.id)!;
+      const myPartner = myPartnerMap.get(project.id)!;
+      const ledger = ledgerMap.get(myPartner.id) ?? { contributed: 0, withdrawnProfit: 0, capitalReturned: 0 };
+      const myProfit = financials.result * (myPartner.percentage / 100);
+
+      return {
+        ...project,
+        financials: {
+          ...financials,
+          myPercentage: myPartner.percentage,
+          myProfit,
+          myWithdrawnProfit: ledger.withdrawnProfit,
+          myCapitalContributed: ledger.contributed,
+          myCapitalReturned: ledger.capitalReturned,
+          myPending: myProfit - ledger.withdrawnProfit,
+        },
+      };
+    });
+  }
+
   private validateDistributionLines(totalAmount: number, lines: { amount: number }[]) {
     if (!lines?.length) {
       throw new BadRequestException('Debes añadir al menos un socio en el reparto');
@@ -201,15 +295,7 @@ export class ProjectsService {
       orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
     });
 
-    const financialsMap = await this.buildFinancialsMap(
-      userId,
-      projects.map((p) => p.id),
-    );
-
-    return projects.map((project) => ({
-      ...project,
-      financials: financialsMap.get(project.id),
-    }));
+    return this.attachFinancials(userId, projects);
   }
 
   async findOne(userId: number, projectId: number) {
@@ -240,8 +326,8 @@ export class ProjectsService {
       throw new NotFoundException('Proyecto no encontrado');
     }
 
-    const [financialsMap, partnerAgg] = await Promise.all([
-      this.buildFinancialsMap(userId, [projectId]),
+    const [withFinancials, partnerAgg] = await Promise.all([
+      this.attachFinancials(userId, [project]),
       this.prisma.projectManualEntry.groupBy({
         by: ['partnerId', 'kind'],
         where: {
@@ -253,7 +339,7 @@ export class ProjectsService {
       }),
     ]);
 
-    const financials = financialsMap.get(projectId)!;
+    const { financials } = withFinancials[0];
 
     const partners = project.partners.map((partner) => {
       const contributed = partnerAgg.find(

@@ -67,3 +67,49 @@ describe('ProjectsService — desglose de retiradas por tipo', () => {
     expect(project.financials.withdrawals).toBe(500);
   });
 });
+
+describe('ProjectsService — mi beneficio según mi participación', () => {
+  const prisma = {
+    project: { findMany: jest.fn(async () => [{ id: 1 }, { id: 2 }]) },
+    transaction: {
+      groupBy: jest.fn(async () => [
+        { projectId: 1, type: 'income', _sum: { amount: 2931.86 } },
+        { projectId: 1, type: 'expense', _sum: { amount: 742.2 } },
+      ]),
+    },
+    projectManualEntry: {
+      groupBy: jest.fn(async ({ by }: any) => {
+        if (by.includes('partnerId')) {
+          return [{ partnerId: 50, kind: 'withdrawal', isCapitalReturn: false, _sum: { amount: 400 } }];
+        }
+        return [];
+      }),
+    },
+    projectPartner: {
+      findMany: jest.fn(async ({ where }: any) =>
+        where.isMe ? [{ id: 50, projectId: 1, percentage: 50 }] : [{ id: 50, projectId: 1 }],
+      ),
+    },
+  };
+  const service = new ProjectsService(prisma as any);
+
+  it('calcula mi beneficio como resultado del proyecto * mi porcentaje', async () => {
+    const projects = await service.findAll(1);
+    const projectA = projects.find((p) => p.id === 1)!;
+
+    expect(projectA.financials.result).toBeCloseTo(2189.66, 2);
+    expect(projectA.financials.myPercentage).toBe(50);
+    expect(projectA.financials.myProfit).toBeCloseTo(1094.83, 2);
+    expect(projectA.financials.myWithdrawnProfit).toBe(400);
+    expect(projectA.financials.myPending).toBeCloseTo(694.83, 2);
+  });
+
+  it('asume 100% cuando el proyecto no tiene ningún socio configurado', async () => {
+    const projects = await service.findAll(1);
+    const projectB = projects.find((p) => p.id === 2)!;
+
+    expect(projectB.financials.myPercentage).toBe(100);
+    expect(projectB.financials.myProfit).toBe(0);
+    expect(projectB.financials.myWithdrawnProfit).toBe(0);
+  });
+});
