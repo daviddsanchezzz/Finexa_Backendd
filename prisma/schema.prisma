@@ -461,6 +461,10 @@ model ProjectManualEntry {
   project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   kind        ProjectMovementKind
+  // Solo relevante cuando kind = withdrawal: true = devolución de capital
+  // previamente aportado por el socio, false = retirada de beneficio ya
+  // generado. Se ignora para el resto de kinds (siempre queda en false).
+  isCapitalReturn Boolean      @default(false)
   title       String
   description String?
   amount      Float
