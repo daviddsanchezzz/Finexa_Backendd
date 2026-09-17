@@ -326,32 +326,20 @@ export class ProjectsService {
       throw new NotFoundException('Proyecto no encontrado');
     }
 
-    const [withFinancials, partnerAgg] = await Promise.all([
+    const [withFinancials, ledgerMap] = await Promise.all([
       this.attachFinancials(userId, [project]),
-      this.prisma.projectManualEntry.groupBy({
-        by: ['partnerId', 'kind'],
-        where: {
-          projectId,
-          partnerId: { not: null },
-          kind: { in: ['contribution', 'withdrawal'] },
-        },
-        _sum: { amount: true },
-      }),
+      this.buildPartnerLedgerMap([projectId]),
     ]);
 
     const { financials } = withFinancials[0];
 
     const partners = project.partners.map((partner) => {
-      const contributed = partnerAgg.find(
-        (row) => row.partnerId === partner.id && row.kind === 'contribution',
-      );
-      const withdrawn = partnerAgg.find(
-        (row) => row.partnerId === partner.id && row.kind === 'withdrawal',
-      );
+      const ledger = ledgerMap.get(partner.id) ?? { contributed: 0, withdrawnProfit: 0, capitalReturned: 0 };
       return {
         ...partner,
-        contributed: Number(contributed?._sum.amount || 0),
-        withdrawn: Number(withdrawn?._sum.amount || 0),
+        contributed: ledger.contributed,
+        withdrawnProfit: ledger.withdrawnProfit,
+        capitalReturned: ledger.capitalReturned,
       };
     });
 

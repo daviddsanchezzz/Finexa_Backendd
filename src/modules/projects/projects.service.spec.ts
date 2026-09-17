@@ -113,3 +113,40 @@ describe('ProjectsService — mi beneficio según mi participación', () => {
     expect(projectB.financials.myWithdrawnProfit).toBe(0);
   });
 });
+
+describe('ProjectsService — desglose de retiradas por socio en el detalle', () => {
+  const prisma = {
+    project: {
+      findFirst: jest.fn(async () => ({
+        id: 1,
+        transactions: [],
+        manualEntries: [],
+        partners: [{ id: 50, name: 'Yo', percentage: 100, isMe: true }],
+      })),
+    },
+    transaction: { groupBy: jest.fn(async () => []) },
+    projectManualEntry: {
+      groupBy: jest.fn(async () => [
+        { partnerId: 50, kind: 'contribution', isCapitalReturn: false, _sum: { amount: 500 } },
+        { partnerId: 50, kind: 'withdrawal', isCapitalReturn: false, _sum: { amount: 300 } },
+        { partnerId: 50, kind: 'withdrawal', isCapitalReturn: true, _sum: { amount: 500 } },
+      ]),
+    },
+    projectPartner: {
+      findMany: jest.fn(async ({ where }: any) =>
+        where.isMe ? [{ id: 50, projectId: 1, percentage: 100 }] : [{ id: 50 }],
+      ),
+    },
+  };
+  const service = new ProjectsService(prisma as any);
+
+  it('separa retirado de beneficio y capital devuelto para cada socio', async () => {
+    const detail = await service.findOne(1, 1);
+    const [partner] = detail.partners;
+
+    expect(partner.contributed).toBe(500);
+    expect(partner.withdrawnProfit).toBe(300);
+    expect(partner.capitalReturned).toBe(500);
+    expect((partner as any).withdrawn).toBeUndefined();
+  });
+});
