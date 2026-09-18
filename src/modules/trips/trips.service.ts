@@ -493,8 +493,8 @@ export class TripsService {
       },
       include: {
         countryStays: { orderBy: { order: "asc" } },
-        user: { select: { id: true, name: true, email: true } },
-        members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true } } } },
+        user: { select: { id: true, name: true, email: true, avatar: true } },
+        members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true, avatar: true } } } },
         planItems: { select: { cost: true, metadata: true } },
         transactions: {
           where: { active: true, type: "expense" },
@@ -529,8 +529,8 @@ async getTripDetail(userId: number, tripId: number) {
   const trip = await this.prisma.trip.findFirst({
     where: { id: tripId, ...this.tripAccessFilter(userId) },
     include: {
-      user: { select: { id: true, name: true, email: true } },
-      members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true } } } },
+      user: { select: { id: true, name: true, email: true, avatar: true } },
+      members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true, avatar: true } } } },
 
       notes: { orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }] },
       tasks: { orderBy: [{ status: "asc" }, { updatedAt: "desc" }] },
@@ -659,13 +659,13 @@ async getTripDetail(userId: number, tripId: number) {
     await this.assertTripOwnership(userId, tripId);
     const trip = await this.prisma.trip.findUnique({
       where: { id: tripId },
-      select: { userId: true, user: { select: { id: true, name: true, email: true } } },
+      select: { userId: true, user: { select: { id: true, name: true, email: true, avatar: true } } },
     });
     if (!trip) throw new NotFoundException("Trip not found");
 
     const members = await this.prisma.tripMember.findMany({
       where: { tripId, status: "accepted" },
-      include: { user: { select: { id: true, name: true, email: true } } },
+      include: { user: { select: { id: true, name: true, email: true, avatar: true } } },
       orderBy: { createdAt: "asc" },
     });
 
