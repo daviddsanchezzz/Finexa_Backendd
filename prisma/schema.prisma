@@ -495,6 +495,13 @@ model Transaction {
   createdBy     Int?
   active        Boolean      @default(true)
 
+  // Solo aplican a plantillas recurrentes (isRecurring=true). `paused`
+  // detiene el cron sin borrar la serie; `endDate` es el límite opcional a
+  // partir del cual la serie se considera finalizada (calculado en el
+  // cliente/servicio, no se persiste un estado "finished" aparte).
+  paused        Boolean      @default(false)
+  endDate       DateTime?
+
   @@index([subcategoryId])
   @@index([projectId])
 }

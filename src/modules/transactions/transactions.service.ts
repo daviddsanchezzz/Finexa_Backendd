@@ -623,11 +623,19 @@ if (filters?.dateFrom || filters?.dateTo) {
         recurrence: { not: null },
         date: { lte: now }, // ya toca ejecutarlas
         active: true,
+        paused: false,
       },
       include: { category: true, subcategory: true },
     });
 
     for (const t of templates) {
+      // Serie con fecha fin ya superada: no genera más ocurrencias. Se deja
+      // la plantilla tal cual (el front la muestra como "Finalizada" a
+      // partir de endDate, sin necesidad de un estado aparte aquí).
+      if ((t as any).endDate && new Date((t as any).endDate).getTime() < now.getTime()) {
+        continue;
+      }
+
       // 1) DTO para la transacción real (ocurrencia)
       const dto: CreateTransactionDto = {
         type: t.type as any,
@@ -704,6 +712,44 @@ if (filters?.dateFrom || filters?.dateTo) {
     return d;
   }
 
+  // Repite getNextDate hasta superar `now` — usado al reanudar una plantilla
+  // que estuvo pausada un tiempo, para no disparar de golpe todas las
+  // ejecuciones que se saltó mientras tanto.
+  private advanceToFuture(current: Date, interval: string | null, now: Date): Date {
+    let d = current;
+    let guard = 0;
+    while (d.getTime() <= now.getTime() && guard < 10000) {
+      d = this.getNextDate(d, interval);
+      guard += 1;
+    }
+    return d;
+  }
+
+  // ============================================================
+  // PAUSAR / REANUDAR una plantilla recurrente
+  // ============================================================
+  async setRecurringPaused(userId: number, id: number, paused: boolean) {
+    const template = await this.prisma.transaction.findFirst({
+      where: { id, userId, active: true, isRecurring: true },
+    });
+
+    if (!template) {
+      throw new NotFoundException('Recurring transaction not found');
+    }
+
+    const data: any = { paused };
+
+    // Al reanudar, si la próxima fecha quedó en el pasado, se salta al
+    // próximo futuro en lugar de dejar que el cron dispare pagos atrasados.
+    if (!paused && template.date.getTime() < Date.now()) {
+      data.date = this.advanceToFuture(template.date, template.recurrence, new Date());
+    }
+
+    await this.prisma.transaction.update({ where: { id }, data });
+
+    return this.findOne(userId, id);
+  }
+
   async updateWithScope(
     userId: number,
     id: number,
@@ -776,6 +822,12 @@ if (filters?.dateFrom || filters?.dateTo) {
         typeof (dto as any).projectId !== 'undefined'
           ? (dto as any).projectId
           : (templateTx as any).projectId,
+      endDate:
+        typeof (dto as any).endDate !== 'undefined'
+          ? (dto as any).endDate
+            ? new Date((dto as any).endDate)
+            : null
+          : (templateTx as any).endDate,
     };
 
     // isRecurring + recurrence para la plantilla
@@ -794,6 +846,10 @@ if (filters?.dateFrom || filters?.dateTo) {
       data: templateUpdateData,
     });
 
+    // `paused`/`endDate` son conceptos de la plantilla, no de una ocurrencia
+    // ya generada: nunca se propagan a los hijos al editar en cascada.
+    const { paused: _paused, endDate: _endDate, ...dtoForChildrenBase } = dto as any;
+
     // ✅ Caso 2: actualizar esta + futuras
     if (scope === 'future') {
       const futureChildren = await this.prisma.transaction.findMany({
@@ -807,8 +863,8 @@ if (filters?.dateFrom || filters?.dateTo) {
 
       for (const child of futureChildren) {
         const dtoForChild: UpdateTransactionDto = {
-          ...(dto as any),
-          date: (dto as any).date ?? child.date.toISOString(),
+          ...dtoForChildrenBase,
+          date: dtoForChildrenBase.date ?? child.date.toISOString(),
         };
         await this.update(userId, child.id, dtoForChild);
       }
@@ -828,8 +884,8 @@ if (filters?.dateFrom || filters?.dateTo) {
 
       for (const child of allChildren) {
         const dtoForChild: UpdateTransactionDto = {
-          ...(dto as any),
-          date: (dto as any).date ?? child.date.toISOString(),
+          ...dtoForChildrenBase,
+          date: dtoForChildrenBase.date ?? child.date.toISOString(),
         };
         await this.update(userId, child.id, dtoForChild);
       }

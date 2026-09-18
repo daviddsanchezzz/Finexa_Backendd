@@ -26,6 +26,15 @@ export class CreateTransactionDto {
   })
   recurrence?: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
 
+  // Solo para la plantilla de una serie recurrente.
+  @IsOptional()
+  @IsBoolean()
+  paused?: boolean;
+
+  @IsOptional()
+  @IsString()
+  endDate?: string | null; // ISO string, o null para quitar la fecha fin
+
   @IsOptional()
   @IsBoolean()
   excludeFromStats?: boolean;

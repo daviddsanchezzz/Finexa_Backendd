@@ -64,6 +64,18 @@ export class TransactionsController {
     return this.transactionsService.updateWithScope(userId, +id, dto, scope);
   }
 
+  // Pausa/reanuda una plantilla recurrente completa. Aparte del PATCH
+  // genérico porque no debe tocar las ocurrencias ya generadas ni pasar por
+  // el bucle de "actualizar toda la serie".
+  @Patch(':id/recurring-status')
+  setRecurringPaused(
+    @User('id') userId: number,
+    @Param('id') id: string,
+    @Body('paused') paused: boolean,
+  ) {
+    return this.transactionsService.setRecurringPaused(userId, +id, !!paused);
+  }
+
   @Delete(':id')
   remove(
     @User('id') userId: number,
