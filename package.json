@@ -43,6 +43,7 @@
     "date-fns": "^4.1.0",
     "expo-file-system": "^19.0.20",
     "expo-sharing": "^14.0.8",
+    "google-auth-library": "^11.1.0",
     "luxon": "^3.7.2",
     "mongoose": "^8.19.3",
     "passport": "^0.7.0",

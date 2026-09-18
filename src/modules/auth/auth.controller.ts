@@ -25,6 +25,12 @@ export class AuthController {
     return this.authService.refreshToken(body.refresh_token);
   }
 
+  @Public()
+  @Post('google')
+  loginWithGoogle(@Body() body: { id_token: string }) {
+    return this.authService.loginWithGoogle(body.id_token);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('me')
   async getProfile(@Req() req) {
