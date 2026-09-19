@@ -321,13 +321,9 @@ private async getAssetMonthlyPerformance(userId: number, start: Date, end: Date)
           ? endValue - startValue - cashflowNet
           : null;
 
-      /**
-       * % coherente para assets nuevos:
-       * - si startValue=0 y cashflowNet>0 (aportación), usa esa aportación como base.
-       * - si startValue>0, base = startValue (o podrías usar start+max(0,cashflow) si prefieres “capital desplegado”).
-       */
-      const base =
-        startValue > 0 ? startValue : Math.max(0, cashflowNet);
+      // Rentabilidad simple, mismo criterio que la app:
+      // profit / (valor inicial + aportado en el periodo).
+      const base = startValue + cashflowNet;
 
       const returnPct =
         profit != null && base > 0
