@@ -20,6 +20,12 @@ export class TransactionsController {
     return this.transactionsService.findLastSalary(userId);
   }
 
+  // Debe ir antes de @Get(':id') para que no lo capture como id.
+  @Get('suggest-category')
+  suggestCategory(@User('id') userId: number, @Query('description') description: string) {
+    return this.transactionsService.suggestCategory(userId, description);
+  }
+
   @Get()
   findAll(
     @User('id') userId: number,

@@ -10,6 +10,7 @@ import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import { PrismaDateTransformer } from 'src/common/prisma/prisma.transformer';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BudgetsService } from '../budgets/budgets.service';
+import { suggestCategoryFromHistory } from './category-suggestion';
 
 @Injectable()
 export class TransactionsService {
@@ -33,6 +34,35 @@ export class TransactionsService {
     });
     if (!sub?.tripId || sub.trip?.userId !== userId) return undefined;
     return sub.tripId;
+  }
+
+  // ============================================================
+  // SUGERENCIA DE CATEGORÍA POR COMERCIO
+  // ============================================================
+  // Mira los gastos anteriores del usuario con esa misma descripción (p.ej.
+  // "Mercadona", que llega desde el flujo de Wallet) y, si siempre tuvieron la
+  // misma categoría/subcategoría, las devuelve para preseleccionarlas.
+  async suggestCategory(userId: number, description: string) {
+    const trimmed = (description ?? '').trim();
+    if (!trimmed) return null;
+
+    // `contains` insensitive es un prefiltro (superset); la comparación exacta
+    // sin acentos ni mayúsculas la hace suggestCategoryFromHistory.
+    const rows = await this.prisma.transaction.findMany({
+      where: {
+        userId,
+        type: 'expense',
+        active: true,
+        isRecurring: false,
+        categoryId: { not: null },
+        description: { contains: trimmed, mode: 'insensitive' },
+      },
+      select: { description: true, categoryId: true, subcategoryId: true },
+      orderBy: { date: 'desc' },
+      take: 200,
+    });
+
+    return suggestCategoryFromHistory(trimmed, rows);
   }
 
   // ============================================================
@@ -829,6 +859,19 @@ if (filters?.dateFrom || filters?.dateTo) {
             : null
           : (templateTx as any).endDate,
     };
+
+    // En la plantilla, `date` es la PRÓXIMA ejecución (es la que enseña la
+    // lista de recurrentes y la que usa el cron). Si se edita la propia
+    // plantilla hay que guardarla: los hijos ya generados son movimientos
+    // pasados y no la cambian. Si se edita una ocurrencia, su fecha no toca la
+    // de la plantilla.
+    if (baseTx.isRecurring && (dto as any).date) {
+      const newDate = new Date((dto as any).date);
+      if (isNaN(newDate.getTime())) {
+        throw new BadRequestException('Fecha inválida');
+      }
+      templateUpdateData.date = newDate;
+    }
 
     // isRecurring + recurrence para la plantilla
     if (typeof (dto as any).recurrence !== 'undefined') {
