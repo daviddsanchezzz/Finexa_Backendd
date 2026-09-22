@@ -110,15 +110,17 @@ async getSummary2(userId: number, filters: FilterDashboardDto) {
     ...(walletId ? { fromWalletId: walletId } : {}),
   };
 
-  const [incomeAgg, expenseAgg, investmentTransfers] = await Promise.all([
-    this.prisma.transaction.aggregate({
-      where: { ...incomeExpenseWhere, type: "income" },
-      _sum: { amount: true },
-    }),
-    this.prisma.transaction.aggregate({
-      where: { ...incomeExpenseWhere, type: "expense" },
-      _sum: { amount: true },
-    }),
+  // Prisma no puede sumar "baseAmount si no es null, si no amount" dentro de
+  // un aggregate — se traen las filas y se suma en JS. El volumen de
+  // transacciones de un usuario en un periodo es pequeño, así que el coste es
+  // asumible; para una transacción EUR (baseAmount null) el resultado es
+  // idéntico al aggregate anterior.
+  const sumBaseOrAmount = (rows: { amount: number; baseAmount: any }[]) =>
+    rows.reduce((sum, r) => sum + Math.abs(Number(r.baseAmount ?? r.amount ?? 0)), 0);
+
+  const [incomeRows, expenseRows, investmentTransfers] = await Promise.all([
+    this.prisma.transaction.findMany({ where: { ...incomeExpenseWhere, type: "income" }, select: { amount: true, baseAmount: true } }),
+    this.prisma.transaction.findMany({ where: { ...incomeExpenseWhere, type: "expense" }, select: { amount: true, baseAmount: true } }),
     this.prisma.transaction.findMany({
       where: investmentWhere,
       select: {
@@ -128,8 +130,8 @@ async getSummary2(userId: number, filters: FilterDashboardDto) {
     }),
   ]);
 
-  const totalIncome = Math.abs(Number(incomeAgg._sum.amount ?? 0));
-  const totalExpenses = Math.abs(Number(expenseAgg._sum.amount ?? 0));
+  const totalIncome = sumBaseOrAmount(incomeRows);
+  const totalExpenses = sumBaseOrAmount(expenseRows);
 
   const totalInvestment = investmentTransfers.reduce(
     (sum, t) => sum + Math.abs(Number(t.amount ?? 0)),
@@ -177,29 +179,33 @@ async getSummary2(userId: number, filters: FilterDashboardDto) {
         : {}),
     };
 
-    const results = await this.prisma.transaction.groupBy({
-      by: ['categoryId'],
+    const rows = await this.prisma.transaction.findMany({
       where,
-      _sum: { amount: true },
+      select: { categoryId: true, amount: true, baseAmount: true },
     });
 
-    const categoryIds = results
-      .map(r => r.categoryId)
-      .filter((id): id is number => id !== null && id !== undefined);
-    
+    const totalsByCategory = new Map<number, number>();
+    for (const r of rows) {
+      if (r.categoryId == null) continue;
+      const prev = totalsByCategory.get(r.categoryId) ?? 0;
+      totalsByCategory.set(r.categoryId, prev + Number(r.baseAmount ?? r.amount ?? 0));
+    }
+
+    const categoryIds = Array.from(totalsByCategory.keys());
+
     const categories = await this.prisma.category.findMany({
       where: { id: { in: categoryIds } },
       select: { id: true, name: true, emoji: true , color:true},
     });
-    
-    return results.map(r => {
-      const category = categories.find(c => c.id === r.categoryId);
+
+    return categoryIds.map(id => {
+      const category = categories.find(c => c.id === id);
       return {
         id: category?.id,
         name: category?.name,
         emoji: category?.emoji,
         color: category?.color,
-        total: r._sum.amount ?? 0,
+        total: totalsByCategory.get(id) ?? 0,
       };
     });
   }
@@ -214,17 +220,18 @@ async getSummary2(userId: number, filters: FilterDashboardDto) {
         : {}),
     };
 
-    const results = await this.prisma.transaction.groupBy({
-      by: ['type'],
-      _sum: { amount: true },
-      _count: { id: true },
+    const rows = await this.prisma.transaction.findMany({
       where,
+      select: { type: true, amount: true, baseAmount: true },
     });
 
+    const sumByType = (type: string) =>
+      rows.filter(r => r.type === type).reduce((sum, r) => sum + Number(r.baseAmount ?? r.amount ?? 0), 0);
+
     return {
-      income: results.find(r => r.type === 'income')?._sum.amount ?? 0,
-      expenses: results.find(r => r.type === 'expense')?._sum.amount ?? 0,
-      transactionsCount: results.reduce((acc, r) => acc + r._count.id, 0),
+      income: sumByType('income'),
+      expenses: sumByType('expense'),
+      transactionsCount: rows.length,
     };
   }
 }

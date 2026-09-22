@@ -42,3 +42,86 @@ describe('DashboardService.getNetWorth', () => {
     expect(result.wallets[1].balanceInBase).toBeCloseTo(2000 * 0.9393, 2);
   });
 });
+
+describe('DashboardService.getSummary2 — multi-currency', () => {
+  function build(incomeRows: any[], expenseRows: any[]) {
+    const prisma: any = {
+      transaction: {
+        findMany: jest.fn((args: any) => {
+          if (args.where.type === 'income') return Promise.resolve(incomeRows);
+          if (args.where.type === 'expense') return Promise.resolve(expenseRows);
+          return Promise.resolve([]); // investmentTransfers
+        }),
+      },
+    };
+    return { service: new DashboardService(prisma, {} as any), prisma };
+  }
+
+  it('con todo EUR, suma amount tal cual (comportamiento identico al actual)', async () => {
+    const { service } = build([{ amount: 1000, baseAmount: null }], [{ amount: 400, baseAmount: null }]);
+
+    const result = await service.getSummary2(7, {} as any);
+
+    expect(result.totalIncome).toBe(1000);
+    expect(result.totalExpenses).toBe(400);
+  });
+
+  it('con una transaccion en otra moneda, usa baseAmount ya convertido', async () => {
+    const { service } = build(
+      [{ amount: 1000, baseAmount: 1000 }, { amount: 50, baseAmount: 46.5 }],
+      [{ amount: 400, baseAmount: null }],
+    );
+
+    const result = await service.getSummary2(7, {} as any);
+
+    expect(result.totalIncome).toBeCloseTo(1046.5, 2);
+    expect(result.totalExpenses).toBe(400);
+  });
+});
+
+describe('DashboardService.getByCategory — multi-currency', () => {
+  it('agrupa por categoria sumando baseAmount cuando existe', async () => {
+    const prisma: any = {
+      transaction: {
+        findMany: jest.fn().mockResolvedValue([
+          { categoryId: 1, amount: 30, baseAmount: null },
+          { categoryId: 1, amount: 50, baseAmount: 46.5 },
+          { categoryId: 2, amount: 10, baseAmount: null },
+        ]),
+      },
+      category: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 1, name: 'Alimentación', emoji: '🍔', color: '#fff' },
+          { id: 2, name: 'Ocio', emoji: '🎉', color: '#000' },
+        ]),
+      },
+    };
+    const service = new DashboardService(prisma, {} as any);
+
+    const result = await service.getByCategory(7, {} as any);
+
+    expect(result.find((r) => r.id === 1)?.total).toBeCloseTo(76.5, 2);
+    expect(result.find((r) => r.id === 2)?.total).toBe(10);
+  });
+});
+
+describe('DashboardService.getTrends — multi-currency', () => {
+  it('suma income/expenses usando baseAmount cuando existe', async () => {
+    const prisma: any = {
+      transaction: {
+        findMany: jest.fn().mockResolvedValue([
+          { type: 'income', amount: 1000, baseAmount: null },
+          { type: 'expense', amount: 50, baseAmount: 46.5 },
+          { type: 'expense', amount: 20, baseAmount: null },
+        ]),
+      },
+    };
+    const service = new DashboardService(prisma, {} as any);
+
+    const result = await service.getTrends(7, {} as any);
+
+    expect(result.income).toBe(1000);
+    expect(result.expenses).toBeCloseTo(66.5, 2);
+    expect(result.transactionsCount).toBe(3);
+  });
+});
