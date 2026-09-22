@@ -33,6 +33,13 @@ export class CreateBudgetDto {
   @IsPositive()
   totalLimit?: number | null;
 
+  // ISO 4217. Si no se manda, el service la rellena con la moneda base del
+  // usuario. Todos los importes de este presupuesto (limite y gasto) se
+  // comparan en esta moneda, sin importar la moneda de cada cartera incluida.
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

@@ -6,6 +6,7 @@ import { UpdateBudgetDto } from "./dto/update-budget.dto";
 import { BudgetCategoryLimitDto } from "./dto/budget-category-limit.dto";
 import { BudgetsOverviewQueryDto } from "./dto/budgets-overview.query.dto";
 import { NotificationsService } from "../notifications/notifications.service";
+import { CurrencyService } from "../currency/currency.service";
 
 type PeriodRange = { from: Date; to: Date };
 
@@ -128,8 +129,24 @@ type BudgetWithLimits = Prisma.BudgetGetPayload<{ include: typeof BUDGET_WITH_LI
 export class BudgetsService {
   constructor(
     private prisma: PrismaService,
-    private notifications: NotificationsService
+    private notifications: NotificationsService,
+    private currency: CurrencyService,
   ) {}
+
+  // Suma `rows` ya convertidas a `targetCurrency`. Si una fila ya está en esa
+  // moneda no llama a CurrencyService (caso normal hoy: todo EUR, coste cero).
+  private async sumConverted(rows: Array<{ amount: number; currency: string; date: Date }>, targetCurrency: string): Promise<number> {
+    let total = 0;
+    for (const row of rows) {
+      if (row.currency === targetCurrency) {
+        total += row.amount;
+      } else {
+        const converted = await this.currency.convert(row.amount, row.currency, targetCurrency, row.date);
+        total += converted.toNumber();
+      }
+    }
+    return total;
+  }
 
   // Un presupuesto debe tener límite global y/o al menos un límite por categoría,
   // nunca ninguno; las categorías no pueden repetirse; los sublímites no pueden
@@ -192,18 +209,19 @@ export class BudgetsService {
       ...walletFilter,
     };
 
-    const totalAgg = await this.prisma.transaction.aggregate({ where: baseWhere, _sum: { amount: true } });
-    const totalSpentRaw = totalAgg._sum.amount ?? 0;
+    const budgetCurrency = b.currency ?? "EUR";
+    const totalRows = await this.prisma.transaction.findMany({ where: baseWhere, select: { amount: true, currency: true, date: true } });
+    const totalSpentRaw = await this.sumConverted(totalRows, budgetCurrency);
 
     const categoryItems: any[] = [];
     let sumLimitedCategoriesSpent = 0;
 
     for (const cl of b.categoryLimits) {
-      const agg = await this.prisma.transaction.aggregate({
+      const rows = await this.prisma.transaction.findMany({
         where: { ...baseWhere, categoryId: cl.categoryId },
-        _sum: { amount: true },
+        select: { amount: true, currency: true, date: true },
       });
-      const spent = agg._sum.amount ?? 0;
+      const spent = await this.sumConverted(rows, budgetCurrency);
       sumLimitedCategoriesSpent += spent;
 
       categoryItems.push({
@@ -224,7 +242,7 @@ export class BudgetsService {
     let carryOverAmount = 0;
 
     if (hasGlobal && b.carryOverRemaining && new Date(b.startDate) <= prevRange.to) {
-      const prevAgg = await this.prisma.transaction.aggregate({
+      const prevRows = await this.prisma.transaction.findMany({
         where: {
           userId,
           active: true,
@@ -234,9 +252,9 @@ export class BudgetsService {
           date: { gte: prevRange.from, lte: prevRange.to },
           ...walletFilter,
         },
-        _sum: { amount: true },
+        select: { amount: true, currency: true, date: true },
       });
-      const prevSpent = prevAgg._sum.amount ?? 0;
+      const prevSpent = await this.sumConverted(prevRows, budgetCurrency);
       carryOverAmount = Math.max((b.totalLimit as number) - prevSpent, 0);
     }
 
@@ -380,6 +398,12 @@ export class BudgetsService {
     const categoryLimits = dto.categoryLimits ?? [];
     this.validateLimits(dto.totalLimit ?? null, categoryLimits);
 
+    let currency = dto.currency;
+    if (!currency) {
+      const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } });
+      currency = user?.currency ?? "EUR";
+    }
+
     const budget = await this.prisma.budget.create({
       data: {
         userId,
@@ -387,6 +411,7 @@ export class BudgetsService {
         period: dto.period ?? "monthly",
         startDate: new Date(dto.startDate),
         totalLimit: dto.totalLimit ?? null,
+        currency,
         walletIds: dto.walletIds ?? [],
         autoRenew: dto.autoRenew ?? true,
         carryOverRemaining: dto.carryOverRemaining ?? false,
