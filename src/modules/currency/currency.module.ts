@@ -7,7 +7,11 @@ import { ExchangeRateUpdaterScheduler } from './exchange-rate-updater.scheduler'
 
 @Module({
   imports: [PrismaModule],
-  providers: [CurrencyService, ExchangeRateUpdaterScheduler, { provide: EXCHANGE_RATE_PROVIDER, useClass: FrankfurterProvider }],
+  providers: [
+    CurrencyService,
+    ExchangeRateUpdaterScheduler,
+    { provide: EXCHANGE_RATE_PROVIDER, useClass: FrankfurterProvider },
+  ],
   exports: [CurrencyService],
 })
 export class CurrencyModule {}

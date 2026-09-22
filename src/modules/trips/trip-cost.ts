@@ -4,7 +4,11 @@ import { CurrencyService } from '../currency/currency.service';
 
 // `cost` es Decimal en Prisma (TripPlanItem.cost); se acepta también number
 // para que la función sea testeable sin instanciar Prisma.Decimal.
-export type PlanItemCost = { cost: Prisma.Decimal | number | null; currency: string | null; day?: Date | null };
+export type PlanItemCost = {
+  cost: Prisma.Decimal | number | null;
+  currency: string | null;
+  day?: Date | null;
+};
 
 // Suma el coste de los plan items de un viaje, convirtiendo cada uno a
 // `tripCurrency` cuando su propia currency difiere (tipo historico, fecha del
@@ -33,7 +37,12 @@ export async function sumPlanItemsCost(
       continue;
     }
     try {
-      const converted = await currencyService.convert(cost, itemCurrency, tripCurrency, item.day ?? undefined);
+      const converted = await currencyService.convert(
+        cost,
+        itemCurrency,
+        tripCurrency,
+        item.day ?? undefined,
+      );
       total += converted.toNumber();
     } catch {
       // Omitido a propósito: ver comentario de la función.

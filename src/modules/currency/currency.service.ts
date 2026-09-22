@@ -1,7 +1,11 @@
 import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { EXCHANGE_RATE_PROVIDER, PIVOT_CURRENCY, ZERO_DECIMAL_CURRENCIES } from './currency.constants';
+import {
+  EXCHANGE_RATE_PROVIDER,
+  PIVOT_CURRENCY,
+  ZERO_DECIMAL_CURRENCIES,
+} from './currency.constants';
 import type { ExchangeRateProvider } from './currency.types';
 
 function startOfUtcDay(date: Date): Date {
@@ -30,27 +34,47 @@ export class CurrencyService {
 
     if (from === PIVOT_CURRENCY) {
       const rate = await this.latestPivotRate(to);
-      if (!rate) throw new ServiceUnavailableException(`No hay tipo de cambio EUR->${to} disponible.`);
+      if (!rate)
+        throw new ServiceUnavailableException(`No hay tipo de cambio EUR->${to} disponible.`);
       return rate;
     }
     if (to === PIVOT_CURRENCY) {
       const rate = await this.latestPivotRate(from);
-      if (!rate) throw new ServiceUnavailableException(`No hay tipo de cambio EUR->${from} disponible.`);
+      if (!rate)
+        throw new ServiceUnavailableException(`No hay tipo de cambio EUR->${from} disponible.`);
       return new Prisma.Decimal(1).dividedBy(rate);
     }
 
     // Cruce: from->EUR->to, ninguna fila propia para el par.
-    const [fromToEur, eurToTarget] = await Promise.all([this.getCurrentRate(from, PIVOT_CURRENCY), this.getCurrentRate(PIVOT_CURRENCY, to)]);
+    const [fromToEur, eurToTarget] = await Promise.all([
+      this.getCurrentRate(from, PIVOT_CURRENCY),
+      this.getCurrentRate(PIVOT_CURRENCY, to),
+    ]);
     return fromToEur.times(eurToTarget);
   }
 
-  async convert(amount: number | Prisma.Decimal, from: string, to: string, date?: Date): Promise<Prisma.Decimal> {
-    const rate = date ? await this.getHistoricalRate(from, to, date) : await this.getCurrentRate(from, to);
+  async convert(
+    amount: number | Prisma.Decimal,
+    from: string,
+    to: string,
+    date?: Date,
+  ): Promise<Prisma.Decimal> {
+    const rate = date
+      ? await this.getHistoricalRate(from, to, date)
+      : await this.getCurrentRate(from, to);
     return new Prisma.Decimal(amount).times(rate);
   }
 
-  async convertToBase(userId: number, amount: number | Prisma.Decimal, currency: string, date?: Date): Promise<Prisma.Decimal> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } });
+  async convertToBase(
+    userId: number,
+    amount: number | Prisma.Decimal,
+    currency: string,
+    date?: Date,
+  ): Promise<Prisma.Decimal> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { currency: true },
+    });
     const base = user?.currency ?? PIVOT_CURRENCY;
     return this.convert(amount, currency, base, date);
   }
@@ -82,8 +106,20 @@ export class CurrencyService {
       const fetched = await this.provider.getHistoricalRate(PIVOT_CURRENCY, quote, day);
       if (fetched != null) {
         const saved = await this.prisma.exchangeRate.upsert({
-          where: { date_baseCurrency_quoteCurrency: { date: day, baseCurrency: PIVOT_CURRENCY, quoteCurrency: quote } },
-          create: { date: day, baseCurrency: PIVOT_CURRENCY, quoteCurrency: quote, rate: fetched, provider: 'frankfurter' },
+          where: {
+            date_baseCurrency_quoteCurrency: {
+              date: day,
+              baseCurrency: PIVOT_CURRENCY,
+              quoteCurrency: quote,
+            },
+          },
+          create: {
+            date: day,
+            baseCurrency: PIVOT_CURRENCY,
+            quoteCurrency: quote,
+            rate: fetched,
+            provider: 'frankfurter',
+          },
           update: { rate: fetched, provider: 'frankfurter' },
         });
         rate = new Prisma.Decimal(saved.rate);
@@ -115,16 +151,39 @@ export class CurrencyService {
   // saber qué pedirle a Frankfurter cada día.
   async getActiveCurrencies(): Promise<string[]> {
     const [wallets, transactions, goals, trips, budgets, debts, assets, users] = await Promise.all([
-      this.prisma.wallet.findMany({ where: { active: true }, select: { currency: true }, distinct: ['currency'] }),
+      this.prisma.wallet.findMany({
+        where: { active: true },
+        select: { currency: true },
+        distinct: ['currency'],
+      }),
       this.prisma.transaction.findMany({ select: { currency: true }, distinct: ['currency'] }),
       this.prisma.goal.findMany({ select: { currency: true }, distinct: ['currency'] }),
       this.prisma.trip.findMany({ select: { currency: true }, distinct: ['currency'] }),
-      this.prisma.budget.findMany({ where: { active: true }, select: { currency: true }, distinct: ['currency'] }),
-      this.prisma.debt.findMany({ where: { active: true }, select: { currency: true }, distinct: ['currency'] }),
-      this.prisma.investmentAsset.findMany({ where: { active: true }, select: { currency: true }, distinct: ['currency'] }),
-      this.prisma.user.findMany({ where: { active: true }, select: { currency: true }, distinct: ['currency'] }),
+      this.prisma.budget.findMany({
+        where: { active: true },
+        select: { currency: true },
+        distinct: ['currency'],
+      }),
+      this.prisma.debt.findMany({
+        where: { active: true },
+        select: { currency: true },
+        distinct: ['currency'],
+      }),
+      this.prisma.investmentAsset.findMany({
+        where: { active: true },
+        select: { currency: true },
+        distinct: ['currency'],
+      }),
+      this.prisma.user.findMany({
+        where: { active: true },
+        select: { currency: true },
+        distinct: ['currency'],
+      }),
     ]);
-    const all = [wallets, transactions, goals, trips, budgets, debts, assets, users].flat().map((r) => r.currency).filter((c): c is string => !!c);
+    const all = [wallets, transactions, goals, trips, budgets, debts, assets, users]
+      .flat()
+      .map((r) => r.currency)
+      .filter((c): c is string => !!c);
     return Array.from(new Set([PIVOT_CURRENCY, ...all]));
   }
 }

@@ -10,7 +10,7 @@ describe('Investment asset manager name', () => {
       update: jest.fn(async ({ data }) => ({ id: 1, ...data })),
     },
   };
-  const service = new InvestmentsService(prisma as any);
+  const service = new InvestmentsService(prisma as any, {} as any);
 
   beforeEach(() => {
     jest.clearAllMocks();

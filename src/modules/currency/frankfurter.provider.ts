@@ -14,10 +14,14 @@ export class FrankfurterProvider implements ExchangeRateProvider {
   async getLatestRates(base: string, quotes: string[]): Promise<Record<string, number>> {
     if (!quotes.length) return {};
     try {
-      const { data } = await this.http.get('/latest', { params: { base, symbols: quotes.join(',') } });
+      const { data } = await this.http.get('/latest', {
+        params: { base, symbols: quotes.join(',') },
+      });
       return data?.rates ?? {};
     } catch (err) {
-      this.logger.warn(`getLatestRates(${base}, [${quotes.join(',')}]) failed: ${(err as Error).message}`);
+      this.logger.warn(
+        `getLatestRates(${base}, [${quotes.join(',')}]) failed: ${(err as Error).message}`,
+      );
       return {};
     }
   }
@@ -29,7 +33,9 @@ export class FrankfurterProvider implements ExchangeRateProvider {
       const rate = data?.rates?.[quote];
       return typeof rate === 'number' ? rate : null;
     } catch (err) {
-      this.logger.warn(`getHistoricalRate(${base}, ${quote}, ${day}) failed: ${(err as Error).message}`);
+      this.logger.warn(
+        `getHistoricalRate(${base}, ${quote}, ${day}) failed: ${(err as Error).message}`,
+      );
       return null;
     }
   }

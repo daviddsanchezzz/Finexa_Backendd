@@ -33,8 +33,16 @@ export class ExchangeRateUpdaterScheduler {
 
       for (const [quoteCurrency, rate] of Object.entries(rates)) {
         await this.prisma.exchangeRate.upsert({
-          where: { date_baseCurrency_quoteCurrency: { date, baseCurrency: PIVOT_CURRENCY, quoteCurrency } },
-          create: { date, baseCurrency: PIVOT_CURRENCY, quoteCurrency, rate, provider: 'frankfurter' },
+          where: {
+            date_baseCurrency_quoteCurrency: { date, baseCurrency: PIVOT_CURRENCY, quoteCurrency },
+          },
+          create: {
+            date,
+            baseCurrency: PIVOT_CURRENCY,
+            quoteCurrency,
+            rate,
+            provider: 'frankfurter',
+          },
           update: { rate, provider: 'frankfurter' },
         });
       }
