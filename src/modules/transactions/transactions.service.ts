@@ -104,9 +104,19 @@ export class TransactionsService {
     let baseAmount: number | null = null;
     let exchangeRate: number | null = null;
     if (txCurrency !== baseCurrency) {
-      const converted = await this.currency.convertToBase(userId, rest.amount, txCurrency, rawDate);
-      baseAmount = converted.toNumber();
-      exchangeRate = converted.dividedBy(rest.amount).toNumber();
+      // Si CurrencyService no puede convertir (moneda inválida, provider
+      // caído, sin tipo de cambio cacheado), la transacción se crea igual con
+      // baseAmount/exchangeRate en null — como si fuera EUR=EUR. El dinero es
+      // real y `amount`/`wallet.balance` no dependen de esto; bloquear el
+      // registro de un gasto porque el servicio de divisas falló sería peor
+      // que dejar esa consolidación pendiente para más adelante.
+      try {
+        const converted = await this.currency.convertToBase(userId, rest.amount, txCurrency, rawDate);
+        baseAmount = converted.toNumber();
+        exchangeRate = converted.dividedBy(rest.amount).toNumber();
+      } catch {
+        // Omitido a propósito: ver comentario de arriba.
+      }
     }
 
     // 1) Crear SIEMPRE la transacción "real" (la que afecta al saldo)

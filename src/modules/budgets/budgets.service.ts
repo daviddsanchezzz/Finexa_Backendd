@@ -135,14 +135,23 @@ export class BudgetsService {
 
   // Suma `rows` ya convertidas a `targetCurrency`. Si una fila ya está en esa
   // moneda no llama a CurrencyService (caso normal hoy: todo EUR, coste cero).
+  // Si la conversión de una fila falla (moneda inválida, provider caído, sin
+  // tipo de cambio cacheado), esa fila se omite del total en vez de propagar
+  // la excepción: antes de esto, calcular el progreso de un presupuesto era
+  // puro y nunca fallaba, y una sola transacción con datos corruptos no debe
+  // poder romper GET /budgets para todos los presupuestos del usuario.
   private async sumConverted(rows: Array<{ amount: number; currency: string; date: Date }>, targetCurrency: string): Promise<number> {
     let total = 0;
     for (const row of rows) {
       if (row.currency === targetCurrency) {
         total += row.amount;
-      } else {
+        continue;
+      }
+      try {
         const converted = await this.currency.convert(row.amount, row.currency, targetCurrency, row.date);
         total += converted.toNumber();
+      } catch {
+        // Omitido a propósito: ver comentario de la función.
       }
     }
     return total;

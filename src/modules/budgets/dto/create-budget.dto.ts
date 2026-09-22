@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Matches,
   ValidateNested,
 } from "class-validator";
 import { BudgetPeriod } from "@prisma/client";
@@ -38,6 +39,7 @@ export class CreateBudgetDto {
   // comparan en esta moneda, sin importar la moneda de cada cartera incluida.
   @IsOptional()
   @IsString()
+  @Matches(/^[A-Z]{3}$/, { message: 'currency debe ser un código ISO 4217 de 3 letras' })
   currency?: string;
 
   @IsOptional()

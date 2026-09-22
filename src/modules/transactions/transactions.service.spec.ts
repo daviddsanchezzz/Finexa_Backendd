@@ -90,4 +90,18 @@ describe('TransactionsService.create — currency/baseAmount', () => {
     expect(data.currency).toBe('CHF');
     expect(data.baseAmount).toBe(53.72);
   });
+
+  it('si CurrencyService falla, la transaccion se crea igual con baseAmount/exchangeRate null', async () => {
+    const { service, prisma, currencyService } = build();
+    prisma.wallet.findUnique.mockResolvedValue({ id: 3, balance: 100, currency: 'ZZZ' });
+    currencyService.convertToBase.mockRejectedValue(new Error('No hay tipo de cambio EUR->ZZZ disponible.'));
+    prisma.transaction.create.mockResolvedValue({ id: 1 });
+
+    await service.create(7, { type: 'expense', amount: 50, walletId: 3, currency: 'ZZZ', date: '2026-09-01' } as any);
+
+    const data = prisma.transaction.create.mock.calls[0][0].data;
+    expect(data.currency).toBe('ZZZ');
+    expect(data.baseAmount).toBeNull();
+    expect(data.exchangeRate).toBeNull();
+  });
 });

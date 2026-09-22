@@ -1,5 +1,5 @@
 // src/debts/dto/create-debt.dto.ts
-import { IsString, IsOptional, IsNumber, IsEnum, IsDateString, IsBoolean, IsInt } from "class-validator";
+import { IsString, IsOptional, IsNumber, IsEnum, IsDateString, IsBoolean, IsInt, Matches } from "class-validator";
 
 export enum DebtTypeDto {
   LOAN = "loan",
@@ -50,6 +50,7 @@ export class CreateDebtDto {
   // si no, la moneda base del usuario (se resuelve en el service).
   @IsOptional()
   @IsString()
+  @Matches(/^[A-Z]{3}$/, { message: 'currency debe ser un código ISO 4217 de 3 letras' })
   currency?: string;
 
   @IsOptional()

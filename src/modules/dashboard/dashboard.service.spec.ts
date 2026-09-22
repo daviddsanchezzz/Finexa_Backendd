@@ -41,6 +41,20 @@ describe('DashboardService.getNetWorth', () => {
     expect(result.total).toBeCloseTo(100 + 2000 * 0.9393, 2);
     expect(result.wallets[1].balanceInBase).toBeCloseTo(2000 * 0.9393, 2);
   });
+
+  it('cartera con moneda sin tipo de cambio disponible cuenta su saldo sin convertir, sin romper el total', async () => {
+    const prisma: any = {
+      wallet: { findMany: jest.fn().mockResolvedValue([{ id: 1, name: 'Rara', emoji: '❓', balance: 2000, currency: 'ZZZ' }]) },
+      user: { findUnique: jest.fn().mockResolvedValue({ currency: 'EUR' }) },
+    };
+    const currency: any = { getCurrentRate: jest.fn().mockRejectedValue(new Error('No hay tipo de cambio EUR->ZZZ disponible.')) };
+    const service = new DashboardService(prisma, currency);
+
+    const result = await service.getNetWorth(7);
+
+    expect(result.total).toBe(2000);
+    expect(result.wallets[0].balanceInBase).toBe(2000);
+  });
 });
 
 describe('DashboardService.getSummary2 — multi-currency', () => {

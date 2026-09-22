@@ -11,6 +11,13 @@ export type PlanItemCost = { cost: Prisma.Decimal | number | null; currency: str
 // item). Antes de esta funcion, trips.service.ts sumaba item.cost en crudo
 // ignorando item.currency — bug latente ya presente si algun dia hay items en
 // monedas distintas, corregido aqui de paso.
+//
+// Si CurrencyService no puede convertir un item concreto (moneda invalida,
+// provider caido, sin tipo de cambio cacheado — nunca se inventa uno), ese
+// item se omite del total en vez de propagar la excepcion: antes de esta
+// funcion, sumar el coste de un viaje era sincrono y nunca fallaba, así que
+// dejar que un solo item con datos corruptos tumbe TODO GET /trips para el
+// usuario sería una regresión de disponibilidad, no una mejora.
 export async function sumPlanItemsCost(
   items: PlanItemCost[],
   tripCurrency: string,
@@ -23,9 +30,13 @@ export async function sumPlanItemsCost(
     const itemCurrency = item.currency ?? tripCurrency;
     if (itemCurrency === tripCurrency) {
       total += cost;
-    } else {
+      continue;
+    }
+    try {
       const converted = await currencyService.convert(cost, itemCurrency, tripCurrency, item.day ?? undefined);
       total += converted.toNumber();
+    } catch {
+      // Omitido a propósito: ver comentario de la función.
     }
   }
   return total;

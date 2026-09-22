@@ -21,11 +21,19 @@ export class DashboardService {
     ]);
     const baseCurrency = user?.currency ?? 'EUR';
 
+    // Si una cartera no se puede convertir (moneda inválida, provider caído,
+    // sin tipo de cambio cacheado), se cuenta su saldo sin convertir en vez de
+    // excluirla o de romper todo el patrimonio neto: perder de vista ese
+    // dinero sería peor que mostrarlo con una conversión pendiente.
     const withBase = await Promise.all(
       wallets.map(async (w) => {
         if (w.currency === baseCurrency) return { ...w, balanceInBase: w.balance };
-        const rate = await this.currency.getCurrentRate(w.currency, baseCurrency);
-        return { ...w, balanceInBase: rate.times(w.balance).toNumber() };
+        try {
+          const rate = await this.currency.getCurrentRate(w.currency, baseCurrency);
+          return { ...w, balanceInBase: rate.times(w.balance).toNumber() };
+        } catch {
+          return { ...w, balanceInBase: w.balance };
+        }
       }),
     );
 

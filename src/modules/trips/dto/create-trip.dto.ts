@@ -90,6 +90,7 @@ year?: number;
   // moneda base del usuario.
   @IsOptional()
   @IsString()
+  @Matches(/^[A-Z]{3}$/, { message: 'currency debe ser un código ISO 4217 de 3 letras' })
   currency?: string;
 
   @IsOptional()

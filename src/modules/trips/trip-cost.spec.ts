@@ -25,4 +25,22 @@ describe('sumPlanItemsCost', () => {
     const total = await sumPlanItemsCost([{ cost: null, currency: 'EUR' }], 'EUR', currencyService);
     expect(total).toBe(0);
   });
+
+  it('un item con moneda sin tipo de cambio disponible no rompe la suma del resto (no inventa el importe, lo omite)', async () => {
+    const currencyService = {
+      convert: jest.fn(async (amount: number, from: string) => {
+        if (from === 'ZZZ') throw new Error('No hay tipo de cambio EUR->ZZZ disponible.');
+        return { toNumber: () => amount };
+      }),
+    } as any;
+
+    const total = await sumPlanItemsCost(
+      [{ cost: 100, currency: 'EUR' }, { cost: 50, currency: 'ZZZ' }, { cost: 20, currency: 'EUR' }],
+      'EUR',
+      currencyService,
+    );
+
+    // 50 ZZZ se omite (no se inventa un tipo de cambio), pero 100+20 EUR sí suman.
+    expect(total).toBe(120);
+  });
 });
