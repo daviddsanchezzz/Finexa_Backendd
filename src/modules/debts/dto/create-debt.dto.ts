@@ -46,6 +46,12 @@ export class CreateDebtDto {
   @IsNumber()
   totalAmount: number;
 
+  // ISO 4217. Si no se manda y hay walletId, hereda la moneda de esa cartera;
+  // si no, la moneda base del usuario (se resuelve en el service).
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
   @IsOptional()
   @IsNumber()
   payed?: number;

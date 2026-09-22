@@ -157,6 +157,18 @@ export class DebtsService {
     const remainingAmount = this.computeRemaining(dto.totalAmount, payed);
     const status = this.computeStatus(dto.totalAmount, payed);
 
+    let currency = dto.currency;
+    if (!currency) {
+      if (dto.walletId != null) {
+        const wallet = await this.prisma.wallet.findUnique({ where: { id: dto.walletId }, select: { currency: true } });
+        currency = wallet?.currency;
+      }
+      if (!currency) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } });
+        currency = user?.currency ?? "EUR";
+      }
+    }
+
     const debt = await this.prisma.debt.create({
       data: {
         userId,
@@ -168,6 +180,7 @@ export class DebtsService {
         emoji: dto.emoji ?? "💸",
         color: dto.color ?? "#3b82f6",
         totalAmount: dto.totalAmount,
+        currency,
         payed,
         remainingAmount,
         interestRate: dto.interestRate ?? null,
