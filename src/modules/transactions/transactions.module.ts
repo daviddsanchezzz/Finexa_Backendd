@@ -5,9 +5,10 @@ import { PrismaModule } from '../../common/prisma/prisma.module';
 import { TransactionsRecurringScheduler } from './transactions-recurring.scheduler';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { BudgetsModule } from '../budgets/budgets.module';
+import { CurrencyModule } from '../currency/currency.module';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule, BudgetsModule],
+  imports: [PrismaModule, NotificationsModule, BudgetsModule, CurrencyModule],
   controllers: [TransactionsController],
   providers: [TransactionsService, TransactionsRecurringScheduler],
   exports: [TransactionsService],

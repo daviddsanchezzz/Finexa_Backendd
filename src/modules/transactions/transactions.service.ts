@@ -11,6 +11,7 @@ import { PrismaDateTransformer } from 'src/common/prisma/prisma.transformer';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BudgetsService } from '../budgets/budgets.service';
 import { suggestCategoryFromHistory } from './category-suggestion';
+import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
 export class TransactionsService {
@@ -18,6 +19,7 @@ export class TransactionsService {
     private prisma: PrismaService,
     private notifications: NotificationsService,
     private budgets: BudgetsService,
+    private currency: CurrencyService,
   ) {}
 
   // ============================================================
@@ -75,8 +77,9 @@ export class TransactionsService {
       throw new BadRequestException('Fecha inválida');
     }
 
-    // Extraer info de recurrencia del DTO
-    const { isRecurring, recurrence, parentId, tripExpenseCategory, quickAddId, ...rest } = dto as any;
+    // Extraer info de recurrencia del DTO. `currency` se extrae aparte porque
+    // se resuelve explícitamente más abajo (no siempre viene en el DTO).
+    const { isRecurring, recurrence, parentId, tripExpenseCategory, quickAddId, currency: dtoCurrency, ...rest } = dto as any;
 
     // Auto-link to trip when subcategory belongs to a "Viajes" category
     // We capture tripId here but do NOT set it on the transaction —
@@ -86,10 +89,33 @@ export class TransactionsService {
       autoTripIdForPlanItem = await this.autoResolveTripId(userId, rest.subcategoryId).catch(() => undefined);
     }
 
+    // Moneda del movimiento: la que venga explícita en el DTO, si no la de la
+    // cartera elegida, si no la moneda base del usuario. baseAmount/exchangeRate
+    // se calculan UNA VEZ aquí, con el tipo histórico de `rawDate` — no se
+    // recalculan después aunque cambie el tipo de cambio más adelante.
+    const walletForCurrency = rest.walletId ?? rest.fromWalletId;
+    const wallet = walletForCurrency
+      ? await this.prisma.wallet.findUnique({ where: { id: walletForCurrency }, select: { currency: true } })
+      : null;
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } });
+    const baseCurrency = user?.currency ?? 'EUR';
+    const txCurrency = dtoCurrency ?? wallet?.currency ?? baseCurrency;
+
+    let baseAmount: number | null = null;
+    let exchangeRate: number | null = null;
+    if (txCurrency !== baseCurrency) {
+      const converted = await this.currency.convertToBase(userId, rest.amount, txCurrency, rawDate);
+      baseAmount = converted.toNumber();
+      exchangeRate = converted.dividedBy(rest.amount).toNumber();
+    }
+
     // 1) Crear SIEMPRE la transacción "real" (la que afecta al saldo)
     const transaction = await this.prisma.transaction.create({
       data: {
         ...rest,
+        currency: txCurrency,
+        baseAmount,
+        exchangeRate,
         userId,
         date: rawDate,
         isRecurring: false,

@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsBoolean, IsIn, IsInt } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsBoolean, IsIn, IsInt, Matches } from 'class-validator';
 
 export class CreateTransactionDto {
   @IsString()
@@ -7,6 +7,13 @@ export class CreateTransactionDto {
 
   @IsNumber()
   amount: number;
+
+  // ISO 4217. Si no se manda, el service la rellena con la moneda de la
+  // cartera elegida (walletId/fromWalletId) o con la moneda base del usuario.
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{3}$/, { message: 'currency debe ser un código ISO 4217 de 3 letras' })
+  currency?: string;
 
   @IsOptional()
   @IsString()

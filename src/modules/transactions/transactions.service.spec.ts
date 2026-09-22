@@ -27,7 +27,7 @@ describe('TransactionsService.updateWithScope — fecha de la plantilla', () => 
         update: jest.fn().mockResolvedValue(template),
       },
     };
-    const service = new TransactionsService(prisma, {} as any, {} as any);
+    const service = new TransactionsService(prisma, {} as any, {} as any, {} as any);
     jest.spyOn(service, 'findOne').mockResolvedValue(template as any);
     return { service, prisma };
   }
@@ -47,5 +47,47 @@ describe('TransactionsService.updateWithScope — fecha de la plantilla', () => 
     await expect(
       service.updateWithScope(7, 1, { date: 'no-es-fecha' } as any, 'future'),
     ).rejects.toThrow('Fecha inválida');
+  });
+});
+
+describe('TransactionsService.create — currency/baseAmount', () => {
+  function build() {
+    const prisma: any = {
+      transaction: { create: jest.fn(), findUnique: jest.fn() },
+      wallet: { findUnique: jest.fn().mockResolvedValue({ id: 3, balance: 100, currency: 'EUR' }), update: jest.fn() },
+      user: { findUnique: jest.fn().mockResolvedValue({ currency: 'EUR' }) },
+    };
+    const currencyService: any = {
+      convertToBase: jest.fn(),
+    };
+    const budgets: any = { checkBudgetThresholds: jest.fn().mockResolvedValue(undefined) };
+    const service = new TransactionsService(prisma, {} as any, budgets, currencyService);
+    return { service, prisma, currencyService };
+  }
+
+  it('transaccion en la moneda base: currency=EUR y baseAmount queda NULL', async () => {
+    const { service, prisma, currencyService } = build();
+    prisma.transaction.create.mockResolvedValue({ id: 1, type: 'expense', amount: 10, walletId: 3, currency: 'EUR', baseAmount: null });
+
+    await service.create(7, { type: 'expense', amount: 10, walletId: 3, date: '2026-09-22' } as any);
+
+    expect(currencyService.convertToBase).not.toHaveBeenCalled();
+    expect(prisma.transaction.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ currency: 'EUR', baseAmount: null, exchangeRate: null }) }),
+    );
+  });
+
+  it('transaccion en otra moneda: calcula baseAmount con el tipo historico de la fecha', async () => {
+    const { service, prisma, currencyService } = build();
+    prisma.wallet.findUnique.mockResolvedValue({ id: 3, balance: 100, currency: 'CHF' });
+    currencyService.convertToBase.mockResolvedValue({ toNumber: () => 53.72, dividedBy: () => ({ toNumber: () => 1.0744 }) });
+    prisma.transaction.create.mockResolvedValue({ id: 1 });
+
+    await service.create(7, { type: 'expense', amount: 50, walletId: 3, currency: 'CHF', date: '2026-09-01' } as any);
+
+    expect(currencyService.convertToBase).toHaveBeenCalledWith(7, 50, 'CHF', new Date('2026-09-01'));
+    const data = prisma.transaction.create.mock.calls[0][0].data;
+    expect(data.currency).toBe('CHF');
+    expect(data.baseAmount).toBe(53.72);
   });
 });
