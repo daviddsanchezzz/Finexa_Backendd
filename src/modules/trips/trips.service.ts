@@ -26,7 +26,7 @@ import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.d
 import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 import { hasTripEnded, tripTodayStartUtc } from "./trip-date.utils";
 import { CurrencyService } from "../currency/currency.service";
-import { sumPlanItemsCost } from "./trip-cost";
+import { sumPlanItemsCost, tripCostInBase } from "./trip-cost";
 
 function parseProviderLocalToUtcJsDate(localStr?: string | null) {
   // "2026-04-03 16:00+02:00" -> ISO -> Date
@@ -514,6 +514,9 @@ export class TripsService {
       orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],
     });
 
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } });
+    const baseCurrency = user?.currency ?? "EUR";
+
     return Promise.all(
       trips.map(async ({ planItems, transactions, ...trip }) => {
         const tripCurrency = trip.currency ?? "EUR";
@@ -525,11 +528,18 @@ export class TripsService {
         );
         const liveCost = plannedCost + transactionsCost;
 
+        // El detalle calcula el gasto desde planning + transacciones. Usamos
+        // el coste guardado solo como respaldo para viajes antiguos/manuales.
+        const cost = liveCost > 0 ? liveCost : Number(trip.cost || 0);
+
         return {
           ...trip,
-          // El detalle calcula el gasto desde planning + transacciones. Usamos
-          // el coste guardado solo como respaldo para viajes antiguos/manuales.
-          cost: liveCost > 0 ? liveCost : Number(trip.cost || 0),
+          cost,
+          // Equivalente en la moneda base del usuario, al tipo ACTUAL — para
+          // poder sumar el gasto de varios viajes de monedas distintas (p.ej.
+          // el total de "gastado" en la lista de viajes) sin mezclar divisas.
+          // `cost` sigue siendo el importe real en la moneda del viaje.
+          costInBase: await tripCostInBase(cost, tripCurrency, baseCurrency, this.currency),
         };
       }),
     );

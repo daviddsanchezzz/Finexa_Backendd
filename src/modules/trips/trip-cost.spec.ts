@@ -1,4 +1,4 @@
-import { sumPlanItemsCost } from './trip-cost';
+import { sumPlanItemsCost, tripCostInBase } from './trip-cost';
 
 describe('sumPlanItemsCost', () => {
   it('todos los items en la moneda del viaje: suma directa', async () => {
@@ -42,5 +42,27 @@ describe('sumPlanItemsCost', () => {
 
     // 50 ZZZ se omite (no se inventa un tipo de cambio), pero 100+20 EUR sí suman.
     expect(total).toBe(120);
+  });
+});
+
+describe('tripCostInBase', () => {
+  it('misma moneda: no llama a CurrencyService', async () => {
+    const currencyService = { getCurrentRate: jest.fn() } as any;
+    const cost = await tripCostInBase(1500, 'EUR', 'EUR', currencyService);
+    expect(cost).toBe(1500);
+    expect(currencyService.getCurrentRate).not.toHaveBeenCalled();
+  });
+
+  it('convierte con el tipo actual cuando la moneda del viaje difiere de la base', async () => {
+    const currencyService = { getCurrentRate: jest.fn().mockResolvedValue({ toNumber: () => 0.92 }) } as any;
+    const cost = await tripCostInBase(1500, 'USD', 'EUR', currencyService);
+    expect(currencyService.getCurrentRate).toHaveBeenCalledWith('USD', 'EUR');
+    expect(cost).toBeCloseTo(1500 * 0.92, 2);
+  });
+
+  it('si CurrencyService falla, devuelve el coste sin convertir en vez de romper', async () => {
+    const currencyService = { getCurrentRate: jest.fn().mockRejectedValue(new Error('caido')) } as any;
+    const cost = await tripCostInBase(1500, 'ZZZ', 'EUR', currencyService);
+    expect(cost).toBe(1500);
   });
 });
