@@ -86,6 +86,12 @@ year?: number;
   @IsNumber()
   cost?: number;
 
+  // ISO 4217, moneda "hogar" del viaje para cost/budget. Por defecto la
+  // moneda base del usuario.
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
   @IsOptional()
   @IsString()
   coverImageUrl?: string;

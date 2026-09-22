@@ -25,6 +25,8 @@ import { CreateTripGalleryPhotoDto } from "./dto/trip-gallery-photo.dto";
 import { CreateTripContactDto, UpdateTripContactDto } from "./dto/trip-contact.dto";
 import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripChecklistDto } from "./dto/trip-checklist.dto";
 import { hasTripEnded, tripTodayStartUtc } from "./trip-date.utils";
+import { CurrencyService } from "../currency/currency.service";
+import { sumPlanItemsCost } from "./trip-cost";
 
 function parseProviderLocalToUtcJsDate(localStr?: string | null) {
   // "2026-04-03 16:00+02:00" -> ISO -> Date
@@ -155,6 +157,7 @@ export class TripsService {
     private aerodatabox: AerodataboxService,
     private notifications: NotificationsService,
     private transactionsService: TransactionsService,
+    private currency: CurrencyService,
   ) {}
 
   // A trip is accessible to its creator and to any accepted TripMember.
@@ -440,6 +443,12 @@ export class TripsService {
   }
 
   async createTrip(userId: number, dto: CreateTripDto) {
+    let currency = dto.currency;
+    if (!currency) {
+      const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } });
+      currency = user?.currency ?? "EUR";
+    }
+
     const derived = dto.countryStays?.length ? deriveFromStays(dto.countryStays) : null;
 
     const startDate = derived?.startDate ?? (dto.startDate ? new Date(dto.startDate) : undefined);
@@ -463,6 +472,7 @@ export class TripsService {
         companions: dto.companions ?? [],
         budget: dto.budget,
         cost: dto.cost,
+        currency,
         continent,
         year,
         status,
@@ -495,7 +505,7 @@ export class TripsService {
         countryStays: { orderBy: { order: "asc" } },
         user: { select: { id: true, name: true, email: true, avatar: true } },
         members: { where: { status: "accepted" }, include: { user: { select: { id: true, name: true, email: true, avatar: true } } } },
-        planItems: { select: { cost: true, metadata: true } },
+        planItems: { select: { cost: true, currency: true, day: true, metadata: true } },
         transactions: {
           where: { active: true, type: "expense" },
           select: { amount: true },
@@ -504,24 +514,25 @@ export class TripsService {
       orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],
     });
 
-    return trips.map(({ planItems, transactions, ...trip }) => {
-      const plannedCost = planItems.reduce((total, item) => {
-        if ((item.metadata as any)?.pending) return total;
-        return total + Number(item.cost || 0);
-      }, 0);
-      const transactionsCost = transactions.reduce(
-        (total, transaction) => total + Number(transaction.amount || 0),
-        0,
-      );
-      const liveCost = plannedCost + transactionsCost;
+    return Promise.all(
+      trips.map(async ({ planItems, transactions, ...trip }) => {
+        const tripCurrency = trip.currency ?? "EUR";
+        const countedItems = planItems.filter((item) => !(item.metadata as any)?.pending);
+        const plannedCost = await sumPlanItemsCost(countedItems, tripCurrency, this.currency);
+        const transactionsCost = transactions.reduce(
+          (total, transaction) => total + Number(transaction.amount || 0),
+          0,
+        );
+        const liveCost = plannedCost + transactionsCost;
 
-      return {
-        ...trip,
-        // El detalle calcula el gasto desde planning + transacciones. Usamos
-        // el coste guardado solo como respaldo para viajes antiguos/manuales.
-        cost: liveCost > 0 ? liveCost : Number(trip.cost || 0),
-      };
-    });
+        return {
+          ...trip,
+          // El detalle calcula el gasto desde planning + transacciones. Usamos
+          // el coste guardado solo como respaldo para viajes antiguos/manuales.
+          cost: liveCost > 0 ? liveCost : Number(trip.cost || 0),
+        };
+      }),
+    );
   }
 
 async getTripDetail(userId: number, tripId: number) {
@@ -909,22 +920,19 @@ async getTripDetail(userId: number, tripId: number) {
   }
 
   private async recomputeTripPlannedCost(tripId: number) {
-    const items = await this.prisma.tripPlanItem.findMany({
-      where: { tripId },
-      select: { cost: true, metadata: true },
-    });
+    const [items, trip] = await Promise.all([
+      this.prisma.tripPlanItem.findMany({
+        where: { tripId },
+        select: { cost: true, currency: true, day: true, metadata: true },
+      }),
+      this.prisma.trip.findUnique({ where: { id: tripId }, select: { currency: true } }),
+    ]);
 
     // Los "nuevos gastos" sin clasificar (metadata.pending) todavía no están
     // asignados al viaje, no deben sumar al total hasta que se clasifiquen.
     const countedItems = items.filter((item) => !(item.metadata as any)?.pending);
 
-    // cost puede ser Float o Decimal según tu schema real
-    const total = countedItems.reduce((sum, item) => {
-      const v: any = item.cost;
-      if (v == null) return sum;
-      const n = typeof v === "number" ? v : Number(v);
-      return sum + (isNaN(n) ? 0 : n);
-    }, 0);
+    const total = await sumPlanItemsCost(countedItems, trip?.currency ?? "EUR", this.currency);
 
     await this.prisma.trip.update({
       where: { id: tripId },
