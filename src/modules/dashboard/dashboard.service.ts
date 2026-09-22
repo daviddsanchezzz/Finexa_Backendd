@@ -1,10 +1,40 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { FilterDashboardDto } from './dto/filter-dashboard.dto';
+import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
 export class DashboardService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private currency: CurrencyService) {}
+
+  // Suma el balance de todas las carteras del usuario, convertidas a su
+  // moneda base con el tipo ACTUAL (no histórico: es un patrimonio vivo).
+  // No se persiste ningún "saldo en EUR" — se calcula al vuelo cada vez.
+  async getNetWorth(userId: number) {
+    const [wallets, user] = await Promise.all([
+      this.prisma.wallet.findMany({
+        where: { userId, active: true },
+        select: { id: true, name: true, emoji: true, balance: true, currency: true },
+        orderBy: { position: 'asc' },
+      }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } }),
+    ]);
+    const baseCurrency = user?.currency ?? 'EUR';
+
+    const withBase = await Promise.all(
+      wallets.map(async (w) => {
+        if (w.currency === baseCurrency) return { ...w, balanceInBase: w.balance };
+        const rate = await this.currency.getCurrentRate(w.currency, baseCurrency);
+        return { ...w, balanceInBase: rate.times(w.balance).toNumber() };
+      }),
+    );
+
+    return {
+      total: withBase.reduce((sum, w) => sum + w.balanceInBase, 0),
+      currency: baseCurrency,
+      wallets: withBase,
+    };
+  }
 
   async getSummary(userId: number, filters: FilterDashboardDto) {
     const { startDate, endDate } = filters;

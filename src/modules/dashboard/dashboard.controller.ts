@@ -17,6 +17,11 @@ export class DashboardController {
     return this.dashboardService.getSummary2(userId, filters);
   }
 
+  @Get('net-worth')
+  getNetWorth(@User('id') userId: number) {
+    return this.dashboardService.getNetWorth(userId);
+  }
+
   @Get('by-category')
   getByCategory(@User('id') userId: number, @Query() filters: FilterDashboardDto) {
     return this.dashboardService.getByCategory(userId, filters);
