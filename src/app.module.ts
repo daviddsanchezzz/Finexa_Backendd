@@ -22,10 +22,11 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { WorldModule } from './modules/world/world.module';
 import { FriendsModule } from './modules/friends/friends.module';
 import { GoalsModule } from './modules/goals/goals.module';
+import { CurrencyModule } from './modules/currency/currency.module';
 
 @Module({
   imports: [PrismaModule,CronModule, HealthModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule, ProjectsModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule,
     DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
-    NotificationsModule, WorldModule, FriendsModule, GoalsModule, ScheduleModule.forRoot()],
+    NotificationsModule, WorldModule, FriendsModule, GoalsModule, CurrencyModule, ScheduleModule.forRoot()],
 })
 export class AppModule {}
