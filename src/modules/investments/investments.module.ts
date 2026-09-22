@@ -7,8 +7,10 @@ import { PricesFetcherService } from './prices-fetcher.service';
 import { FmpService } from './fmp.service';
 import { InvestmentExposureService } from './investment-exposure.service';
 import { FundMetadataResolverService } from './fund-metadata-resolver.service';
+import { CurrencyModule } from '../currency/currency.module';
 
 @Module({
+  imports: [CurrencyModule],
   controllers: [InvestmentsController],
   providers: [
     InvestmentsService,

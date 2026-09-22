@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/common/prisma/prisma.service';
+import { CurrencyService } from '../currency/currency.service';
+import { sumInBaseCurrency } from './investment-currency-totals';
 import { CreateInvestmentAssetDto } from './dto/create-investment-asset.dto';
 import { UpdateInvestmentAssetDto } from './dto/update-investment-asset.dto';
 import { CreateInvestmentValuationDto } from './dto/create-valuation.dto';
@@ -41,7 +43,7 @@ type Tx = Prisma.TransactionClient;
 
 @Injectable()
 export class InvestmentsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private currency: CurrencyService) {}
 
   // =============================
   // Helpers (validation & parsing)
@@ -764,8 +766,15 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       };
     });
 
-    const totalContributed = perAsset.reduce((acc, x) => acc + x.totalContributed, 0);
-    const totalWithdrawn = perAsset.reduce((acc, x) => acc + x.totalWithdrawn, 0);
+    // Los activos pueden estar en monedas distintas (p.ej. AAPL en USD). Se
+    // consolidan a la moneda base del usuario con el tipo ACTUAL — igual que
+    // el saldo de una Wallet — sin tocar returnPct/TWR, que sigue
+    // calculándose por activo en getPortfolioPerformanceData sin conversión
+    // (ver limitación anotada en el plan: totalCurrentValue, que sale de esa
+    // misma función, todavía no consolida por moneda).
+    const baseCurrency = (await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } }))?.currency ?? 'EUR';
+    const totalContributed = await sumInBaseCurrency(perAsset.map((x) => ({ value: x.totalContributed, currency: x.currency })), baseCurrency, this.currency);
+    const totalWithdrawn = await sumInBaseCurrency(perAsset.map((x) => ({ value: x.totalWithdrawn, currency: x.currency })), baseCurrency, this.currency);
     const totalNetContributed = totalContributed - totalWithdrawn;
 
     const lastPerformancePoint = performance.points.at(-1);
