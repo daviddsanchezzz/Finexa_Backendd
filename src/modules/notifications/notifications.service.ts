@@ -22,6 +22,7 @@ export interface QuickTransactionPayload {
   cardName?: string;
   qid?: string;
   rawQuery?: string;
+  currency?: string;
 }
 
 export interface BudgetThresholdPayload {
@@ -165,7 +166,13 @@ export class NotificationsService {
     const { userId, amount, merchant, cardName, rawQuery } = payload;
     const qid = payload.qid || randomUUID();
 
-    const amountStr = `${amount.toFixed(2).replace('.', ',')} €`;
+    const queryCurrency = new URLSearchParams(rawQuery ?? '').get('currency');
+    const currency = [payload.currency, queryCurrency]
+      .map(value => value?.trim().toUpperCase())
+      .find(value => value && /^[A-Z]{3}$/.test(value)) ?? 'EUR';
+    const amountStr = new Intl.NumberFormat('es-ES', {
+      style: 'currency', currency,
+    }).format(amount);
     const title = 'Nuevo gasto detectado';
     const message = merchant ? `${merchant} · ${amountStr}` : amountStr;
 
@@ -175,7 +182,7 @@ export class NotificationsService {
         title,
         message,
         type: 'quick_transaction',
-        data: { amount, merchant, cardName, qid, rawQuery } as Prisma.InputJsonValue,
+        data: { amount, currency, merchant, cardName, qid, rawQuery } as Prisma.InputJsonValue,
       },
     });
 
@@ -188,6 +195,7 @@ export class NotificationsService {
     if (nativeTokens.length) {
       await this.sendExpoNotifications(nativeTokens, title, message, {
         type: 'quick_transaction',
+        currency,
         amount,
         merchant,
         cardName,
@@ -199,6 +207,7 @@ export class NotificationsService {
       const qs = new URLSearchParams({
         qa: '1',
         amount: String(amount),
+        currency,
         merchant: merchant ?? '',
         ...(cardName ? { card: cardName } : {}),
         nid: qid,

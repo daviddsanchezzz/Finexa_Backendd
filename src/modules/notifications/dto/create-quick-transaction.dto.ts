@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsNotEmpty } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsNotEmpty, Matches } from 'class-validator';
 
 export class CreateQuickTransactionDto {
   @IsNumber()
@@ -7,6 +7,11 @@ export class CreateQuickTransactionDto {
   @IsOptional()
   @IsString()
   merchant?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z]{3}$/)
+  currency?: string;
 
   @IsOptional()
   @IsString()
