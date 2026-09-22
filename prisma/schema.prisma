@@ -39,9 +39,9 @@ enum DebtDirection {
 }
 
 enum DebtStatus {
-  active   // deuda en curso
-  paid     // totalmente pagada (pero no cerrada)
-  closed   // cerrada manualmente por el usuario
+  active // deuda en curso
+  paid // totalmente pagada (pero no cerrada)
+  closed // cerrada manualmente por el usuario
 }
 
 enum WalletKind {
@@ -99,23 +99,20 @@ enum ProjectMovementKind {
   withdrawal
 }
 
-
-
-
 //////////////////////////////////////////////////////////////
 // MODELOS PRINCIPALES
 //////////////////////////////////////////////////////////////
 
 model User {
-  id            Int            @id @default(autoincrement())
-  name          String
-  email         String         @unique
-  password      String?
-  googleId      String?        @unique
-  avatar        String?
-  language      String?        @default("es")
-  currency      String?        @default("EUR")
-  theme         String?        @default("light")
+  id                        Int     @id @default(autoincrement())
+  name                      String
+  email                     String  @unique
+  password                  String?
+  googleId                  String? @unique
+  avatar                    String?
+  language                  String? @default("es")
+  currency                  String? @default("EUR")
+  theme                     String? @default("light")
   pinnedFinanceTabModuleKey String? @default("investments")
 
   wallets                Wallet[]                @relation("UserWallets")
@@ -128,14 +125,14 @@ model User {
   notificationPreference NotificationPreference?
   categories             Category[]
   transactions           Transaction[]
-  debts                  Debt[]                  // 👈 RELACIÓN INVERSA A Debt.user
+  debts                  Debt[] // 👈 RELACIÓN INVERSA A Debt.user
 
-  trips         Trip[]
+  trips           Trip[]
   tripMemberships TripMember[]
-  projects      Project[]
-  goals         Goal[]
+  projects        Project[]
+  goals           Goal[]
 
-  refreshToken  String?
+  refreshToken String?
 
   // Token largo y no-rotativo para automatizaciones externas (ej. Shortcuts
   // de iOS por NFC) que necesitan identificar al usuario sin sesión activa.
@@ -145,18 +142,17 @@ model User {
 
   manualMonthData ManualMonthData[]
 
-  investmentAssets     InvestmentAsset[]
-  investmentValuations InvestmentValuationSnapshot[]
-  investmentOperations InvestmentOperation[]
+  investmentAssets            InvestmentAsset[]
+  investmentValuations        InvestmentValuationSnapshot[]
+  investmentOperations        InvestmentOperation[]
   investmentTargetAllocations InvestmentTargetAllocation[]
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
 
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  createdBy     Int?
-  active        Boolean        @default(true)
-
-  documents     UserDocument[]
+  documents    UserDocument[]
   wonderVisits WonderVisit[]
 }
 
@@ -167,13 +163,13 @@ model User {
 model UserDocument {
   id             Int       @id @default(autoincrement())
   userId         Int
-  type           String    // "passport" | "dni" | "visa" | "vaccine" | "ehic" | "private_health_insurance" | "driving_license" | "driving_license_international"
-  provider       String?   // aseguradora (tarjeta sanitaria privada)
-  country        String?   // país emisor (pasaporte/DNI) o país de destino (visado), ISO2
+  type           String // "passport" | "dni" | "visa" | "vaccine" | "ehic" | "private_health_insurance" | "driving_license" | "driving_license_international"
+  provider       String? // aseguradora (tarjeta sanitaria privada)
+  country        String? // país emisor (pasaporte/DNI) o país de destino (visado), ISO2
   documentNumber String?
   expiryDate     DateTime?
-  metadata       Json?     // campos específicos del tipo (tipo de visado, vigencia de vacuna...)
-  fileUrl        String?   // escaneo/PDF adjunto (Supabase Storage)
+  metadata       Json? // campos específicos del tipo (tipo de visado, vigencia de vacuna...)
+  fileUrl        String? // escaneo/PDF adjunto (Supabase Storage)
   fileName       String?
   fileMimeType   String?
   createdAt      DateTime  @default(now())
@@ -194,17 +190,17 @@ enum FriendshipStatus {
 }
 
 model Friendship {
-  id          Int              @id @default(autoincrement())
-  status      FriendshipStatus @default(pending)
+  id     Int              @id @default(autoincrement())
+  status FriendshipStatus @default(pending)
 
   requesterId Int
-  requester   User             @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  requester   User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
 
   addresseeId Int
-  addressee   User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  addressee   User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
 
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([requesterId, addresseeId])
   @@index([addresseeId])
@@ -215,34 +211,34 @@ model Friendship {
 //////////////////////////////////////////////////////////////
 
 model Wallet {
-  id           Int           @id @default(autoincrement())
-  name         String
-  description  String?
-  emoji        String
-  balance      Float         @default(0)
-  currency     String        @default("EUR")
+  id          Int     @id @default(autoincrement())
+  name        String
+  description String?
+  emoji       String
+  balance     Float   @default(0)
+  currency    String  @default("EUR")
 
-  sharedWith   WalletShare[]
-  budgets      Budget[]
+  sharedWith WalletShare[]
+  budgets    Budget[]
 
-  userId       Int
-  user         User          @relation("UserWallets", fields: [userId], references: [id])
+  userId Int
+  user   User @relation("UserWallets", fields: [userId], references: [id])
 
-  kind         WalletKind @default(cash)
+  kind WalletKind @default(cash)
 
-  transactions        Transaction[] @relation("TransactionWallet")       // income/expense
-  transactionsFrom    Transaction[] @relation("TransactionFromWallet")   // transfer origen
-  transactionsTo      Transaction[] @relation("TransactionToWallet")     // transfer destino
-  debts               Debt[]
-  goalAllocations     GoalAllocation[]
-  linkedGoals         Goal[] @relation("GoalLinkedWallet")
+  transactions     Transaction[]    @relation("TransactionWallet") // income/expense
+  transactionsFrom Transaction[]    @relation("TransactionFromWallet") // transfer origen
+  transactionsTo   Transaction[]    @relation("TransactionToWallet") // transfer destino
+  debts            Debt[]
+  goalAllocations  GoalAllocation[]
+  linkedGoals      Goal[]           @relation("GoalLinkedWallet")
 
-  position     Int           @default(0)
+  position Int @default(0)
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  createdBy    Int?
-  active       Boolean       @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
 
   @@index([userId, position])
 }
@@ -260,26 +256,26 @@ enum GoalStatus {
 }
 
 model Goal {
-  id             Int              @id @default(autoincrement())
+  id             Int               @id @default(autoincrement())
   userId         Int
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
   description    String?
   icon           String?
   color          String?
-  targetAmount   Decimal          @db.Decimal(14, 2)
-  currency       String           @default("EUR")
-  trackingMode   GoalTrackingMode @default(ALLOCATIONS)
+  targetAmount   Decimal           @db.Decimal(14, 2)
+  currency       String            @default("EUR")
+  trackingMode   GoalTrackingMode  @default(ALLOCATIONS)
   linkedWalletId Int?
-  linkedWallet   Wallet?          @relation("GoalLinkedWallet", fields: [linkedWalletId], references: [id], onDelete: Restrict)
+  linkedWallet   Wallet?           @relation("GoalLinkedWallet", fields: [linkedWalletId], references: [id], onDelete: Restrict)
   targetDate     DateTime?
-  startDate      DateTime         @default(now())
-  status         GoalStatus       @default(ACTIVE)
-  archivedAmount Decimal?         @db.Decimal(14, 2)
+  startDate      DateTime          @default(now())
+  status         GoalStatus        @default(ACTIVE)
+  archivedAmount Decimal?          @db.Decimal(14, 2)
   allocations    GoalAllocation[]
   manualEntries  GoalManualEntry[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   @@index([userId, status])
   @@index([linkedWalletId])
@@ -313,13 +309,13 @@ model GoalManualEntry {
 }
 
 model WalletShare {
-  id        Int      @id @default(autoincrement())
-  walletId  Int
-  userId    Int
-  role      String   @default("viewer")
+  id       Int    @id @default(autoincrement())
+  walletId Int
+  userId   Int
+  role     String @default("viewer")
 
-  wallet    Wallet   @relation(fields: [walletId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
+  wallet Wallet @relation(fields: [walletId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -332,53 +328,52 @@ model WalletShare {
 //////////////////////////////////////////////////////////////
 
 model Category {
-  id            Int           @id @default(autoincrement())
-  name          String
-  type          String        // "income" o "expense"
-  emoji         String?
-  color         String?
+  id    Int     @id @default(autoincrement())
+  name  String
+  type  String // "income" o "expense"
+  emoji String?
+  color String?
 
-  subcategories Subcategory[]
-  userId        Int?
-  user          User?         @relation(fields: [userId], references: [id])
-  transactions  Transaction[]
-  budgets       Budget[]
+  subcategories        Subcategory[]
+  userId               Int?
+  user                 User?                 @relation(fields: [userId], references: [id])
+  transactions         Transaction[]
+  budgets              Budget[]
   budgetCategoryLimits BudgetCategoryLimit[]
 
-  kind          CategoryKind @default(personal)  
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  createdBy     Int?
-  active        Boolean       @default(true)
-  position      Int           @default(0)
+  kind      CategoryKind @default(personal)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  createdBy Int?
+  active    Boolean      @default(true)
+  position  Int          @default(0)
 
   @@index([userId, type, position])
 }
 
 model Subcategory {
-  id           Int           @id @default(autoincrement())
-  name         String
-  emoji        String?
-  color        String?
+  id    Int     @id @default(autoincrement())
+  name  String
+  emoji String?
+  color String?
 
-  categoryId   Int
-  category     Category      @relation(fields: [categoryId], references: [id])
-  tripId       Int?          @unique
-  trip         Trip?         @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id])
+  tripId     Int?     @unique
+  trip       Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
 
   transactions Transaction[]
 
   debtExpenseLinks Debt[] @relation("DebtExpenseSubcategory")
   debtIncomeLinks  Debt[] @relation("DebtIncomeSubcategory")
 
-  subcategoryId Debt [] @relation("DebtSubcategory")
+  subcategoryId Debt[] @relation("DebtSubcategory")
 
-
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  createdBy    Int?
-  active       Boolean       @default(true)
-  position     Int           @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
+  position  Int      @default(0)
 
   @@index([categoryId, position])
 }
@@ -388,23 +383,24 @@ model Subcategory {
 //////////////////////////////////////////////////////////////
 
 model Debt {
-  id               Int            @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  userId           Int
-  user             User           @relation(fields: [userId], references: [id])
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  type             DebtType       @default(loan)
-  direction        DebtDirection  @default(i_ow)
-  status           DebtStatus     @default(active)
+  type      DebtType      @default(loan)
+  direction DebtDirection @default(i_ow)
+  status    DebtStatus    @default(active)
 
-  name             String
-  entity           String?
-  emoji            String?
-  color            String?
+  name   String
+  entity String?
+  emoji  String?
+  color  String?
 
-  totalAmount      Float
-  payed            Float?         @default(0)
-  remainingAmount  Float
+  totalAmount     Float
+  payed           Float? @default(0)
+  remainingAmount Float
+  currency        String @default("EUR")
 
   interestRate     Float?
   monthlyPayment   Float?
@@ -412,7 +408,7 @@ model Debt {
   startDate        DateTime?
   nextDueDate      DateTime?
   expectedEndDate  DateTime?
-  installmentsPaid Int?           @default(0)
+  installmentsPaid Int?                  @default(0)
   notes            String?
 
   walletId Int?
@@ -428,13 +424,13 @@ model Debt {
   expenseSubcategoryId Int?
   expenseSubcategory   Subcategory? @relation("DebtExpenseSubcategory", fields: [expenseSubcategoryId], references: [id])
 
-  incomeSubcategoryId  Int?
-  incomeSubcategory    Subcategory? @relation("DebtIncomeSubcategory", fields: [incomeSubcategoryId], references: [id])
+  incomeSubcategoryId Int?
+  incomeSubcategory   Subcategory? @relation("DebtIncomeSubcategory", fields: [incomeSubcategoryId], references: [id])
 
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  createdBy        Int?
-  active           Boolean        @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
 
   @@index([userId])
   @@index([walletId])
@@ -444,118 +440,122 @@ model Debt {
 // TRANSACCIONES
 //////////////////////////////////////////////////////////////
 model Transaction {
-  id            Int          @id @default(autoincrement())
-  type          String
-  amount        Float
-  description   String?
-  date          DateTime     @default(now())
-  isRecurring   Boolean      @default(false)
-  recurrence    String?
-  parentId   Int?
-  parent     Transaction?   @relation("RecurringParent", fields: [parentId], references: [id])
-  children   Transaction[]  @relation("RecurringParent")
- 
+  id              Int           @id @default(autoincrement())
+  type            String
+  amount          Float
+  currency        String        @default("EUR")
+  baseAmount      Decimal?      @db.Decimal(14, 4)
+  exchangeRate    Decimal?      @db.Decimal(18, 8)
+  accountAmount   Decimal?      @db.Decimal(14, 4)
+  accountCurrency String?
+  description     String?
+  date            DateTime      @default(now())
+  isRecurring     Boolean       @default(false)
+  recurrence      String?
+  parentId        Int?
+  parent          Transaction?  @relation("RecurringParent", fields: [parentId], references: [id])
+  children        Transaction[] @relation("RecurringParent")
 
-  categoryId    Int?
-  category      Category?    @relation(fields: [categoryId], references: [id])
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id])
 
   subcategoryId Int?
   subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id])
 
-  fromWalletId  Int?
-  fromWallet    Wallet?      @relation("TransactionFromWallet", fields: [fromWalletId], references: [id])
+  fromWalletId Int?
+  fromWallet   Wallet? @relation("TransactionFromWallet", fields: [fromWalletId], references: [id])
 
-  toWalletId    Int?
-  toWallet      Wallet?      @relation("TransactionToWallet", fields: [toWalletId], references: [id])
+  toWalletId Int?
+  toWallet   Wallet? @relation("TransactionToWallet", fields: [toWalletId], references: [id])
 
-  walletId      Int?
-  wallet        Wallet?      @relation("TransactionWallet", fields: [walletId], references: [id])
+  walletId Int?
+  wallet   Wallet? @relation("TransactionWallet", fields: [walletId], references: [id])
 
-  userId        Int
-  user          User         @relation(fields: [userId], references: [id])
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  tripId        Int?
-  trip          Trip?        @relation(fields: [tripId], references: [id])
+  tripId Int?
+  trip   Trip? @relation(fields: [tripId], references: [id])
 
-  projectId     Int?
-  project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  projectId Int?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
-  investmentAssetId Int?
-  investmentAsset   InvestmentAsset? @relation(fields: [investmentAssetId], references: [id])
+  investmentAssetId   Int?
+  investmentAsset     InvestmentAsset?     @relation(fields: [investmentAssetId], references: [id])
   investmentOperation InvestmentOperation?
-  debtRecurringFor   Debt?    @relation("DebtRecurringTransaction")
-  source    String   @default("user") // "user" | "investment"
+  debtRecurringFor    Debt?                @relation("DebtRecurringTransaction")
+  source              String               @default("user") // "user" | "investment"
 
   excludeFromStats Boolean @default(false)
 
   // 👇 NUEVO: relación inversa con TripPlanItem
-  planItems     TripPlanItem[]
+  planItems TripPlanItem[]
 
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  createdBy     Int?
-  active        Boolean      @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
 
   // Solo aplican a plantillas recurrentes (isRecurring=true). `paused`
   // detiene el cron sin borrar la serie; `endDate` es el límite opcional a
   // partir del cual la serie se considera finalizada (calculado en el
   // cliente/servicio, no se persiste un estado "finished" aparte).
-  paused        Boolean      @default(false)
-  endDate       DateTime?
+  paused  Boolean   @default(false)
+  endDate DateTime?
 
   @@index([subcategoryId])
   @@index([projectId])
 }
 
 model Project {
-  id           Int             @id @default(autoincrement())
-  userId       Int
-  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name         String
-  description  String?
-  type         String?
-  status       ProjectStatus   @default(idea)
-  startDate    DateTime
-  endDate      DateTime?
-  notes        String?
+  name        String
+  description String?
+  type        String?
+  status      ProjectStatus @default(idea)
+  startDate   DateTime
+  endDate     DateTime?
+  notes       String?
 
-  transactions Transaction[]
+  transactions  Transaction[]
   manualEntries ProjectManualEntry[]
-  partners     ProjectPartner[]
+  partners      ProjectPartner[]
 
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId, status])
   @@index([userId, startDate])
 }
 
 model ProjectManualEntry {
-  id          Int              @id @default(autoincrement())
-  projectId   Int
-  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id        Int     @id @default(autoincrement())
+  projectId Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  kind        ProjectMovementKind
+  kind            ProjectMovementKind
   // Solo relevante cuando kind = withdrawal: true = devolución de capital
   // previamente aportado por el socio, false = retirada de beneficio ya
   // generado. Se ignora para el resto de kinds (siempre queda en false).
-  isCapitalReturn Boolean      @default(false)
-  title       String
-  description String?
-  amount      Float
-  date        DateTime         @default(now())
-  category    String?
-  notes       String?
+  isCapitalReturn Boolean             @default(false)
+  title           String
+  description     String?
+  amount          Float
+  date            DateTime            @default(now())
+  category        String?
+  notes           String?
 
   // Solo se rellena para kind = contribution | withdrawal. SetNull para que
   // el historial financiero de un movimiento sobreviva a que se borre o
   // reconfigure el socio (los socios se reemplazan por completo al editarlos).
-  partnerId   Int?
-  partner     ProjectPartner?  @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  partnerId Int?
+  partner   ProjectPartner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([projectId, date])
   @@index([projectId, kind])
@@ -563,39 +563,39 @@ model ProjectManualEntry {
 }
 
 model ProjectPartner {
-  id          Int      @id @default(autoincrement())
-  projectId   Int
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id        Int     @id @default(autoincrement())
+  projectId Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  name        String
-  percentage  Float
-  isMe        Boolean  @default(false)
+  name       String
+  percentage Float
+  isMe       Boolean @default(false)
 
   manualEntries ProjectManualEntry[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([projectId])
 }
-
 
 //////////////////////////////////////////////////////////////
 // PRESUPUESTOS
 //////////////////////////////////////////////////////////////
 
 model Budget {
-  id         Int          @id @default(autoincrement())
-  name       String?
-  period     BudgetPeriod @default(monthly)
-  startDate  DateTime
+  id        Int          @id @default(autoincrement())
+  name      String?
+  period    BudgetPeriod @default(monthly)
+  startDate DateTime
 
   // Límite global opcional. Puede coexistir con categoryLimits (sublímites) o
   // el presupuesto puede no tener ninguno si solo controla categorías sueltas.
   totalLimit Float?
+  currency   String @default("EUR")
 
   // Cartera(s) a las que aplica. Array vacío = todas las carteras del usuario.
-  walletIds  Int[]        @default([])
+  walletIds Int[] @default([])
 
   categoryLimits BudgetCategoryLimit[]
 
@@ -608,42 +608,42 @@ model Budget {
   lastWarningPeriodStart DateTime?
   lastLimitPeriodStart   DateTime?
 
-  userId     Int
-  user       User         @relation(fields: [userId], references: [id])
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  active     Boolean      @default(true)
-  createdBy  Int?
+  active    Boolean @default(true)
+  createdBy Int?
 
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // --- Legacy (modelo pre multi-categoría: 1 presupuesto = 1 importe + 0/1 categoría) ---
   // Se conservan sin usar en la lógica nueva para no perder datos históricos.
   // Migrados a totalLimit/categoryLimits/walletIds por prisma/migrate-budgets-multi-category.ts
   limit      Float?
   categoryId Int?
-  category   Category?    @relation(fields: [categoryId], references: [id])
+  category   Category? @relation(fields: [categoryId], references: [id])
   walletId   Int?
-  wallet     Wallet?      @relation(fields: [walletId], references: [id])
+  wallet     Wallet?   @relation(fields: [walletId], references: [id])
 }
 
 model BudgetCategoryLimit {
-  id         Int      @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  budgetId   Int
-  budget     Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  budgetId Int
+  budget   Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
 
   categoryId Int
   category   Category @relation(fields: [categoryId], references: [id])
 
-  limit      Float
+  limit Float
 
   // Mismo mecanismo de deduplicación que Budget, pero para este sublímite.
   lastWarningPeriodStart DateTime?
   lastLimitPeriodStart   DateTime?
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([budgetId, categoryId])
 }
@@ -653,15 +653,15 @@ model BudgetCategoryLimit {
 //////////////////////////////////////////////////////////////
 
 model Notification {
-  id        Int      @id @default(autoincrement())
-  title     String
-  message   String
-  type      String?
-  data      Json?
-  read      Boolean  @default(false)
+  id      Int     @id @default(autoincrement())
+  title   String
+  message String
+  type    String?
+  data    Json?
+  read    Boolean @default(false)
 
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -670,12 +670,12 @@ model Notification {
 }
 
 model DeviceToken {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  token     String
-  platform  String   // 'ios' | 'android' | 'web'
+  token    String
+  platform String // 'ios' | 'android' | 'web'
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -685,9 +685,9 @@ model DeviceToken {
 }
 
 model NotificationPreference {
-  id                    Int     @id @default(autoincrement())
-  userId                Int     @unique
-  user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   recurringTransactions Boolean @default(false)
   budgetThresholdAlerts Boolean @default(false)
@@ -701,21 +701,21 @@ model NotificationPreference {
 //////////////////////////////////////////////////////////////
 
 model ManualMonthData {
-  id           Int      @id @default(autoincrement())
-  userId       Int
-  user         User     @relation(fields: [userId], references: [id])
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  year         Int      // 2021
-  month        Int      // 0–11 (0 = enero)
+  year  Int // 2021
+  month Int // 0–11 (0 = enero)
 
-  income       Float?   @default(0)
-  expense      Float?   @default(0)
+  income       Float? @default(0)
+  expense      Float? @default(0)
   finalBalance Float?
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  createdBy    Int?
-  active       Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+  active    Boolean  @default(true)
 
   @@unique([userId, year, month])
 }
@@ -741,43 +741,44 @@ enum TripStatus {
 }
 
 model Trip {
-  id          Int        @id @default(autoincrement())
-  userId      Int
+  id     Int @id @default(autoincrement())
+  userId Int
 
   name        String
-  destination String?    // ISO country code (ES, PL...)
+  destination String? // ISO country code (ES, PL...)
 
-  startDate   DateTime?
-  endDate     DateTime?
+  startDate DateTime?
+  endDate   DateTime?
 
-  companions  String[]
-  status      TripStatus @default(wishlist)
-  statusManuallySet Boolean @default(false)
+  companions        String[]
+  status            TripStatus @default(wishlist)
+  statusManuallySet Boolean    @default(false)
 
-  cost        Float      @default(0)
-  budget      Float?
+  cost     Float  @default(0)
+  budget   Float?
+  currency String @default("EUR")
 
-  continent      Continent?
-  year           Int?
-  coverImageUrl  String?
+  continent     Continent?
+  year          Int?
+  coverImageUrl String?
 
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user        User       @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-  notes       TripNote[]
-  tasks       TripTask[]
-  transactions Transaction[]
-  planItems   TripPlanItem[]
-  documents   TripDocument[]
-  contacts    TripContact[]
+  notes          TripNote[]
+  tasks          TripTask[]
+  transactions   Transaction[]
+  planItems      TripPlanItem[]
+  documents      TripDocument[]
+  contacts       TripContact[]
   checklistItems TripChecklistItem[]
   galleryPhotos  TripGalleryPhoto[]
-  wonderVisits WonderVisit[]
-  countryStays TripCountryStay[]
-  members      TripMember[]
-  subcategory  Subcategory?
+  wonderVisits   WonderVisit[]
+  countryStays   TripCountryStay[]
+  members        TripMember[]
+  subcategory    Subcategory?
 }
 
 // A trip can be shared with other users (friends) who become full co-owners
@@ -798,8 +799,8 @@ model TripMember {
   status    TripMemberStatus @default(pending)
   invitedBy Int
 
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([tripId, userId])
   @@index([userId])
@@ -813,14 +814,14 @@ model TripMember {
 model TripCountryStay {
   id        Int        @id @default(autoincrement())
   tripId    Int
-  country   String     // ISO country code
+  country   String // ISO country code
   continent Continent?
   startDate DateTime?
   endDate   DateTime?
   order     Int        @default(0)
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
@@ -851,7 +852,7 @@ enum ChecklistCategory {
 model TripChecklistItem {
   id        Int               @id @default(autoincrement())
   tripId    Int
-  userId    Int               // per-companion packing list
+  userId    Int // per-companion packing list
   category  ChecklistCategory
   label     String
   checked   Boolean           @default(false)
@@ -866,16 +867,16 @@ model TripChecklistItem {
 }
 
 model WonderVisit {
-  id        Int       @id @default(autoincrement())
-  userId    Int
-  wonderKey String
-  visitedAt DateTime?
-  photoUrl  String?
-  photoOffset Float? // vertical crop focal point, 0 (top) .. 1 (bottom), null = 0.5 (center)
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  wonderKey    String
+  visitedAt    DateTime?
+  photoUrl     String?
+  photoOffset  Float? // vertical crop focal point, 0 (top) .. 1 (bottom), null = 0.5 (center)
   photoOffsetX Float? // horizontal crop focal point, 0 (left) .. 1 (right), null = 0.5 (center)
-  tripId    Int?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  tripId       Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   trip Trip? @relation(fields: [tripId], references: [id], onDelete: SetNull)
@@ -898,23 +899,23 @@ enum TripDocumentType {
 }
 
 model TripDocument {
-  id             Int              @id @default(autoincrement())
-  tripId         Int
-  type           TripDocumentType
-  provider       String?          // aseguradora / empresa de alquiler / alojamiento / actividad
-  referenceCode  String?          // nº de póliza / nº de reserva / localizador
-  expiryDate     DateTime?        // caducidad (seguro) o fecha del servicio, según el tipo
-  country        String?          // ISO2 opcional: liga el documento a un TripCountryStay concreto (ej. visado)
-  metadata       Json?            // campos específicos del tipo (tipo de visado, vigencia de vacuna, cobertura...)
-  fileUrl        String?          // escaneo/PDF adjunto (Supabase Storage)
-  fileName       String?
-  fileMimeType   String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id            Int              @id @default(autoincrement())
+  tripId        Int
+  type          TripDocumentType
+  provider      String? // aseguradora / empresa de alquiler / alojamiento / actividad
+  referenceCode String? // nº de póliza / nº de reserva / localizador
+  expiryDate    DateTime? // caducidad (seguro) o fecha del servicio, según el tipo
+  country       String? // ISO2 opcional: liga el documento a un TripCountryStay concreto (ej. visado)
+  metadata      Json? // campos específicos del tipo (tipo de visado, vigencia de vacuna, cobertura...)
+  fileUrl       String? // escaneo/PDF adjunto (Supabase Storage)
+  fileName      String?
+  fileMimeType  String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   // Opcional: si el usuario también quiere llevar el coste como
   // un plan item (type="expense") del viaje, se enlaza aquí.
-  planItemId Int?     @unique
+  planItemId Int?          @unique
   planItem   TripPlanItem? @relation(fields: [planItemId], references: [id], onDelete: SetNull)
 
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
@@ -944,51 +945,50 @@ enum TripPlanItemType {
   // Logistics “grandes”
   flight
   accommodation
-  transport_destination   // tren/bus/coche (al destino)
-  transport_local         // dentro del destino
+  transport_destination // tren/bus/coche (al destino)
+  transport_local // dentro del destino
 
   // Culture & tourism
   museum
   monument
   viewpoint
   free_tour
-  guided_tour             // ✅ añadido (engloba free/paid si quieres)
+  guided_tour // ✅ añadido (engloba free/paid si quieres)
 
   // Leisure / entertainment
   concert
-  sport                   // ✅ añadido
+  sport // ✅ añadido
   bar_party
-  nightlife               // ✅ añadido
+  nightlife // ✅ añadido
 
   // Nature
   beach
-  hike                    // ✅ añadido
+  hike // ✅ añadido
 
   // Gastronomy
   restaurant
-  cafe                    // ✅ añadido
-  market                  // ✅ añadido
+  cafe // ✅ añadido
+  market // ✅ añadido
 
   // Shopping
   shopping
 
   // Excursions / special
-  day_trip                // ✅ añadido
+  day_trip // ✅ añadido
 
   // Generic
-  activity                // ✅ añadido (actividad genérica)
-  expense                 // ✅ añadido (gasto sin actividad)
-  visit                   // varias paradas a pie agrupadas (stops en metadata JSON)
+  activity // ✅ añadido (actividad genérica)
+  expense // ✅ añadido (gasto sin actividad)
+  visit // varias paradas a pie agrupadas (stops en metadata JSON)
   other
 }
 
-
 model TripPlanItem {
-  id            Int              @id @default(autoincrement())
-  tripId        Int
+  id     Int @id @default(autoincrement())
+  tripId Int
 
-  type          TripPlanItemType
-  title         String
+  type  TripPlanItemType
+  title String
 
   // viejos (NO borrar aún)
   date      DateTime?
@@ -996,45 +996,45 @@ model TripPlanItem {
   endTime   DateTime?
 
   // ✅ Tiempo “potente”
-  day           DateTime?        // día principal (normaliza a 00:00)
-  startAt       DateTime?
-  endAt         DateTime?
-  timezone      String?          // útil para mostrar bien (Europe/Madrid)
+  day      DateTime? // día principal (normaliza a 00:00)
+  startAt  DateTime?
+  endAt    DateTime?
+  timezone String? // útil para mostrar bien (Europe/Madrid)
 
-  location      String?
-  notes         String?
+  location String?
+  notes    String?
 
   // ✅ dinero
   cost          Decimal?
-  payed         Boolean?         @default(false)
-  currency      String?          // "EUR"
-  logistics     Boolean          @default(false)
-  isReservation Boolean          @default(false)
-  paymentStatus PaymentStatus    @default(pending)
+  payed         Boolean?      @default(false)
+  currency      String? // "EUR"
+  logistics     Boolean       @default(false)
+  isReservation Boolean       @default(false)
+  paymentStatus PaymentStatus @default(pending)
 
   // ✅ para guardar cualquier cosa extra sin migraciones
-  metadata      Json?            @db.JsonB
+  metadata Json? @db.JsonB
 
   // link con un gasto
   transactionId Int?
-  transaction   Transaction?     @relation(fields: [transactionId], references: [id])
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
 
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Evita re-notificar el mismo recordatorio en cada pasada del cron
   departureReminderSentAt DateTime?
   checkInReminderSentAt   DateTime?
   checkOutReminderSentAt  DateTime?
 
-  trip          Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   // ✅ details 1-1 según tipo
   flightDetails        FlightDetails?
   accommodationDetails AccommodationDetails?
   destinationTransport DestinationTransportDetails?
- expenseDetails ExpenseDetails?
-  tripDocument   TripDocument?
+  expenseDetails       ExpenseDetails?
+  tripDocument         TripDocument?
 
   attachments Attachment[]
 
@@ -1052,29 +1052,29 @@ enum FlightProvider {
 model FlightDetails {
   planItemId Int @id
 
-  provider     FlightProvider @default(aerodatabox)
-  status       String?
+  provider       FlightProvider @default(aerodatabox)
+  status         String?
   lastUpdatedUtc DateTime?
 
-  flightNumberRaw  String?   // "FR 6341"
-  flightNumberIata String?   // "FR6341"
+  flightNumberRaw  String? // "FR 6341"
+  flightNumberIata String? // "FR6341"
   airlineName      String?
   airlineIata      String?
 
-  fromIata   String?
-  toIata     String?
-  fromName   String?
-  toName     String?
-  fromCity   String?
-  toCity     String?
-  depTz      String?
-  arrTz      String?
+  fromIata String?
+  toIata   String?
+  fromName String?
+  toName   String?
+  fromCity String?
+  toCity   String?
+  depTz    String?
+  arrTz    String?
 
   depTerminal String?
   arrTerminal String?
 
-  gate String? // rellenado manualmente por el usuario, sin fuente en vivo
-  seat String?
+  gate       String? // rellenado manualmente por el usuario, sin fuente en vivo
+  seat       String?
   bookingRef String?
 
   aircraftModel String?
@@ -1116,19 +1116,19 @@ enum BathroomType {
 model AccommodationDetails {
   planItemId Int @id
 
-  name      String?
-  address   String?
-  city      String?
-  country   String?
+  name    String?
+  address String?
+  city    String?
+  country String?
 
   checkInAt  DateTime?
   checkOutAt DateTime?
 
-  guests     Int?
-  rooms      Int?
+  guests Int?
+  rooms  Int?
 
-  roomType      RoomType?
-  bathroomType  BathroomType?
+  roomType     RoomType?
+  bathroomType BathroomType?
 
   bookingRef String?
   phone      String?
@@ -1136,7 +1136,7 @@ model AccommodationDetails {
 
   coverImageUrl String?
 
-  metadata   Json? @db.JsonB
+  metadata Json? @db.JsonB
 
   planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)
 
@@ -1161,13 +1161,13 @@ model DestinationTransportDetails {
   company    String?
   bookingRef String?
 
-  fromName   String?
-  toName     String?
+  fromName String?
+  toName   String?
 
-  depAt      DateTime?
-  arrAt      DateTime?
+  depAt DateTime?
+  arrAt DateTime?
 
-  metadata   Json? @db.JsonB
+  metadata Json? @db.JsonB
 
   planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)
 
@@ -1189,66 +1189,64 @@ enum BudgetCategoryType {
 model ExpenseDetails {
   planItemId Int @id
 
-  category   BudgetCategoryType
-  planItem TripPlanItem @relation(fields: [planItemId], references: [id], onDelete: Cascade)
+  category BudgetCategoryType
+  planItem TripPlanItem       @relation(fields: [planItemId], references: [id], onDelete: Cascade)
 
   @@index([category])
 }
 
-
 model Attachment {
-  id              Int @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   // uno de estos dos debe estar informado
-  planItemId      Int?
+  planItemId Int?
 
   kind      String
   url       String
   filename  String?
   mimeType  String?
   sizeBytes Int?
-  metadata  Json? @db.JsonB
+  metadata  Json?   @db.JsonB
 
   createdAt DateTime @default(now())
 
-  planItem      TripPlanItem?   @relation(fields: [planItemId], references: [id], onDelete: Cascade)
+  planItem TripPlanItem? @relation(fields: [planItemId], references: [id], onDelete: Cascade)
 
   @@index([planItemId])
 }
 
 model TripNote {
-  id        Int      @id @default(autoincrement())
-  tripId    Int
+  id     Int @id @default(autoincrement())
+  tripId Int
 
-  title     String?
-  body      String
-  pinned    Boolean  @default(false)
+  title  String?
+  body   String
+  pinned Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   @@index([tripId])
 }
 
 model TripTask {
-  id        Int        @id @default(autoincrement())
-  tripId    Int
+  id     Int @id @default(autoincrement())
+  tripId Int
 
-  title     String
-  status    TaskStatus @default(to_do)
-  priority  String?
-  dueDate   DateTime?
+  title    String
+  status   TaskStatus @default(to_do)
+  priority String?
+  dueDate  DateTime?
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  trip      Trip       @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   @@index([tripId, status])
 }
-
 
 enum TaskStatus {
   to_do
@@ -1260,35 +1258,32 @@ enum PaymentStatus {
   paid
 }
 
-
-
-
 model InvestmentAsset {
-  id        Int                 @id @default(autoincrement())
-  userId    Int
-  user      User                @relation(fields: [userId], references: [id])
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  name      String              // "Bitcoin", "Crypto genÃ©rico"
-  abbreviation String?
-  description    String?             // "BTC", opcional
-  type      InvestmentAssetType @default(custom)
-  riskType  InvestmentRiskType?
-  currency  String              @default("EUR")
-  quantity  Decimal             @default(0)
+  name          String // "Bitcoin", "Crypto genÃ©rico"
+  abbreviation  String?
+  description   String? // "BTC", opcional
+  type          InvestmentAssetType @default(custom)
+  riskType      InvestmentRiskType?
+  currency      String              @default("EUR")
+  quantity      Decimal             @default(0)
   identificator String?
-  provider String?
-  metadataUrl String?
+  provider      String?
+  metadataUrl   String?
 
-  initialInvested Float         @default(0) // 👈 NUEVO (antes de usar la app)
-  operations InvestmentOperation[]
-  metadata   AssetMetadata?
+  initialInvested   Float                        @default(0) // 👈 NUEVO (antes de usar la app)
+  operations        InvestmentOperation[]
+  metadata          AssetMetadata?
   targetAllocations InvestmentTargetAllocation[]
 
   regions  InvestmentAssetRegion[]
   sectors  InvestmentAssetSector[]
   holdings InvestmentAssetHolding[]
 
-  transactions Transaction[]   // transferencias que apuntan a este asset
+  transactions Transaction[] // transferencias que apuntan a este asset
   valuations   InvestmentValuationSnapshot[]
 
   createdAt DateTime @default(now())
@@ -1335,19 +1330,19 @@ model InvestmentAssetHolding {
 }
 
 model AssetMetadata {
-  id             Int             @id @default(autoincrement())
-  assetId        Int             @unique
-  asset          InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  id      Int             @id @default(autoincrement())
+  assetId Int             @unique
+  asset   InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
-  isin           String?
-  fmpSymbol      String?
-  symbol         String?
-  provider       String          @default("fmp")
-  currency       String?
+  isin      String?
+  fmpSymbol String?
+  symbol    String?
+  provider  String  @default("fmp")
+  currency  String?
 
-  countriesJson  Json?           @db.JsonB
-  sectorsJson    Json?           @db.JsonB
-  topHoldingsJson Json?          @db.JsonB
+  countriesJson   Json? @db.JsonB
+  sectorsJson     Json? @db.JsonB
+  topHoldingsJson Json? @db.JsonB
 
   cryptoCategory String?
   source         String?
@@ -1356,55 +1351,55 @@ model AssetMetadata {
   lastError      String?
   syncedAt       DateTime?
 
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([fmpSymbol])
   @@index([provider])
 }
 
 model InvestmentValuationSnapshot {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  assetId   Int
-  asset     InvestmentAsset @relation(fields: [assetId], references: [id])
+  assetId Int
+  asset   InvestmentAsset @relation(fields: [assetId], references: [id])
 
-  date      DateTime   // fin de mes
-  value     Decimal
-  currency  String     @default("EUR")
+  date     DateTime // fin de mes
+  value    Decimal
+  currency String   @default("EUR")
 
   unitPrice Decimal?
-  quantity Decimal?
-  
-  source String  @default("Manual")
+  quantity  Decimal?
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  active    Boolean    @default(true)
+  source String @default("Manual")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  active    Boolean  @default(true)
 
   @@unique([userId, assetId, date])
   @@index([userId, date])
 }
 
 model InvestmentOperation {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  assetId   Int
-  asset     InvestmentAsset @relation(fields: [assetId], references: [id])
+  assetId Int
+  asset   InvestmentAsset @relation(fields: [assetId], references: [id])
 
-  type      InvestmentOperationType
-  date      DateTime @default(now())
+  type InvestmentOperationType
+  date DateTime                @default(now())
 
-  amount    Float
-  quantity  Decimal?
-  fee       Float?   @default(0)
+  amount   Float
+  quantity Decimal?
+  fee      Float?   @default(0)
 
   // Link opcional a Transaction (para ventas/aportes con movimiento de wallet)
-  transactionId Int?   @unique
+  transactionId Int?         @unique
   transaction   Transaction? @relation(fields: [transactionId], references: [id])
 
   swapGroupId String?
@@ -1417,45 +1412,45 @@ model InvestmentOperation {
 }
 
 model PortfolioSnapshot {
-  id          Int      @id @default(autoincrement())
-  userId      Int
+  id     Int @id @default(autoincrement())
+  userId Int
 
   // Identificador del mes: 2026-01-01T00:00:00.000Z
-  monthStart  DateTime
+  monthStart DateTime
 
-  currency    String   @default("EUR")
+  currency String @default("EUR")
 
   // Valores
-  startValue  Float?   // totalValue del snapshot anterior (null si primer mes)
-  endValue    Float    // totalValue calculado al cierre (lo que ahora llamas totalValue)
+  startValue Float? // totalValue del snapshot anterior (null si primer mes)
+  endValue   Float // totalValue calculado al cierre (lo que ahora llamas totalValue)
 
   // Cashflow mensual (neto: inflows - outflows). Recomendación: NO incluir swaps.
-  cashflowNet Float    @default(0)
+  cashflowNet Float @default(0)
 
   // Métricas derivadas (para pintar rápido)
-  profit      Float?    @default(0)  // end - start - cashflow
-  returnPct   Float?              // TWR encadenado del periodo (ratio: 0.05 = 5 %)
+  profit    Float? @default(0) // end - start - cashflow
+  returnPct Float? // TWR encadenado del periodo (ratio: 0.05 = 5 %)
 
   // Metadata
-  isAuto      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  active      Boolean  @default(true)
+  isAuto    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  active    Boolean  @default(true)
 
   @@unique([userId, monthStart])
   @@index([userId, monthStart])
 }
 
 model InvestmentTargetAllocation {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  assetId   Int
-  asset     InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetId Int
+  asset   InvestmentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
-  targetPct Decimal  @db.Decimal(7, 4)
-  active    Boolean  @default(true)
+  targetPct Decimal @db.Decimal(7, 4)
+  active    Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1465,13 +1460,11 @@ model InvestmentTargetAllocation {
   @@index([assetId, active])
 }
 
-
-
 model MonthlyReport {
   id        Int      @id @default(autoincrement())
   userId    Int
-  month     String   // "YYYY-MM"
-  filePath  String   // ruta local o key S3
+  month     String // "YYYY-MM"
+  filePath  String // ruta local o key S3
   createdAt DateTime @default(now())
 
   @@unique([userId, month])
@@ -1485,32 +1478,50 @@ enum AllocationCategory {
 }
 
 model AllocationPlan {
-  id        Int      @id @default(autoincrement())
-  userId    Int      @unique
-  income    Decimal  @db.Decimal(14, 2)
-  currency  String   @default("EUR")
+  id       Int     @id @default(autoincrement())
+  userId   Int     @unique
+  income   Decimal @db.Decimal(14, 2)
+  currency String  @default("EUR")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items     AllocationItem[]
+  items AllocationItem[]
 
   @@index([userId])
 }
 
 model AllocationItem {
-  id        Int      @id @default(autoincrement())
-  planId    Int
-  category  AllocationCategory
-  name      String
-  amount    Decimal  @db.Decimal(14, 2)
-  order     Int      @default(0)
+  id       Int                @id @default(autoincrement())
+  planId   Int
+  category AllocationCategory
+  name     String
+  amount   Decimal            @db.Decimal(14, 2)
+  order    Int                @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  plan      AllocationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  plan AllocationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@index([planId, category])
 }
 
+//////////////////////////////////////////////////////////////
+// TIPOS DE CAMBIO (cache)
+//////////////////////////////////////////////////////////////
+
+model ExchangeRate {
+  id            Int      @id @default(autoincrement())
+  date          DateTime // normalizada a 00:00 UTC — es una fecha, no un instante
+  baseCurrency  String // siempre "EUR": moneda pivote
+  quoteCurrency String
+  rate          Decimal  @db.Decimal(18, 8)
+  provider      String // "frankfurter"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([date, baseCurrency, quoteCurrency])
+  @@index([date])
+}
