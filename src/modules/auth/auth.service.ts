@@ -23,6 +23,7 @@ type SafeUser = {
   email: string;
   name: string;
   avatar?: string | null;
+  currency?: string | null;
 };
 
 @Injectable()
@@ -107,6 +108,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       avatar: user.avatar,
+      currency: user.currency,
     });
   }
 
@@ -141,6 +143,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       avatar: user.avatar,
+      currency: user.currency,
     };
 
     return { access_token, refresh_token, user: userWithoutPassword };
@@ -179,6 +182,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         avatar: user.avatar,
+        currency: user.currency,
       };
 
       return {
@@ -198,7 +202,7 @@ export class AuthService {
   async getProfile(userId: number): Promise<SafeUser> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException("User not found");
-    return { id: user.id, email: user.email, name: user.name, avatar: user.avatar };
+    return { id: user.id, email: user.email, name: user.name, avatar: user.avatar, currency: user.currency };
   }
 
   // ============================

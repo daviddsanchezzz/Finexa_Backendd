@@ -102,14 +102,15 @@ export class UserService {
   // =========================================================
 
   async updateProfile(userId: number, dto: UpdateProfileDto) {
-    const data: { name?: string; avatar?: string | null } = {};
+    const data: { name?: string; avatar?: string | null; currency?: string } = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.avatar !== undefined) data.avatar = dto.avatar;
+    if (dto.currency !== undefined) data.currency = dto.currency;
 
     return this.prisma.user.update({
       where: { id: userId },
       data,
-      select: { id: true, name: true, email: true, avatar: true },
+      select: { id: true, name: true, email: true, avatar: true, currency: true },
     });
   }
 
