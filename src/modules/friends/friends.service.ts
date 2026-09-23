@@ -8,7 +8,7 @@ import { PrismaService } from "src/common/prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { SendFriendRequestDto } from "./dto/send-friend-request.dto";
 
-const PUBLIC_USER_SELECT = { id: true, name: true, email: true };
+const PUBLIC_USER_SELECT = { id: true, name: true, email: true, avatar: true };
 
 @Injectable()
 export class FriendsService {
