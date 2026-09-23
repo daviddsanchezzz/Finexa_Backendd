@@ -31,6 +31,13 @@ export class AuthController {
     return this.authService.loginWithGoogle(body.id_token);
   }
 
+  // Login silencioso desde el enlace del Atajo de iOS (ver User.quickAddToken)
+  @Public()
+  @Post('quick-add-token')
+  loginWithQuickAddToken(@Body() body: { token: string }) {
+    return this.authService.loginWithQuickAddToken(body.token);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('me')
   async getProfile(@Req() req) {

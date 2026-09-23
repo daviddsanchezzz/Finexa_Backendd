@@ -113,6 +113,24 @@ export class AuthService {
   }
 
   // ============================
+  // LOGIN VÍA QUICK-ADD TOKEN (enlace del Atajo de iOS)
+  // ============================
+  async loginWithQuickAddToken(token: string) {
+    if (!token) throw new UnauthorizedException("Missing token");
+
+    const user = await this.prisma.user.findUnique({ where: { quickAddToken: token } });
+    if (!user) throw new UnauthorizedException("Invalid token");
+
+    return this.issueTokensWithUser(user.id, user.email, user.name, {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatar: user.avatar,
+      currency: user.currency,
+    });
+  }
+
+  // ============================
   // LOGIN
   // ============================
   async login(email: string, password: string) {
