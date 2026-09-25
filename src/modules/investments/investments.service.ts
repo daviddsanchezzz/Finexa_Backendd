@@ -221,10 +221,7 @@ private async adjustAssetQuantityTx(
     const assetIds = assets.map((asset) => asset.id);
 
     if (!assetIds.length) {
-      return {
-        ...buildPortfolioPerformanceSeries({ assets: [], operations: [], valuations: [], asOf }),
-        assetReturns: new Map<number, number>(),
-      };
+      return buildPortfolioPerformanceSeries({ assets: [], operations: [], valuations: [], asOf });
     }
 
     const [operations, valuations] = await Promise.all([
@@ -255,24 +252,12 @@ private async adjustAssetQuantityTx(
         ...valuation,
         value: Number(valuation.value || 0),
       }));
-    const portfolio = buildPortfolioPerformanceSeries({
+    return buildPortfolioPerformanceSeries({
       assets: normalizedAssets,
       operations: normalizedOperations,
       valuations: normalizedValuations,
       asOf,
     });
-    const assetReturns = new Map<number, number>();
-    normalizedAssets.forEach((asset) => {
-      const assetPerformance = buildPortfolioPerformanceSeries({
-        assets: [asset],
-        operations: normalizedOperations.filter((operation) => operation.assetId === asset.id),
-        valuations: normalizedValuations.filter((valuation) => valuation.assetId === asset.id),
-        asOf,
-      });
-      assetReturns.set(asset.id, assetPerformance.points.at(-1)?.twr ?? 0);
-    });
-
-    return { ...portfolio, assetReturns };
   }
 
   /**
@@ -761,17 +746,17 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
         invested: netContributed, // kept for backward compatibility: "true invested"
         currentValue,
         pnl,
-        returnPct: performance.assetReturns.get(a.id) ?? 0,
+        returnPct: netContributed > 1e-9 ? pnl / netContributed : null,
         lastValuationDate: snap?.date ?? null,
       };
     });
 
     // Los activos pueden estar en monedas distintas (p.ej. AAPL en USD). Se
     // consolidan a la moneda base del usuario con el tipo ACTUAL — igual que
-    // el saldo de una Wallet — sin tocar returnPct/TWR, que sigue
-    // calculándose por activo en getPortfolioPerformanceData sin conversión
-    // (ver limitación anotada en el plan: totalCurrentValue, que sale de esa
-    // misma función, todavía no consolida por moneda).
+    // el saldo de una Wallet — sin tocar returnPct, que sigue calculándose
+    // por activo sin conversión (ver limitación anotada en el plan:
+    // totalCurrentValue, que sale de esa misma función, todavía no consolida
+    // por moneda).
     const baseCurrency = (await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } }))?.currency ?? 'EUR';
     const totalContributed = await sumInBaseCurrency(perAsset.map((x) => ({ value: x.totalContributed, currency: x.currency })), baseCurrency, this.currency);
     const totalWithdrawn = await sumInBaseCurrency(perAsset.map((x) => ({ value: x.totalWithdrawn, currency: x.currency })), baseCurrency, this.currency);
@@ -788,7 +773,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       totalContributed,
       totalWithdrawn,
       totalNetContributed,
-      returnPct: lastPerformancePoint?.twr ?? 0,
+      returnPct: totalNetContributed > 1e-9 ? totalPnL / totalNetContributed : null,
       asOf: asOf.toISOString(),
       assets: perAsset,
     };
@@ -1595,7 +1580,10 @@ private async computeSnapshotValues(userId: number, monthStart: Date, periodEnd:
 private async buildMonthlySnapshotPayload(userId: number, monthStartInput: Date, isAuto: boolean) {
   const monthStart = this.normalizeToMonthStartUTC(monthStartInput);
   const periodEnd = this.addMonthsUTC(monthStart, 1);
-  const values = await this.computeSnapshotValues(userId, monthStart, periodEnd);
+  // costBasisAtStart no es una columna de PortfolioSnapshot: es un dato
+  // derivado que listMonthlySnapshots recalcula en cada lectura a partir de
+  // la serie de rendimiento, así que no se persiste.
+  const { costBasisAtStart, ...values } = await this.computeSnapshotValues(userId, monthStart, periodEnd);
 
   return {
     userId,
