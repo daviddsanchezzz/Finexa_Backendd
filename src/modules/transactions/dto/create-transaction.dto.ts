@@ -10,10 +10,25 @@ export class CreateTransactionDto {
 
   // ISO 4217. Si no se manda, el service la rellena con la moneda de la
   // cartera elegida (walletId/fromWalletId) o con la moneda base del usuario.
+  // IMPORTANTE: amount/currency van SIEMPRE en la moneda de la wallet — es lo
+  // que mueve wallet.balance. Si el usuario introdujo el importe en otra
+  // divisa, esa se guarda aparte en accountAmount/accountCurrency.
   @IsOptional()
   @IsString()
   @Matches(/^[A-Z]{3}$/, { message: 'currency debe ser un código ISO 4217 de 3 letras' })
   currency?: string;
+
+  // Importe tal como lo introdujo el usuario, cuando eligió una divisa
+  // distinta a la de la wallet (p.ej. 5 USD sobre una wallet en EUR). Solo
+  // informativo: nunca mueve el saldo, eso siempre lo hace `amount`.
+  @IsOptional()
+  @IsNumber()
+  accountAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{3}$/, { message: 'accountCurrency debe ser un código ISO 4217 de 3 letras' })
+  accountCurrency?: string;
 
   @IsOptional()
   @IsString()
