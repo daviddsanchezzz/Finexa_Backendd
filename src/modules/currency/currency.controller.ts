@@ -17,14 +17,17 @@ export class CurrencyController {
       throw new BadRequestException('from/to deben ser códigos ISO 4217 de 3 letras');
     }
 
-    const parsedDate = date ? new Date(date) : undefined;
-    if (parsedDate && isNaN(parsedDate.getTime())) {
+    const parsedDate = date ? new Date(date) : new Date();
+    if (isNaN(parsedDate.getTime())) {
       throw new BadRequestException('date inválida');
     }
 
-    const rate = parsedDate
-      ? await this.currency.getHistoricalRate(fromCode, toCode, parsedDate)
-      : await this.currency.getCurrentRate(fromCode, toCode);
+    // getHistoricalRate (a diferencia de getCurrentRate) pide el tipo en vivo
+    // al proveedor y lo cachea si no hay fila para ese día — así funciona
+    // para cualquier divisa que el usuario elija en el momento, no solo las
+    // que ya se usan en alguna wallet/transacción existente (que son las
+    // únicas que el cron diario precachea).
+    const rate = await this.currency.getHistoricalRate(fromCode, toCode, parsedDate);
 
     return { from: fromCode, to: toCode, rate: rate.toNumber() };
   }
