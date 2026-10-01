@@ -1,16 +1,25 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { DateTime } from "luxon";
 import { PrismaService } from "src/common/prisma/prisma.service";
 import { MonthDataDto } from "./dto/month-data.dto";
 
+// Todos los usuarios de hoy son de España. Sin un campo de zona horaria por
+// usuario, usamos esta como aproximación — mejor que UTC puro, que descuadra
+// sistemáticamente cualquier movimiento entre las 00:00 y la 01:00-02:00 hora
+// local del día 1 o del último día de mes (se cuenta en el mes equivocado).
+const APP_TIMEZONE = "Europe/Madrid";
 
-function monthRangeUTC(monthStart: Date) {
-  const start = new Date(monthStart);
-  const end = new Date(Date.UTC(
-    monthStart.getUTCFullYear(),
-    monthStart.getUTCMonth() + 1,
-    1,
-  ));
-  return { start, end };
+// `monthStart` solo se usa para identificar QUÉ mes calendario es (su año y
+// mes en UTC, que el cron ya calcula de forma correcta); el rango real que
+// se consulta son los límites de ESE mes en hora local, no en UTC — así una
+// transacción a la 1 de la madrugada del día 1 cae en el mes que le toca.
+export function monthRangeLocal(monthStart: Date, zone: string = APP_TIMEZONE) {
+  const start = DateTime.fromObject(
+    { year: monthStart.getUTCFullYear(), month: monthStart.getUTCMonth() + 1, day: 1 },
+    { zone },
+  ).startOf("day");
+  const end = start.plus({ months: 1 });
+  return { start: start.toJSDate(), end: end.toJSDate() };
 }
 
 @Injectable()
@@ -254,7 +263,7 @@ async closeMonthWithCron(userId: number, monthStart: Date) {
   if (existing && !canAutoRepairLegacy) {
     return existing; // idempotente en registros validos o editados manualmente
   }
-  const { start, end } = monthRangeUTC(monthStart);
+  const { start, end } = monthRangeLocal(monthStart);
 
   const [income, expense, finalBalance] = await Promise.all([
     this.calculateIncome(userId, start, end),

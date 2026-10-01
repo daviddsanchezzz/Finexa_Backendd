@@ -48,6 +48,51 @@ describe('TransactionsService.updateWithScope — fecha de la plantilla', () => 
       service.updateWithScope(7, 1, { date: 'no-es-fecha' } as any, 'future'),
     ).rejects.toThrow('Fecha inválida');
   });
+
+  // Regresión real: al editar una OCURRENCIA ya generada (nunca es recurrente
+  // en sí misma: isRecurring=false/recurrence=null) con scope "futuras" o
+  // "serie", el frontend manda ese mismo recurrence=null porque lee el campo
+  // de la ocurrencia, no el de la plantilla. Antes de este fix, eso cancelaba
+  // silenciosamente la recurrencia real de la plantilla (caso visto en
+  // producción: una nómina mensual dejó de generarse tras editar la hora de
+  // una ocurrencia ya creada).
+  it.each(['future', 'series'] as const)(
+    'editar una ocurrencia (scope %s) no cancela la recurrencia de la plantilla',
+    async (scope) => {
+      const childOccurrence = {
+        ...template,
+        id: 2,
+        isRecurring: false,
+        recurrence: null,
+        parentId: 1,
+      };
+      const prisma: any = {
+        transaction: {
+          findFirst: jest.fn((args: any) =>
+            Promise.resolve(args.where.id === 1 ? template : childOccurrence),
+          ),
+          findMany: jest.fn().mockResolvedValue([]),
+          update: jest.fn().mockResolvedValue(template),
+        },
+      };
+      const service = new TransactionsService(prisma, {} as any, {} as any, {} as any);
+      jest.spyOn(service, 'findOne').mockResolvedValue(childOccurrence as any);
+
+      await service.updateWithScope(
+        7,
+        2,
+        { recurrence: null, isRecurring: false } as any,
+        scope,
+      );
+
+      const templateUpdateCall = prisma.transaction.update.mock.calls.find(
+        (c: any[]) => c[0].where.id === 1,
+      );
+      expect(templateUpdateCall).toBeDefined();
+      expect(templateUpdateCall[0].data.isRecurring).toBeUndefined();
+      expect(templateUpdateCall[0].data.recurrence).toBeUndefined();
+    },
+  );
 });
 
 describe('TransactionsService.create — currency/baseAmount', () => {
