@@ -183,6 +183,26 @@ describe('investment performance', () => {
     expect(points.at(-1)?.twr).toBeCloseTo(100 / 102 - 1);
   });
 
+  test('K) la rentabilidad del periodo se basa en el coste aportado, no en el valor de mercado al inicio', () => {
+    const { points } = series(
+      [asset(1, 100, '2025-01-01T00:00:00.000Z')],
+      [],
+      [
+        valuation(1, '2025-01-01T18:00:00.000Z', 100),
+        valuation(2, '2025-01-04T18:00:00.000Z', 90), // pérdida no realizada antes del periodo
+        valuation(3, '2025-01-10T18:00:00.000Z', 99), // recupera durante el periodo
+      ],
+    );
+    const metrics = calculatePeriodPerformance(points, d('2025-01-05'), d('2025-01-11'));
+    expect(metrics.costBasisAtStart).toBe(100);
+    expect(metrics.startValue).toBe(90);
+    expect(metrics.profit).toBeCloseTo(9);
+    // profit / coste aportado (100), no profit / valor de mercado al inicio (90):
+    // 9/100 = 9 %, no 9/90 = 10 %. Así coincide con el criterio de "rentabilidad
+    // total" de la cartera (PnL / dinero neto aportado).
+    expect(metrics.returnPct).toBeCloseTo(0.09);
+  });
+
   test('una valoración diaria consolidada sustituye operaciones del mismo día sin duplicarlas', () => {
     const { points } = series(
       [asset()],

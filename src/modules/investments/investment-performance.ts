@@ -243,23 +243,23 @@ export function calculatePeriodPerformance(
   const last = periodPoints.at(-1) ?? before;
   const startValue = before?.equity ?? 0;
   const endValue = last?.equity ?? startValue;
+  const costBasisAtStart = before?.netContributions ?? 0;
   const cashflowNet = periodPoints.reduce((sum, point) => sum + point.externalFlow, 0);
   const profit = endValue - startValue - cashflowNet;
-  let growthFactor = 1;
-  let hasReturn = false;
 
-  periodPoints.forEach((point) => {
-    if (point.dailyReturn != null && Number.isFinite(point.dailyReturn)) {
-      growthFactor *= 1 + point.dailyReturn;
-      hasReturn = true;
-    }
-  });
+  // Mismo criterio que la rentabilidad total de la cartera (PnL / dinero neto
+  // aportado): la base es el coste acumulado hasta el inicio del periodo, no
+  // el valor de mercado ese día. Así "total" y "por periodo" (mes/año/gráfica)
+  // cuentan siempre la misma historia y encajan entre sí.
+  const returnBase = costBasisAtStart + cashflowNet;
+  const returnPct = returnBase > 1e-9 ? profit / returnBase : null;
 
   return {
     startValue,
     endValue,
+    costBasisAtStart,
     cashflowNet,
     profit,
-    returnPct: hasReturn ? growthFactor - 1 : null,
+    returnPct,
   };
 }

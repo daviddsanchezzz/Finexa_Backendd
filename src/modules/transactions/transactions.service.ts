@@ -909,8 +909,14 @@ if (filters?.dateFrom || filters?.dateTo) {
       templateUpdateData.date = newDate;
     }
 
-    // isRecurring + recurrence para la plantilla
-    if (typeof (dto as any).recurrence !== 'undefined') {
+    // isRecurring + recurrence para la plantilla — SOLO si se edita la propia
+    // plantilla directamente (baseTx.isRecurring). Una ocurrencia (hijo) ya
+    // generada siempre tiene isRecurring=false/recurrence=null en sí misma
+    // (las ocurrencias nunca son recurrentes), así que si no se guardara con
+    // este mismo guard que `date` de arriba, editar una ocurrencia con scope
+    // "futuras"/"todas" enviaría recurrence=null y cancelaría silenciosamente
+    // la recurrencia de la plantilla sin que el usuario lo pidiera.
+    if (baseTx.isRecurring && typeof (dto as any).recurrence !== 'undefined') {
       if ((dto as any).recurrence) {
         templateUpdateData.isRecurring = true;
         templateUpdateData.recurrence = (dto as any).recurrence;
