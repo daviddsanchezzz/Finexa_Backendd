@@ -111,13 +111,32 @@ export function buildPortfolioPerformanceSeries(input: {
   const assetIds = new Set(input.assets.map((asset) => asset.id));
   const events: TimelineEvent[] = [];
 
+  // Si el activo tiene operaciones o valoraciones anteriores a su propia
+  // fecha de alta en la app (p. ej. se importó un histórico de valoraciones
+  // por Excel para un activo recién creado), el capital inicial se imputa en
+  // la fecha del dato más antiguo, no en "createdAt". Si no, el aporte
+  // inicial se cuenta como cashflow del mes en que se dio de alta el activo
+  // aunque ya tuviera años de histórico real importado.
+  const earliestDataDateByAsset = new Map<number, Date>();
+  const considerEarliestDate = (assetId: number, date: Date) => {
+    const prev = earliestDataDateByAsset.get(assetId);
+    if (!prev || date < prev) earliestDataDateByAsset.set(assetId, date);
+  };
+  input.operations.forEach((operation) => considerEarliestDate(operation.assetId, operation.date));
+  input.valuations.forEach((valuation) => considerEarliestDate(valuation.assetId, valuation.date));
+
   input.assets.forEach((asset) => {
     const initial = Number(asset.initialInvested || 0);
-    if (initial && asset.createdAt <= asOf) {
+    if (!initial) return;
+
+    const earliestData = earliestDataDateByAsset.get(asset.id);
+    const initialDate = earliestData && earliestData < asset.createdAt ? earliestData : asset.createdAt;
+
+    if (initialDate <= asOf) {
       events.push({
         kind: 'initial',
         assetId: asset.id,
-        date: asset.createdAt,
+        date: initialDate,
         id: -asset.id,
         amount: initial,
       });

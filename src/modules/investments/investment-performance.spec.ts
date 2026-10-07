@@ -214,4 +214,47 @@ describe('investment performance', () => {
     expect(close?.netContributions).toBe(100);
     expect(close?.twr).toBeCloseTo(0);
   });
+
+  // Regresión real: un activo se dio de alta en la app el 23/09 con
+  // initialInvested=12000, pero se le importó por Excel un histórico de
+  // valoraciones desde diciembre del año anterior. El capital inicial se
+  // imputaba en createdAt (23/09), inflando el cashflow y hundiendo el
+  // profit de ESE mes aunque no hubiera ningún movimiento real en septiembre.
+  test('el capital inicial se imputa en la fecha del dato más antiguo, no en createdAt, si hay histórico importado previo', () => {
+    const { points } = series(
+      [asset(1, 12000, '2025-09-23T00:00:00.000Z')],
+      [],
+      [
+        valuation(1, '2024-12-31T00:00:00.000Z', 13043.66),
+        valuation(2, '2025-09-22T00:00:00.000Z', 13783.46),
+        valuation(3, '2025-09-23T00:00:00.000Z', 13916.44),
+        valuation(4, '2025-09-30T00:00:00.000Z', 13746.01),
+      ],
+      '2025-09-30T23:59:59.999Z',
+    );
+
+    // Sin movimiento real en septiembre: el cashflow del mes debe ser 0, no 12000.
+    // startValue arrastra el valor de diciembre (sin valoración entre medias).
+    const metrics = calculatePeriodPerformance(points, d('2025-09-01'), d('2025-10-01'));
+    expect(metrics.cashflowNet).toBe(0);
+    expect(metrics.startValue).toBe(13043.66);
+    expect(metrics.endValue).toBe(13746.01);
+    expect(metrics.profit).toBeCloseTo(13746.01 - 13043.66);
+
+    // El capital inicial sigue contando en el coste acumulado (desde diciembre).
+    const decemberPoint = points.find((p) => p.date === '2024-12-31');
+    expect(decemberPoint?.netContributions).toBe(12000);
+  });
+
+  test('sin histórico previo a createdAt, el capital inicial se sigue imputando en createdAt (comportamiento normal)', () => {
+    const { points } = series(
+      [asset(1, 500, '2025-01-05T00:00:00.000Z')],
+      [],
+      [valuation(1, '2025-01-05T00:00:00.000Z', 500)],
+      '2025-01-10T23:59:59.999Z',
+    );
+    const point = points.find((p) => p.date === '2025-01-05');
+    expect(point?.netContributions).toBe(500);
+    expect(point?.externalFlow).toBe(500);
+  });
 });
