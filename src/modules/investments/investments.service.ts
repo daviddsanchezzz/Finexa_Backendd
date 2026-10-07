@@ -634,6 +634,30 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
   // =============================
   // Import valoraciones desde Excel
   // =============================
+  // Celdas numéricas "limpias" (number de Excel) o texto tipo "577,39$" /
+  // "1.234,56 €" / "$577.39" (p. ej. una columna de cripto pegada como texto
+  // con el signo $ incluido, en vez de un número con formato de moneda).
+  private parseImportCellValue(raw: any): number | null {
+    if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+    if (typeof raw !== 'string') return null;
+
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+
+    let cleaned = trimmed.replace(/[^0-9,.-]/g, '');
+    if (!cleaned) return null;
+
+    if (cleaned.includes(',') && cleaned.includes('.')) {
+      // Asume formato ES: "." miles, "," decimal.
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+    } else if (cleaned.includes(',')) {
+      cleaned = cleaned.replace(',', '.');
+    }
+
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+
   parseValuationImportFile(buffer: Buffer) {
     let workbook: any;
     try {
@@ -686,7 +710,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       let hasAny = false;
       for (const col of columnIndexes) {
         const raw = row[col.index];
-        const num = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+        const num = this.parseImportCellValue(raw);
         values[col.name] = num;
         if (num !== null) hasAny = true;
       }

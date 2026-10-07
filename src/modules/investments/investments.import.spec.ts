@@ -45,6 +45,26 @@ describe('Import de valoraciones desde Excel', () => {
     expect(result.dateRange).toEqual({ from: '2026-02-01', to: '2026-02-07' });
   });
 
+  it('entiende una columna pegada como texto tipo "577,39$" (p. ej. Cripto en dólares)', () => {
+    const aoa: any[][] = [
+      ['', 'Capital Advisor', 'Cripto'],
+      [new Date(Date.UTC(2026, 1, 1)), 13042.0, '577,39$'],
+      [new Date(Date.UTC(2026, 1, 5)), 13064.03, '1.604,74$'],
+      [new Date(Date.UTC(2026, 1, 7)), 13203.31, ''],
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Valoraciones');
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', cellDates: true });
+
+    const service = new InvestmentsService({} as any, {} as any);
+    const result = service.parseValuationImportFile(buffer);
+
+    expect(result.rows[0].values.Cripto).toBeCloseTo(577.39);
+    expect(result.rows[1].values.Cripto).toBeCloseTo(1604.74);
+    expect(result.rows[2].values.Cripto).toBeNull();
+  });
+
   it('rechaza un archivo sin columnas de activos detectables', () => {
     const sheet = XLSX.utils.aoa_to_sheet([['', '', ''], ['', '', '']]);
     const workbook = XLSX.utils.book_new();
