@@ -11,7 +11,11 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { InvestmentsService } from './investments.service';
 import { CreateInvestmentAssetDto } from './dto/create-investment-asset.dto';
 import { UpdateInvestmentAssetDto } from './dto/update-investment-asset.dto';
@@ -29,6 +33,7 @@ import { UpsertInvestmentTargetsDto } from './dto/upsert-investment-targets.dto'
 import { RebalancePreviewDto } from './dto/rebalance-preview.dto';
 import { ContributionPreviewDto } from './dto/contribution-preview.dto';
 import { CreateInvestmentValuationsBatchDto } from './dto/create-valuations-batch.dto';
+import { CommitValuationsImportDto } from './dto/import-valuations.dto';
 
 @Controller('investments')
 export class InvestmentsController {
@@ -185,6 +190,21 @@ listValuations(@User('id') userId: number, @Query('assetId') assetId?: string) {
   @Delete('valuations/:id')
   deleteValuation(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     return this.investmentsService.deleteValuation(userId, id);
+  }
+
+  // -----------------------------
+  // Import de valoraciones desde Excel
+  // -----------------------------
+  @Post('valuations/import/parse')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  importValuationsParse(@UploadedFile() file: Express.Multer.File) {
+    if (!file?.buffer?.length) throw new BadRequestException('Falta el archivo');
+    return this.investmentsService.parseValuationImportFile(file.buffer);
+  }
+
+  @Post('valuations/import/commit')
+  importValuationsCommit(@User('id') userId: number, @Body() dto: CommitValuationsImportDto) {
+    return this.investmentsService.commitValuationsImport(userId, dto);
   }
 
   // -----------------------------

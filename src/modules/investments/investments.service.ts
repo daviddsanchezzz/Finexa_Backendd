@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/common/prisma/prisma.service';
+import * as XLSX from 'xlsx';
 import { CurrencyService } from '../currency/currency.service';
 import { sumInBaseCurrency } from './investment-currency-totals';
 import { CreateInvestmentAssetDto } from './dto/create-investment-asset.dto';
@@ -628,6 +629,153 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
 
     await this.recalcInvestmentWalletBalance(userId);
     return deleted;
+  }
+
+  // =============================
+  // Import valoraciones desde Excel
+  // =============================
+  parseValuationImportFile(buffer: Buffer) {
+    let workbook: any;
+    try {
+      workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    } catch {
+      throw new BadRequestException('No se pudo leer el archivo. ¿Es un Excel válido?');
+    }
+
+    const sheetName = workbook.SheetNames[0];
+    const sheet = sheetName ? workbook.Sheets[sheetName] : null;
+    if (!sheet) throw new BadRequestException('El archivo no tiene hojas');
+
+    const aoa: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
+    if (!aoa.length) throw new BadRequestException('El archivo está vacío');
+
+    // Fila de cabecera: la primera con al menos 2 celdas de texto no vacías
+    // (las primeras filas de un export manual pueden venir vacías).
+    let headerRowIndex = 0;
+    for (let i = 0; i < Math.min(aoa.length, 10); i++) {
+      const textCells = (aoa[i] || []).filter((c) => typeof c === 'string' && c.trim());
+      if (textCells.length >= 2) {
+        headerRowIndex = i;
+        break;
+      }
+    }
+
+    const headerRow = aoa[headerRowIndex] || [];
+    // columnIndex -> nombre de columna, saltando vacías y "Total" (columna calculada)
+    const columnIndexes: { index: number; name: string }[] = [];
+    headerRow.forEach((cell, idx) => {
+      if (idx === 0) return; // columna 0 = fecha
+      const name = typeof cell === 'string' ? cell.trim() : '';
+      if (!name) return;
+      if (name.toLowerCase() === 'total') return;
+      columnIndexes.push({ index: idx, name });
+    });
+
+    if (!columnIndexes.length) {
+      throw new BadRequestException('No se detectaron columnas de activos en el archivo');
+    }
+
+    const rows: { date: string; values: Record<string, number | null> } [] = [];
+    for (let r = headerRowIndex + 1; r < aoa.length; r++) {
+      const row = aoa[r] || [];
+      const rawDate = row[0];
+      const date = rawDate instanceof Date && !Number.isNaN(rawDate.getTime()) ? rawDate : null;
+      if (!date) continue; // filas sin fecha (huecos, notas, etc.)
+
+      const values: Record<string, number | null> = {};
+      let hasAny = false;
+      for (const col of columnIndexes) {
+        const raw = row[col.index];
+        const num = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+        values[col.name] = num;
+        if (num !== null) hasAny = true;
+      }
+      if (!hasAny) continue; // fila completamente vacía
+
+      rows.push({ date: this.startOfUtcDay(date).toISOString().slice(0, 10), values });
+    }
+
+    if (!rows.length) {
+      throw new BadRequestException('No se detectaron filas con datos en el archivo');
+    }
+
+    return {
+      columns: columnIndexes.map((c) => c.name),
+      rows,
+      dateRange: { from: rows[0].date, to: rows[rows.length - 1].date },
+    };
+  }
+
+  async commitValuationsImport(
+    userId: number,
+    dto: {
+      mapping: Record<string, { assetId: number; currency?: string }>;
+      rows: { date: string; values: Record<string, number | null> }[];
+    },
+  ) {
+    const mappingEntries = Object.entries(dto.mapping || {}).filter(
+      ([, m]) => m && Number.isInteger(Number(m.assetId)),
+    );
+    if (!mappingEntries.length) {
+      throw new BadRequestException('No hay ninguna columna mapeada a un activo');
+    }
+
+    const uniqueAssetIds = Array.from(new Set(mappingEntries.map(([, m]) => Number(m.assetId))));
+    await Promise.all(uniqueAssetIds.map((assetId) => this.assertAssetOwned(userId, assetId)));
+
+    type Write = { assetId: number; date: Date; value: Prisma.Decimal; currency: string };
+    const writes: Write[] = [];
+
+    for (const row of dto.rows || []) {
+      const rawDate = new Date(row.date);
+      if (Number.isNaN(rawDate.getTime())) continue;
+      const date = this.startOfUtcDay(rawDate);
+
+      for (const [columnName, m] of mappingEntries) {
+        const value = row.values?.[columnName];
+        if (value === null || value === undefined || !Number.isFinite(value)) continue;
+        if (value < 0) continue;
+        writes.push({
+          assetId: Number(m.assetId),
+          date,
+          value: new Prisma.Decimal(value),
+          currency: this.normalizeCurrency(m.currency, 'EUR'),
+        });
+      }
+    }
+
+    if (!writes.length) {
+      throw new BadRequestException('No hay ninguna valoración que importar con ese mapeo');
+    }
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const w of writes) {
+          await this.upsertValuationSnapshotTx(tx, userId, {
+            assetId: w.assetId,
+            date: w.date,
+            value: w.value,
+            currency: w.currency,
+            source: 'excel_import',
+          });
+        }
+      },
+      { timeout: 120_000 },
+    );
+
+    await this.recalcInvestmentWalletBalance(userId);
+
+    const byAsset = uniqueAssetIds.map((assetId) => ({
+      assetId,
+      count: writes.filter((w) => w.assetId === assetId).length,
+    }));
+
+    const dates = writes.map((w) => w.date.toISOString().slice(0, 10)).sort();
+    return {
+      count: writes.length,
+      byAsset,
+      dateRange: { from: dates[0], to: dates[dates.length - 1] },
+    };
   }
 
   // =============================
