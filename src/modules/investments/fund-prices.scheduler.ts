@@ -20,7 +20,7 @@ const DELAY_BETWEEN_FETCHES_MS = 1500;
  * guarda con la fecha del NAV (la que dice FT), no con la de hoy. Se ejecuta
  * dos veces al día laborable; la segunda es un no-op si la primera ya lo dejó.
  *
- * Desactivado por defecto: FT_PRICES_CRON_ENABLED=true para activarlo.
+ * Activo por defecto; FT_PRICES_CRON_ENABLED=false lo apaga sin redesplegar código.
  */
 @Injectable()
 export class FundPricesScheduler {
@@ -34,7 +34,7 @@ export class FundPricesScheduler {
 
   @Cron('0 0 10,16 * * 1-5', { timeZone: 'Europe/Madrid' })
   async scheduledSync() {
-    if (process.env.FT_PRICES_CRON_ENABLED !== 'true') return;
+    if (process.env.FT_PRICES_CRON_ENABLED === 'false') return;
     await this.syncFundPrices();
   }
 

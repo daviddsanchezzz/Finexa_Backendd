@@ -98,12 +98,23 @@ describe('FundPricesScheduler.syncFundPrices', () => {
     expect(upsert).toHaveBeenCalledTimes(2);
   });
 
-  it('el cron programado no hace nada si FT_PRICES_CRON_ENABLED no es "true"', async () => {
-    delete process.env.FT_PRICES_CRON_ENABLED;
-    const ft = jest.fn();
-    const { sched } = setup({ assets: [asset()], ft });
-    const spy = jest.spyOn(sched, 'syncFundPrices');
-    await sched.scheduledSync();
-    expect(spy).not.toHaveBeenCalled();
+  describe('scheduledSync', () => {
+    afterEach(() => delete process.env.FT_PRICES_CRON_ENABLED);
+
+    it('corre por defecto (variable sin definir)', async () => {
+      delete process.env.FT_PRICES_CRON_ENABLED;
+      const { sched } = setup({ assets: [], ft: jest.fn() });
+      const spy = jest.spyOn(sched, 'syncFundPrices');
+      await sched.scheduledSync();
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('no hace nada si FT_PRICES_CRON_ENABLED=false', async () => {
+      process.env.FT_PRICES_CRON_ENABLED = 'false';
+      const { sched } = setup({ assets: [asset()], ft: jest.fn() });
+      const spy = jest.spyOn(sched, 'syncFundPrices');
+      await sched.scheduledSync();
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 });
