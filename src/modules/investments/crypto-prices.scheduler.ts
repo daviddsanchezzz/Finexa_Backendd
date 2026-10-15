@@ -14,7 +14,7 @@ const DELAY_BETWEEN_FETCHES_MS = 1200;
 /**
  * Valora las criptomonedas con el cierre diario (UTC) de Kraken. La cripto cotiza
  * 24/7, así que se guarda siempre el cierre del día anterior: es reproducible y
- * comparable día a día. Se ejecuta todos los días a las 00:10 UTC.
+ * comparable día a día. Se ejecuta todos los días a las 03:10 (Madrid).
  *
  * Sin respaldo: si Kraken falla para una moneda, ese día no se escribe; al
  * siguiente día se vuelve a pedir y, como la vela diaria sigue disponible, se
@@ -32,7 +32,10 @@ export class CryptoPricesScheduler {
     private readonly kraken: KrakenPriceService,
   ) {}
 
-  @Cron('0 10 0 * * *', { timeZone: 'UTC' })
+  // 03:10 hora de Madrid = 01:10 UTC en verano y 02:10 UTC en invierno: siempre
+  // después de que cierre la vela diaria UTC de Kraken, y fuera de la hora que
+  // no existe en el cambio horario de marzo (02:00-03:00).
+  @Cron('0 10 3 * * *', { timeZone: 'Europe/Madrid' })
   async scheduledSync() {
     if (process.env.CRYPTO_PRICES_CRON_ENABLED === 'false') return;
     await this.syncCryptoPrices();

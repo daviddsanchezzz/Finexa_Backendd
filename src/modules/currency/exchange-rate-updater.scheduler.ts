@@ -20,8 +20,8 @@ export class ExchangeRateUpdaterScheduler {
     private readonly prisma: PrismaService,
   ) {}
 
-  // 07:00 todos los días — mismo patrón que TransactionsRecurringScheduler.
-  @Cron('0 0 7 * * *')
+  // 07:00 (hora de Madrid) todos los días.
+  @Cron('0 0 7 * * *', { timeZone: 'Europe/Madrid' })
   async handleDailyUpdate() {
     try {
       const active = await this.currencyService.getActiveCurrencies();

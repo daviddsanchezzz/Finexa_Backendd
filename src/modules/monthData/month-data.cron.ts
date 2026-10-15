@@ -10,8 +10,8 @@ export class MonthDataCron {
     private monthDataService: MonthDataService,
   ) {}
 
-  // 1 de cada mes a las 00:05 UTC
-@Cron("0 4 1 * *", { timeZone: "UTC" })
+  // 1 de cada mes a las 05:00 (hora de Madrid), después del cierre de inversiones (04:00).
+@Cron("0 5 1 * *", { timeZone: "Europe/Madrid" })
 async closePreviousMonthForAllUsers() {
   const now = new Date();
 
