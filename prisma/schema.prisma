@@ -146,6 +146,7 @@ model User {
   investmentValuations        InvestmentValuationSnapshot[]
   investmentOperations        InvestmentOperation[]
   investmentTargetAllocations InvestmentTargetAllocation[]
+  financialProfile            FinancialProfile?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1458,6 +1459,29 @@ model InvestmentTargetAllocation {
   @@unique([userId, assetId])
   @@index([userId, active])
   @@index([assetId, active])
+}
+
+// Perfil financiero opcional para personalizar la puntuación de salud
+// financiera. Todo es nullable: sin perfil se usan valores por defecto y la
+// app indica qué parte del cálculo es una suposición. Los valores de texto se
+// validan en la aplicación (no es un enum de Postgres) para poder añadir
+// opciones sin migrar la columna.
+model FinancialProfile {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  birthYear             Int?
+  incomeType            String? // "salaried" | "variable" | "self_employed" | "student" | "other"
+  dependents            Int?
+  riskTolerance         Int? // 1 (muy prudente) .. 5 (muy agresivo)
+  emergencyMonthsTarget Int? // meses de gasto que quiere tener de colchón
+  fiTargetMultiple      Int? // veces el gasto anual para la independencia financiera (25 = regla del 4 %)
+  fiTargetAge           Int? // edad a la que quiere alcanzarla
+  expectedRealReturnPct Decimal? @db.Decimal(4, 2) // rentabilidad real anual esperada de la cartera, en %
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model MonthlyReport {
