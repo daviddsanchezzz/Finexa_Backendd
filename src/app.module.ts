@@ -16,6 +16,7 @@ import { InvestmentsModule } from './modules/investments/investments.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AllocationPlanModule } from './modules/monthly-allocations/monthly-allocations.module';
 import { HealthModule } from './modules/health/health.module';
+import { FinancialHealthModule } from './modules/financial-health/financial-health.module';
 import { CronModule } from './modules/cron/cron.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -25,7 +26,7 @@ import { GoalsModule } from './modules/goals/goals.module';
 import { CurrencyModule } from './modules/currency/currency.module';
 
 @Module({
-  imports: [PrismaModule,CronModule, HealthModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule, ProjectsModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule,
+  imports: [PrismaModule,CronModule, HealthModule, FinancialHealthModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule, ProjectsModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule,
     DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
     NotificationsModule, WorldModule, FriendsModule, GoalsModule, CurrencyModule, ScheduleModule.forRoot()],
 })
