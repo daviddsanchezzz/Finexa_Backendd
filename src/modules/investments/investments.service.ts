@@ -42,8 +42,8 @@ type Tx = Prisma.TransactionClient;
  * If you keep a different enum, you must map values consistently (do NOT rely on `as any` long-term).
  */
 
-// Origen por defecto de una valoración: la crea una persona desde la app. Los procesos externos
-// (/cron/valuations/upsert) y los crons del servidor indican el suyo explícitamente.
+// Origen por defecto de una valoración: la crea una persona desde la app. Los crons del servidor
+// (EODHD, Kraken) y las importaciones indican el suyo explícitamente.
 export const MANUAL_SOURCE = 'Manual';
 
 @Injectable()
