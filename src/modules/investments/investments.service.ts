@@ -42,6 +42,10 @@ type Tx = Prisma.TransactionClient;
  * If you keep a different enum, you must map values consistently (do NOT rely on `as any` long-term).
  */
 
+// Origen por defecto de una valoración: la crea una persona desde la app. Los procesos externos
+// (/cron/valuations/upsert) y los crons del servidor indican el suyo explícitamente.
+export const MANUAL_SOURCE = 'Manual';
+
 @Injectable()
 export class InvestmentsService {
   constructor(private prisma: PrismaService, private currency: CurrencyService) {}
@@ -539,7 +543,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       currency: dto.currency,
       unitPrice: dto.unitPrice ?? null,
       quantity: dto.quantity ?? null,
-      source: dto.source ?? 'cron',
+      source: dto.source ?? MANUAL_SOURCE,
       active: true,
     },
     create: {
@@ -550,7 +554,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       currency: dto.currency,
       unitPrice: dto.unitPrice ?? null,
       quantity: dto.quantity ?? null,
-      source: dto.source ?? 'cron',
+      source: dto.source ?? MANUAL_SOURCE,
       active: true,
     },
   });
