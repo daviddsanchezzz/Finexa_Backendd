@@ -550,3 +550,14 @@ describe('palancas', () => {
     expect(() => simulate(base(), { extraMonthlySavings: 100 })).not.toThrow();
   });
 });
+
+describe('formato de números en los textos', () => {
+  it('usa punto de miles también con 4 cifras y coma decimal', () => {
+    const months = SIX.map((m) => ({ ...m, investmentContribution: 1040 }));
+    expect(contributionsMetric(months).summary).toContain('1.040 €');
+    const rich = computeHealth(base({ liquid: 123456, profile: { incomeType: 'salaried' } })).insights.find((i) => i.id === 'liquidity_surplus')!;
+    expect(rich.body).toMatch(/123\.456 €/);
+    expect(runwayMetric(base({ liquid: 3300, profile: { emergencyMonthsTarget: 6 } })).summary).toContain('3 de los 6 meses');
+    expect(runwayMetric(base()).summary).toContain('18,2 meses'); // 20.000 / 1.100 = 18,18
+  });
+});

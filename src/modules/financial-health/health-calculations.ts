@@ -230,9 +230,17 @@ const stdev = (xs: number[]) => {
   const m = mean(xs);
   return Math.sqrt(sum(xs.map((x) => (x - m) ** 2)) / xs.length);
 };
-const eur = (n: number) => `${Math.round(n).toLocaleString('es-ES')} €`;
-const pct = (n: number, d = 0) => `${round(n * 100, d).toLocaleString('es-ES')} %`;
-const num = (n: number, d = 1) => round(n, d).toLocaleString('es-ES');
+// Formato determinista (no depende de Intl/ICU del servidor): punto de miles
+// siempre, también en 4 cifras (es-ES lo omite), igual que formatEuro del frontend.
+const group = (digits: string) => digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+const fmtNumber = (n: number, decimals: number) => {
+  const fixed = Math.abs(n).toFixed(decimals).replace(/\.?0+$/, decimals > 0 ? '' : '$&');
+  const [int, dec] = fixed.split('.');
+  return `${n < 0 && Number(fixed) !== 0 ? '-' : ''}${group(int)}${dec ? `,${dec}` : ''}`;
+};
+const eur = (n: number) => `${fmtNumber(n, 0)} €`;
+const pct = (n: number, d = 0) => `${fmtNumber(n * 100, d)} %`;
+const num = (n: number, d = 1) => fmtNumber(n, d);
 
 const MONTHS_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const monthLabel = (key: string) => {
