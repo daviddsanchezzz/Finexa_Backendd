@@ -10,6 +10,8 @@ import { FundMetadataResolverService } from './fund-metadata-resolver.service';
 import { CurrencyModule } from '../currency/currency.module';
 import { EodhdFundPriceService } from './eodhd-fund-price.service';
 import { FundPricesScheduler } from './fund-prices.scheduler';
+import { KrakenPriceService } from './kraken-price.service';
+import { CryptoPricesScheduler } from './crypto-prices.scheduler';
 
 @Module({
   imports: [CurrencyModule],
@@ -24,6 +26,8 @@ import { FundPricesScheduler } from './fund-prices.scheduler';
     InvestmentExposureService,
     EodhdFundPriceService,
     FundPricesScheduler,
+    KrakenPriceService,
+    CryptoPricesScheduler,
   ],
   exports: [InvestmentsService, InvestmentExposureService],
 })
