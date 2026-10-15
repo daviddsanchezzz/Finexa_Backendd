@@ -161,6 +161,16 @@ export class TripsService {
   ) {}
 
   // A trip is accessible to its creator and to any accepted TripMember.
+  /** Nombre y fechas del viaje para dar contexto a la IA (comprueba el acceso del usuario). */
+  async getExtractionContext(userId: number, tripId: number) {
+    const trip = await this.prisma.trip.findFirst({
+      where: { id: tripId, ...this.tripAccessFilter(userId) },
+      select: { name: true, startDate: true, endDate: true },
+    });
+    if (!trip) throw new NotFoundException("Trip not found");
+    return trip;
+  }
+
   private tripAccessFilter(userId: number) {
     return { OR: [{ userId }, { members: { some: { userId, status: "accepted" as const } } }] };
   }

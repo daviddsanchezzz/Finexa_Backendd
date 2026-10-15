@@ -11,7 +11,12 @@ import {
   ParseIntPipe,
   Query,
   HttpCode,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { memoryStorage } from "multer";
+import { BookingExtractService, MAX_FILE_BYTES } from "./ai-extract/booking-extract.service";
 import { User } from "src/common/decorators/user.decorator";
 import { TripsService } from "./trips.service";
 import { CreateTripDto, UpdateTripDto } from "./dto/create-trip.dto";
@@ -29,7 +34,8 @@ import { CreateTripChecklistItemDto, UpdateTripChecklistItemDto, SeedTripCheckli
 export class TripsController {
   constructor(
     private readonly tripsService: TripsService,
-    private readonly aerodatabox: AerodataboxService
+    private readonly aerodatabox: AerodataboxService,
+    private readonly bookingExtract: BookingExtractService
   ) {}
 
   @Post()
@@ -93,6 +99,20 @@ async autofillFlight(
     body,
   );
 }
+
+  /** Lee una reserva (captura, PDF o texto) con IA y devuelve un borrador para revisar; no guarda nada. */
+  @Post(":tripId/extract-booking")
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor("file", { storage: memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } }))
+  async extractBooking(
+    @User("id") userId: number,
+    @Param("tripId", ParseIntPipe) tripId: number,
+    @UploadedFile() file?: Express.Multer.File,
+    @Body("text") text?: string
+  ) {
+    const trip = await this.tripsService.getExtractionContext(userId, tripId);
+    return this.bookingExtract.extract(userId, { file: file ? { buffer: file.buffer, mimetype: file.mimetype } : undefined, text }, trip);
+  }
 
   @Post(":id/plan-items")
   addPlanItem(
