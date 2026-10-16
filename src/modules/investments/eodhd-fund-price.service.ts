@@ -19,19 +19,32 @@ const DATE_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
  * válida (fecha y close > 0): nunca devuelve un valor a medias.
  */
 export function parseEodhdEod(rows: unknown, isin: string, currency: string): FundPrice {
+  const all = parseEodhdEodAll(rows, isin, currency);
+  return all[all.length - 1];
+}
+
+/**
+ * Todas las filas válidas (fecha y close > 0) ordenadas de más antigua a más
+ * reciente, sin fechas repetidas. Lanza si no hay ninguna.
+ */
+export function parseEodhdEodAll(rows: unknown, isin: string, currency: string): FundPrice[] {
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('EODHD sin datos');
 
-  let best: { date: string; close: number } | null = null;
+  const byDate = new Map<string, number>();
   for (const r of rows) {
     const date = typeof r?.date === 'string' ? r.date : '';
     const close = Number(r?.close);
     if (!DATE_REGEX.test(date) || !Number.isFinite(close) || close <= 0) continue;
-    if (!best || date > best.date) best = { date, close };
+    byDate.set(date, close);
   }
-  if (!best) throw new Error('EODHD sin filas válidas');
+  if (!byDate.size) throw new Error('EODHD sin filas válidas');
 
-  const [, y, m, d] = best.date.match(DATE_REGEX)!;
-  return { isin, currency, price: best.close, navDate: new Date(Date.UTC(Number(y), Number(m) - 1, Number(d))) };
+  return [...byDate.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, close]) => {
+      const [, y, m, d] = date.match(DATE_REGEX)!;
+      return { isin, currency, price: close, navDate: new Date(Date.UTC(Number(y), Number(m) - 1, Number(d))) };
+    });
 }
 
 @Injectable()
@@ -43,6 +56,12 @@ export class EodhdFundPriceService {
   }
 
   async fetchFundPrice(isin: string, currency: string): Promise<FundPrice> {
+    const all = await this.fetchFundPrices(isin, currency);
+    return all[all.length - 1];
+  }
+
+  /** Los NAV de los últimos 14 días en una sola llamada (una sola consulta del límite diario). */
+  async fetchFundPrices(isin: string, currency: string): Promise<FundPrice[]> {
     const token = process.env.EODHD_API_KEY;
     if (!token) throw new Error('EODHD_API_KEY is not configured');
     if (!ISIN_REGEX.test(isin)) throw new Error(`Invalid ISIN: ${isin}`);
@@ -60,8 +79,9 @@ export class EodhdFundPriceService {
       throw new Error(`EODHD HTTP ${e?.response?.status ?? 'error'} (${e?.code ?? 'sin código'})`);
     }
 
-    const parsed = parseEodhdEod(data, isin, currency);
-    this.logger.log(`EODHD ${isin} = ${parsed.price} (${parsed.navDate.toISOString().slice(0, 10)})`);
+    const parsed = parseEodhdEodAll(data, isin, currency);
+    const last = parsed[parsed.length - 1];
+    this.logger.log(`EODHD ${isin} = ${last.price} (${last.navDate.toISOString().slice(0, 10)})`);
     return parsed;
   }
 }

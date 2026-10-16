@@ -52,7 +52,7 @@ export class FundPricesScheduler {
     });
 
     // Un fetch por (ISIN, divisa), aunque varios usuarios tengan el mismo fondo.
-    const prices = new Map<string, FundPrice | null>();
+    const prices = new Map<string, FundPrice[] | null>();
     for (const a of assets) {
       const isin = a.identificator!.trim().toUpperCase();
       const key = `${isin}:${a.currency}`;
@@ -63,12 +63,12 @@ export class FundPricesScheduler {
         continue;
       }
       try {
-        const p = await this.eodhd.fetchFundPrice(isin, a.currency);
-        const ageDays = (now.getTime() - p.navDate.getTime()) / 86_400_000;
-        if (p.navDate.getTime() > now.getTime() || ageDays > MAX_NAV_AGE_DAYS) {
-          throw new Error(`NAV date ${p.navDate.toISOString().slice(0, 10)} fuera de rango`);
-        }
-        prices.set(key, p);
+        // Solo filas con fecha razonable; el NAV más reciente debe estar en rango o el fondo falla entero.
+        const rows = (await this.eodhd.fetchFundPrices(isin, a.currency)).filter(
+          (r) => r.navDate.getTime() <= now.getTime() && (now.getTime() - r.navDate.getTime()) / 86_400_000 <= MAX_NAV_AGE_DAYS,
+        );
+        if (!rows.length) throw new Error('NAV fuera de rango (futuro o de hace más de 7 días)');
+        prices.set(key, rows);
       } catch (e: any) {
         this.logger.warn(`EODHD ${key} falló, no se actualiza: ${e?.message ?? e}`);
         prices.set(key, null);
@@ -81,34 +81,49 @@ export class FundPricesScheduler {
 
     for (const a of assets) {
       const isin = a.identificator!.trim().toUpperCase();
-      const p = prices.get(`${isin}:${a.currency}`);
-      if (!p) continue;
+      const rows = prices.get(`${isin}:${a.currency}`);
+      if (!rows?.length) continue;
 
       try {
-        const existing = await this.prisma.investmentValuationSnapshot.findUnique({
-          where: { userId_assetId_date: { userId: a.userId, assetId: a.id, date: p.navDate } },
-          select: { source: true },
+        // Última valoración que ya tiene el activo (de cualquier origen).
+        const latest = await this.prisma.investmentValuationSnapshot.findFirst({
+          where: { userId: a.userId, assetId: a.id },
+          orderBy: { date: 'desc' },
+          select: { date: true },
         });
-        if (existing && !OVERWRITABLE_SOURCES.includes(existing.source)) {
-          this.logger.log(`Asset ${a.id} ${p.navDate.toISOString().slice(0, 10)}: ya hay snapshot "${existing.source}", se respeta`);
-          continue;
-        }
+        const newest = rows[rows.length - 1];
+        // El NAV más reciente se trata como siempre (puede refrescar uno de cron/eodhd de esa fecha).
+        // Los anteriores solo rellenan días POSTERIORES a la última valoración del activo:
+        // si un fondo publica tarde y el NAV salta dos días, no se pierde el del medio.
+        // Nunca tocan fechas ya existentes ni el historial anterior (la cantidad actual no vale para él).
+        const toWrite = rows.filter((r) => r === newest || (latest != null && r.navDate.getTime() > latest.date.getTime()));
 
-        const unitPrice = new Prisma.Decimal(p.price);
-        const quantity = new Prisma.Decimal(a.quantity as Prisma.Decimal.Value);
-        await this.prisma.$transaction((tx) =>
-          this.investments.upsertValuationSnapshotTx(tx, a.userId, {
-            assetId: a.id,
-            date: p.navDate,
-            value: unitPrice.mul(quantity),
-            currency: a.currency,
-            unitPrice,
-            quantity,
-            source: 'eodhd',
-          }),
-        );
-        affectedUsers.add(a.userId);
-        written++;
+        for (const p of toWrite) {
+          const existing = await this.prisma.investmentValuationSnapshot.findUnique({
+            where: { userId_assetId_date: { userId: a.userId, assetId: a.id, date: p.navDate } },
+            select: { source: true },
+          });
+          if (existing && !OVERWRITABLE_SOURCES.includes(existing.source)) {
+            this.logger.log(`Asset ${a.id} ${p.navDate.toISOString().slice(0, 10)}: ya hay snapshot "${existing.source}", se respeta`);
+            continue;
+          }
+
+          const unitPrice = new Prisma.Decimal(p.price);
+          const quantity = new Prisma.Decimal(a.quantity as Prisma.Decimal.Value);
+          await this.prisma.$transaction((tx) =>
+            this.investments.upsertValuationSnapshotTx(tx, a.userId, {
+              assetId: a.id,
+              date: p.navDate,
+              value: unitPrice.mul(quantity),
+              currency: a.currency,
+              unitPrice,
+              quantity,
+              source: 'eodhd',
+            }),
+          );
+          affectedUsers.add(a.userId);
+          written++;
+        }
       } catch (e: any) {
         this.logger.error(`Asset ${a.id} "${a.name}": error guardando snapshot: ${e?.message ?? e}`);
       }
