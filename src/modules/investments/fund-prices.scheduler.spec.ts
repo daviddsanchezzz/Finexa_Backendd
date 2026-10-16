@@ -9,18 +9,22 @@ function setup(opts: {
   fetch: jest.Mock;
   configured?: boolean;
   existing?: { source: string } | null;
+  latest?: Date | null; // fecha de la última valoración que ya tiene el activo
 }) {
   const upsert = jest.fn().mockResolvedValue({});
   const prisma: any = {
     investmentAsset: { findMany: jest.fn().mockResolvedValue(opts.assets) },
-    investmentValuationSnapshot: { findUnique: jest.fn().mockResolvedValue(opts.existing ?? null) },
+    investmentValuationSnapshot: {
+      findUnique: jest.fn().mockResolvedValue(opts.existing ?? null),
+      findFirst: jest.fn().mockResolvedValue(opts.latest ? { date: opts.latest } : null),
+    },
     $transaction: jest.fn((fn: any) => fn({})),
   };
   const investments: any = {
     upsertValuationSnapshotTx: upsert,
     recalcInvestmentWalletBalance: jest.fn().mockResolvedValue(undefined),
   };
-  const eodhd: any = { fetchFundPrice: opts.fetch, isConfigured: () => opts.configured ?? true };
+  const eodhd: any = { fetchFundPrices: opts.fetch, isConfigured: () => opts.configured ?? true };
   const sched = new FundPricesScheduler(prisma, investments, eodhd);
   return { sched, upsert, investments };
 }
@@ -35,7 +39,9 @@ const asset = (over: Partial<any> = {}) => ({
   ...over,
 });
 
-const ok = (price = 314.4983, navDate = NAV) => jest.fn().mockResolvedValue({ isin: 'IE0031786696', currency: 'EUR', price, navDate });
+const row = (price: number, navDate: Date) => ({ isin: 'IE0031786696', currency: 'EUR', price, navDate });
+const ok = (price = 314.4983, navDate = NAV) => jest.fn().mockResolvedValue([row(price, navDate)]);
+const day = (d: number) => new Date(Date.UTC(2026, 9, d));
 
 describe('FundPricesScheduler.syncFundPrices', () => {
   beforeEach(() => jest.spyOn(global, 'setTimeout').mockImplementation(((fn: any) => { fn(); return 0 as any; }) as any));
@@ -104,6 +110,38 @@ describe('FundPricesScheduler.syncFundPrices', () => {
     expect((await sched.syncFundPrices(NOW)).written).toBe(2);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(upsert).toHaveBeenCalledTimes(2);
+  });
+
+  describe('rellenar días que faltan', () => {
+    it('si el NAV salta dos días, guarda también el del medio (posterior a la última valoración)', async () => {
+      // Última valoración: 14. EODHD devuelve 14, 15 y 16.
+      const fetch = jest.fn().mockResolvedValue([row(64.19, day(14)), row(63.5, day(15)), row(62.9, day(16))]);
+      const { sched, upsert } = setup({ assets: [asset()], fetch, latest: day(14) });
+      expect((await sched.syncFundPrices(new Date(Date.UTC(2026, 9, 17, 8)))).written).toBe(2);
+      expect(upsert.mock.calls.map((c) => c[2].date)).toEqual([day(15), day(16)]);
+    });
+
+    it('no toca el historial anterior ni la fecha de la última valoración', async () => {
+      const fetch = jest.fn().mockResolvedValue([row(1, day(9)), row(2, day(12)), row(3, day(14)), row(4, day(15))]);
+      const { sched, upsert } = setup({ assets: [asset()], fetch, latest: day(14) });
+      await sched.syncFundPrices(NOW);
+      // 15 es el más reciente (se escribe); 14 es la última valoración (no es posterior); 9 y 12 son historial.
+      expect(upsert.mock.calls.map((c) => c[2].date)).toEqual([day(15)]);
+    });
+
+    it('un activo sin ninguna valoración solo recibe el NAV más reciente (no se inventa historial)', async () => {
+      const fetch = jest.fn().mockResolvedValue([row(1, day(12)), row(2, day(13)), row(3, day(14))]);
+      const { sched, upsert } = setup({ assets: [asset()], fetch, latest: null });
+      expect((await sched.syncFundPrices(NOW)).written).toBe(1);
+      expect(upsert.mock.calls[0][2].date).toEqual(day(14));
+    });
+
+    it('respeta un snapshot manual en un día intermedio', async () => {
+      const fetch = jest.fn().mockResolvedValue([row(1, day(14)), row(2, day(15)), row(3, day(16))]);
+      const { sched, upsert } = setup({ assets: [asset()], fetch, latest: day(14), existing: { source: 'Manual' } });
+      expect((await sched.syncFundPrices(new Date(Date.UTC(2026, 9, 17, 8)))).written).toBe(0);
+      expect(upsert).not.toHaveBeenCalled();
+    });
   });
 
   describe('scheduledSync', () => {
