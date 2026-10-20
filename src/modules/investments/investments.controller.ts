@@ -122,6 +122,12 @@ listOperations(
     return this.investmentsService.getAsset(userId, id);
   }
 
+  // Resumen de un activo (también archivado): valor, aportado, resultado y rentabilidades.
+  @Get('assets/:id/summary')
+  getAssetSummary(@User('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.investmentsService.getAssetSummary(userId, id);
+  }
+
   @Patch('assets/:id')
   updateAsset(
     @User('id') userId: number,

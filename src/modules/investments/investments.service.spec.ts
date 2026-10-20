@@ -55,3 +55,39 @@ describe('Origen de las valoraciones', () => {
     expect((upsert.mock.calls[0][0] as any).create.source).toBe('cron');
   });
 });
+
+describe('getAssetSummary (activo vendido y archivado)', () => {
+  const asset = { id: 4, name: 'Rock MyInvestor', abbreviation: null, identificator: null, description: null, type: 'fund', riskType: null, currency: 'EUR', quantity: 0, initialInvested: 917.8, createdAt: new Date('2025-12-13T00:00:00Z') };
+  const op = (id: number, date: string, amount: number) => ({ id, assetId: 4, type: 'sell', date: new Date(date), amount, fee: 0 });
+  const val = (id: number, date: string, value: number) => ({ id, assetId: 4, date: new Date(date), value });
+  const prisma = {
+    investmentAsset: { findFirst: jest.fn() },
+    investmentOperation: { findMany: jest.fn() },
+    investmentValuationSnapshot: { findMany: jest.fn() },
+  };
+  const service = new InvestmentsService(prisma as any, {} as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-20T10:00:00Z'));
+    prisma.investmentAsset.findFirst.mockResolvedValue(asset);
+    prisma.investmentOperation.findMany.mockResolvedValue([op(1, '2026-06-08T00:00:00Z', 400), op(2, '2026-06-09T00:00:00Z', 710.53)]);
+    prisma.investmentValuationSnapshot.findMany.mockResolvedValue([val(1, '2026-06-04T00:00:00Z', 1110.54), val(2, '2026-06-09T00:00:00Z', 0)]);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it('vale 0, con el capital aportado y el resultado de la venta; la fecha es la de la última valoración', async () => {
+    const r = await service.getAssetSummary(7, 4);
+    expect(r.currentValue).toBe(0);
+    expect(r.totalContributed).toBeCloseTo(917.8, 6);
+    expect(r.totalWithdrawn).toBeCloseTo(1110.53, 6);
+    expect(r.pnl).toBeCloseTo(192.73, 6); // 0 + 1110,53 vendido - 917,80 aportado... visto como valor - aportado neto
+    expect(String(r.lastValuationDate?.toISOString().slice(0, 10))).toBe('2026-06-09');
+    expect(r.dayReturnPct).toBeNull(); // sin valoración de hoy/ayer
+  });
+
+  it('un activo que no es del usuario da 404', async () => {
+    prisma.investmentAsset.findFirst.mockResolvedValue(null);
+    await expect(service.getAssetSummary(7, 99)).rejects.toThrow(/not found/i);
+  });
+});
