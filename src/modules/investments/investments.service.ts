@@ -222,7 +222,7 @@ private async adjustAssetQuantityTx(
   private async getPortfolioPerformanceData(userId: number, asOf: Date) {
     const assets = await this.prisma.investmentAsset.findMany({
       where: { userId, active: true, archived: false },
-      select: { id: true, createdAt: true, initialInvested: true },
+      select: { id: true, createdAt: true, initialInvested: true, currency: true },
     });
     const assetIds = assets.map((asset) => asset.id);
 
@@ -261,13 +261,40 @@ private async adjustAssetQuantityTx(
         ...valuation,
         value: Number(valuation.value || 0),
       }));
+    const native = buildPortfolioPerformanceSeries({
+      assets: normalizedAssets,
+      operations: normalizedOperations,
+      valuations: normalizedValuations,
+      asOf,
+    });
+
+    // Activos en otra moneda: la serie de la cartera (equity, aportaciones, resultado) se calcula con
+    // todo convertido a la moneda base con el tipo ACTUAL. assetValues y inputs siguen en la moneda
+    // de cada activo (las rentabilidades por activo se muestran en su propia moneda).
+    const baseCurrency = (await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } }))?.currency ?? 'EUR';
+    const rates = new Map<number, number>();
+    for (const asset of assets) {
+      const cur = String(asset.currency || baseCurrency).toUpperCase();
+      if (cur === baseCurrency) continue;
+      try {
+        rates.set(asset.id, (await this.currency.getCurrentRate(cur, baseCurrency)).toNumber());
+      } catch {
+        /* sin tipo de cambio: ese activo se suma sin convertir */
+      }
+    }
+    const rateOf = (assetId: number) => rates.get(assetId) ?? 1;
+    const points = rates.size
+      ? buildPortfolioPerformanceSeries({
+          assets: normalizedAssets.map((a) => ({ ...a, initialInvested: a.initialInvested * rateOf(a.id) })),
+          operations: normalizedOperations.map((o) => ({ ...o, amount: o.amount * rateOf(o.assetId), fee: o.fee * rateOf(o.assetId) })),
+          valuations: normalizedValuations.map((v) => ({ ...v, value: v.value * rateOf(v.assetId) })),
+          asOf,
+        }).points
+      : native.points;
+
     return {
-      ...buildPortfolioPerformanceSeries({
-        assets: normalizedAssets,
-        operations: normalizedOperations,
-        valuations: normalizedValuations,
-        asOf,
-      }),
+      ...native,
+      points,
       // Entradas ya normalizadas: getSummary las reutiliza para las rentabilidades por activo.
       inputs: { assets: normalizedAssets, operations: normalizedOperations, valuations: normalizedValuations },
     };
@@ -1030,10 +1057,7 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
     const totalNetContributed = totalContributed - totalWithdrawn;
 
     const lastPerformancePoint = performance.points.at(-1);
-    // Con activos en una sola moneda coincide con el último punto de rentabilidad; con varias, se consolida.
-    const totalCurrentValue = perAsset.some((x) => x.currency !== baseCurrency)
-      ? perAsset.reduce((acc, x) => acc + x.currentValueBase, 0)
-      : lastPerformancePoint?.equity ?? 0;
+        const totalCurrentValue = lastPerformancePoint?.equity ?? 0;
     const totalPnL = totalCurrentValue - totalNetContributed;
 
     return {
