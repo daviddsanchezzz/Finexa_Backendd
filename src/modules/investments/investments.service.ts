@@ -817,6 +817,103 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
   // =============================
   // Summary (cash flows vs book allocation)
   // =============================
+  /** Fila de resumen de un activo (la misma forma en /summary y en /assets/:id/summary). */
+  private buildSummaryRow(
+    a: {
+      id: number; name: string; abbreviation?: string | null; identificator?: string | null; description?: string | null;
+      type: any; riskType?: any; currency: string; quantity?: any; initialInvested?: any;
+    },
+    aAgg: { cashIn: number; cashOut: number },
+    currentValue: number,
+    lastValuationDate: Date | null,
+    periods: ReturnType<typeof calculateAssetPeriodReturns> extends Map<number, infer V> ? V | undefined : never,
+  ) {
+    const initial = Number(a.initialInvested ?? 0);
+
+    const totalContributed = initial + aAgg.cashIn; // true cash contributed
+    const totalWithdrawn = aAgg.cashOut;            // true cash withdrawn
+    const netContributed = totalContributed - totalWithdrawn;
+    const pnl = currentValue - netContributed; // PnL vs true net cash contributed
+
+    return {
+      id: a.id,
+      name: a.name,
+      abbreviation: a.abbreviation ?? null,
+      identificator: a.identificator ?? null,
+      description: a.description,
+      type: a.type,
+      riskType: a.riskType,
+      currency: a.currency,
+      quantity: Number(a.quantity ?? 0),
+
+      totalContributed,
+      totalWithdrawn,
+      netContributed,
+
+      invested: netContributed, // kept for backward compatibility: "true invested"
+      currentValue,
+      pnl,
+      returnPct: netContributed > 1e-9 ? pnl / netContributed : null,
+      // Rentabilidad del mes natural en curso y del año en curso (sin contar aportaciones/retiradas).
+      monthReturnPct: periods?.month.returnPct ?? null,
+      monthProfit: periods?.month.profit ?? 0,
+      ytdReturnPct: periods?.ytd.returnPct ?? null,
+      ytdProfit: periods?.ytd.profit ?? 0,
+      // Último día valorado (hoy o ayer); null si no hay dato reciente o no hay cierre previo.
+      dayReturnPct: periods?.day?.returnPct ?? null,
+      dayProfit: periods?.day?.profit ?? null,
+      lastValuationDate,
+    };
+  }
+
+  /**
+   * Resumen de UN activo, también si está archivado (/summary solo recoge los activos vivos). Es lo que
+   * necesita la pantalla de detalle: un activo vendido y archivado debe verse a 0 con su resultado, no
+   * con el capital inicial y la fecha de hoy.
+   */
+  async getAssetSummary(userId: number, assetId: number) {
+    const asset = await this.prisma.investmentAsset.findFirst({
+      where: { id: assetId, userId },
+      select: {
+        id: true, name: true, abbreviation: true, identificator: true, description: true, type: true,
+        riskType: true, currency: true, quantity: true, initialInvested: true, createdAt: true,
+      },
+    });
+    if (!asset) throw new NotFoundException('Investment asset not found');
+
+    const asOf = new Date();
+    const [operations, valuations] = await Promise.all([
+      this.prisma.investmentOperation.findMany({
+        where: { userId, assetId, active: true, date: { lte: asOf } },
+        select: { id: true, assetId: true, type: true, date: true, amount: true, fee: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.investmentValuationSnapshot.findMany({
+        where: { userId, assetId, active: true, date: { lte: asOf } },
+        select: { id: true, assetId: true, date: true, value: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+
+    const inputs = {
+      assets: [{ id: asset.id, createdAt: asset.createdAt, initialInvested: Number(asset.initialInvested || 0) }],
+      operations: operations.map((o) => ({ ...o, type: String(o.type), amount: Number(o.amount || 0), fee: Number(o.fee || 0) })),
+      valuations: valuations.map((v) => ({ ...v, value: Number(v.value || 0) })),
+    };
+    const performance = buildPortfolioPerformanceSeries({ ...inputs, asOf });
+    const periods = calculateAssetPeriodReturns({ ...inputs, asOf }).get(asset.id);
+
+    const agg = { cashIn: 0, cashOut: 0 };
+    for (const o of inputs.operations) {
+      const flow = externalFlowForOperation(o);
+      if (flow > 0) agg.cashIn += flow;
+      else if (flow < 0) agg.cashOut += Math.abs(flow);
+    }
+    const lastValuation = valuations.reduce<Date | null>((best, v) => (!best || v.date > best ? v.date : best), null);
+
+    return this.buildSummaryRow(asset, agg, performance.assetValues.get(asset.id) ?? 0, lastValuation, periods);
+  }
+
   async getSummary(userId: number) {
     const asOf = new Date();
     const assets = await this.prisma.investmentAsset.findMany({
@@ -901,49 +998,15 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
 
     const periodReturns = calculateAssetPeriodReturns({ ...performance.inputs, asOf });
 
-    const perAsset = assets.map((a) => {
-      const aAgg = agg.get(a.id) ?? { cashIn: 0, cashOut: 0 };
-
-      const initial = Number(a.initialInvested ?? 0);
-
-      const totalContributed = initial + aAgg.cashIn; // true cash contributed
-      const totalWithdrawn = aAgg.cashOut;            // true cash withdrawn
-      const netContributed = totalContributed - totalWithdrawn;
-
-      const snap = snapshotMap.get(a.id);
-      const currentValue = performance.assetValues.get(a.id) ?? 0;
-      const pnl = currentValue - netContributed; // PnL vs true net cash contributed
-
-      return {
-        id: a.id,
-        name: a.name,
-        abbreviation: (a as any).abbreviation ?? null,
-        identificator: (a as any).identificator ?? null,
-        description: a.description,
-        type: a.type,
-        riskType: (a as any).riskType,
-        currency: a.currency,
-        quantity: Number((a as any).quantity ?? 0),
-
-        totalContributed,
-        totalWithdrawn,
-        netContributed,
-
-        invested: netContributed, // kept for backward compatibility: "true invested"
-        currentValue,
-        pnl,
-        returnPct: netContributed > 1e-9 ? pnl / netContributed : null,
-        // Rentabilidad del mes natural en curso y del año en curso (sin contar aportaciones/retiradas).
-        monthReturnPct: periodReturns.get(a.id)?.month.returnPct ?? null,
-        monthProfit: periodReturns.get(a.id)?.month.profit ?? 0,
-        ytdReturnPct: periodReturns.get(a.id)?.ytd.returnPct ?? null,
-        ytdProfit: periodReturns.get(a.id)?.ytd.profit ?? 0,
-        // Último día valorado (hoy o ayer); null si no hay dato reciente o no hay cierre previo.
-        dayReturnPct: periodReturns.get(a.id)?.day?.returnPct ?? null,
-        dayProfit: periodReturns.get(a.id)?.day?.profit ?? null,
-        lastValuationDate: snap?.date ?? null,
-      };
-    });
+    const perAsset = assets.map((a) =>
+      this.buildSummaryRow(
+        a,
+        agg.get(a.id) ?? { cashIn: 0, cashOut: 0 },
+        performance.assetValues.get(a.id) ?? 0,
+        snapshotMap.get(a.id)?.date ?? null,
+        periodReturns.get(a.id),
+      ),
+    );
 
     // Los activos pueden estar en monedas distintas (p.ej. AAPL en USD). Se
     // consolidan a la moneda base del usuario con el tipo ACTUAL — igual que
