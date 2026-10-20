@@ -316,3 +316,61 @@ describe('calculateAssetPeriodReturns', () => {
     expect(r.get(2)!.month.returnPct).toBeCloseTo(0.1, 6); // 50 / 500
   });
 });
+
+describe('calculateAssetPeriodReturns · día', () => {
+  const base = { assets: [asset(1, 1000, '2026-01-01T00:00:00.000Z')], operations: [] as PerformanceOperation[] };
+
+  it('variación entre la última valoración (ayer) y la anterior', () => {
+    const r = calculateAssetPeriodReturns({
+      ...base,
+      valuations: [valuation(1, '2026-10-14T00:00:00.000Z', 1200), valuation(2, '2026-10-15T00:00:00.000Z', 1212)],
+      asOf: d('2026-10-16T09:00:00.000Z'),
+    }).get(1)!;
+    expect(r.day).not.toBeNull();
+    expect(r.day!.profit).toBeCloseTo(12, 6);
+    expect(r.day!.returnPct).toBeCloseTo(12 / 1000, 6); // sobre el coste aportado, como mes y año
+  });
+
+  it('también vale si la última valoración es de hoy', () => {
+    const r = calculateAssetPeriodReturns({
+      ...base,
+      valuations: [valuation(1, '2026-10-15T00:00:00.000Z', 1200), valuation(2, '2026-10-16T00:00:00.000Z', 1188)],
+      asOf: d('2026-10-16T09:00:00.000Z'),
+    }).get(1)!;
+    expect(r.day!.profit).toBeCloseTo(-12, 6);
+  });
+
+  it('null si la última valoración tiene dos días o más', () => {
+    const r = calculateAssetPeriodReturns({
+      ...base,
+      valuations: [valuation(1, '2026-10-13T00:00:00.000Z', 1200), valuation(2, '2026-10-14T00:00:00.000Z', 1212)],
+      asOf: d('2026-10-16T09:00:00.000Z'),
+    }).get(1)!;
+    expect(r.day).toBeNull();
+  });
+
+  it('null si no hay cierre previo con el que comparar', () => {
+    const r = calculateAssetPeriodReturns({
+      assets: [asset(1, 0, '2026-10-15T00:00:00.000Z')],
+      operations: [],
+      valuations: [valuation(1, '2026-10-15T12:00:00.000Z', 500)],
+      asOf: d('2026-10-16T09:00:00.000Z'),
+    }).get(1)!;
+    expect(r.day).toBeNull();
+  });
+
+  it('una aportación del propio día no cuenta como ganancia', () => {
+    const r = calculateAssetPeriodReturns({
+      ...base,
+      operations: [operation(1, 'buy', '2026-10-15T08:00:00.000Z', 200)],
+      valuations: [valuation(1, '2026-10-14T00:00:00.000Z', 1200), valuation(2, '2026-10-15T00:00:00.000Z', 1412)],
+      asOf: d('2026-10-16T09:00:00.000Z'),
+    }).get(1)!;
+    expect(r.day!.profit).toBeCloseTo(12, 6); // 1412 - 1200 - 200
+  });
+
+  it('sin valoraciones no hay dato del día', () => {
+    const r = calculateAssetPeriodReturns({ ...base, valuations: [], asOf: d('2026-10-16T09:00:00.000Z') }).get(1)!;
+    expect(r.day).toBeNull();
+  });
+});

@@ -938,6 +938,9 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
         monthProfit: periodReturns.get(a.id)?.month.profit ?? 0,
         ytdReturnPct: periodReturns.get(a.id)?.ytd.returnPct ?? null,
         ytdProfit: periodReturns.get(a.id)?.ytd.profit ?? 0,
+        // Último día valorado (hoy o ayer); null si no hay dato reciente o no hay cierre previo.
+        dayReturnPct: periodReturns.get(a.id)?.day?.returnPct ?? null,
+        dayProfit: periodReturns.get(a.id)?.day?.profit ?? null,
         lastValuationDate: snap?.date ?? null,
       };
     });
