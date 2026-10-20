@@ -998,7 +998,9 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
 
     const periodReturns = calculateAssetPeriodReturns({ ...performance.inputs, asOf });
 
-    const perAsset = assets.map((a) =>
+    const baseCurrency = (await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } }))?.currency ?? 'EUR';
+
+    const perAssetNative = assets.map((a) =>
       this.buildSummaryRow(
         a,
         agg.get(a.id) ?? { cashIn: 0, cashOut: 0 },
@@ -1008,19 +1010,30 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       ),
     );
 
+    // Valor de cada activo en la moneda base (tipo actual); el resto de campos sigue en la moneda del activo.
+    const perAsset = await Promise.all(
+      perAssetNative.map(async (row) => ({
+        ...row,
+        currentValueBase: await sumInBaseCurrency([{ value: row.currentValue, currency: row.currency }], baseCurrency, this.currency),
+      })),
+    );
+
+
     // Los activos pueden estar en monedas distintas (p.ej. AAPL en USD). Se
     // consolidan a la moneda base del usuario con el tipo ACTUAL — igual que
     // el saldo de una Wallet — sin tocar returnPct, que sigue calculándose
     // por activo sin conversión (ver limitación anotada en el plan:
     // totalCurrentValue, que sale de esa misma función, todavía no consolida
     // por moneda).
-    const baseCurrency = (await this.prisma.user.findUnique({ where: { id: userId }, select: { currency: true } }))?.currency ?? 'EUR';
     const totalContributed = await sumInBaseCurrency(perAsset.map((x) => ({ value: x.totalContributed, currency: x.currency })), baseCurrency, this.currency);
     const totalWithdrawn = await sumInBaseCurrency(perAsset.map((x) => ({ value: x.totalWithdrawn, currency: x.currency })), baseCurrency, this.currency);
     const totalNetContributed = totalContributed - totalWithdrawn;
 
     const lastPerformancePoint = performance.points.at(-1);
-    const totalCurrentValue = lastPerformancePoint?.equity ?? 0;
+    // Con activos en una sola moneda coincide con el último punto de rentabilidad; con varias, se consolida.
+    const totalCurrentValue = perAsset.some((x) => x.currency !== baseCurrency)
+      ? perAsset.reduce((acc, x) => acc + x.currentValueBase, 0)
+      : lastPerformancePoint?.equity ?? 0;
     const totalPnL = totalCurrentValue - totalNetContributed;
 
     return {
