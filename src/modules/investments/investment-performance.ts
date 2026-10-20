@@ -284,7 +284,15 @@ export function calculatePeriodPerformance(
 }
 
 export type AssetPeriodReturn = { returnPct: number | null; profit: number };
-export type AssetPeriodReturns = { month: AssetPeriodReturn; ytd: AssetPeriodReturn };
+export type AssetPeriodReturns = {
+  month: AssetPeriodReturn;
+  ytd: AssetPeriodReturn;
+  /**
+   * Variación del último día valorado (cierre de la última valoración frente al cierre anterior), solo si esa
+   * valoración es de hoy o de ayer y existe un cierre previo con el que comparar; si no, null.
+   */
+  day: AssetPeriodReturn | null;
+};
 
 /**
  * Rentabilidad de cada activo en el mes natural en curso y en lo que va de año
@@ -316,9 +324,26 @@ export function calculateAssetPeriodReturns(input: {
       valuations: input.valuations.filter((v) => v.assetId === asset.id),
       asOf: input.asOf,
     });
+    // Última fecha valorada de este activo (la que cuenta como "hoy" si es de hoy o ayer).
+    const lastValuation = input.valuations
+      .filter((v) => v.assetId === asset.id && v.date <= input.asOf)
+      .reduce<Date | null>((best, v) => (!best || v.date > best ? v.date : best), null);
+    let day: AssetPeriodReturn | null = null;
+    if (lastValuation) {
+      const lastDay = startOfUtcDay(lastValuation);
+      const ageDays = Math.round((asOfDay.getTime() - lastDay.getTime()) / 86_400_000);
+      const lastKey = toUtcDayKey(lastDay);
+      const hasPrevious = points.some((point) => point.date < lastKey);
+      if (ageDays >= 0 && ageDays <= 1 && hasPrevious) {
+        day = pick(calculatePeriodPerformance(points, lastDay, addUtcDays(lastDay, 1)));
+        if (day.returnPct == null) day = null;
+      }
+    }
+
     out.set(asset.id, {
       month: pick(calculatePeriodPerformance(points, monthStart, toExclusive)),
       ytd: pick(calculatePeriodPerformance(points, yearStart, toExclusive)),
+      day,
     });
   }
   return out;
