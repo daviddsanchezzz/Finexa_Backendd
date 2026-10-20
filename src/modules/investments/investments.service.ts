@@ -17,6 +17,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import {
   addUtcDays as addPerformanceUtcDays,
   buildPortfolioPerformanceSeries,
+  calculateAssetPeriodReturns,
   calculatePeriodPerformance,
   externalFlowForOperation,
   startOfUtcDay as startOfPerformanceUtcDay,
@@ -226,7 +227,10 @@ private async adjustAssetQuantityTx(
     const assetIds = assets.map((asset) => asset.id);
 
     if (!assetIds.length) {
-      return buildPortfolioPerformanceSeries({ assets: [], operations: [], valuations: [], asOf });
+      return {
+        ...buildPortfolioPerformanceSeries({ assets: [], operations: [], valuations: [], asOf }),
+        inputs: { assets: [], operations: [], valuations: [] },
+      };
     }
 
     const [operations, valuations] = await Promise.all([
@@ -257,12 +261,16 @@ private async adjustAssetQuantityTx(
         ...valuation,
         value: Number(valuation.value || 0),
       }));
-    return buildPortfolioPerformanceSeries({
-      assets: normalizedAssets,
-      operations: normalizedOperations,
-      valuations: normalizedValuations,
-      asOf,
-    });
+    return {
+      ...buildPortfolioPerformanceSeries({
+        assets: normalizedAssets,
+        operations: normalizedOperations,
+        valuations: normalizedValuations,
+        asOf,
+      }),
+      // Entradas ya normalizadas: getSummary las reutiliza para las rentabilidades por activo.
+      inputs: { assets: normalizedAssets, operations: normalizedOperations, valuations: normalizedValuations },
+    };
   }
 
   /**
@@ -891,6 +899,8 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
       if (!prev || s.date > prev.date) snapshotMap.set(s.assetId, { value: Number(s.value ?? 0), date: s.date, currency: s.currency });
     }
 
+    const periodReturns = calculateAssetPeriodReturns({ ...performance.inputs, asOf });
+
     const perAsset = assets.map((a) => {
       const aAgg = agg.get(a.id) ?? { cashIn: 0, cashOut: 0 };
 
@@ -923,6 +933,11 @@ async createValuationsBatch(userId: number, dto: CreateInvestmentValuationsBatch
         currentValue,
         pnl,
         returnPct: netContributed > 1e-9 ? pnl / netContributed : null,
+        // Rentabilidad del mes natural en curso y del año en curso (sin contar aportaciones/retiradas).
+        monthReturnPct: periodReturns.get(a.id)?.month.returnPct ?? null,
+        monthProfit: periodReturns.get(a.id)?.month.profit ?? 0,
+        ytdReturnPct: periodReturns.get(a.id)?.ytd.returnPct ?? null,
+        ytdProfit: periodReturns.get(a.id)?.ytd.profit ?? 0,
         lastValuationDate: snap?.date ?? null,
       };
     });

@@ -282,3 +282,44 @@ export function calculatePeriodPerformance(
     returnPct,
   };
 }
+
+export type AssetPeriodReturn = { returnPct: number | null; profit: number };
+export type AssetPeriodReturns = { month: AssetPeriodReturn; ytd: AssetPeriodReturn };
+
+/**
+ * Rentabilidad de cada activo en el mes natural en curso y en lo que va de año
+ * (hasta `asOf`), con el mismo criterio que la rentabilidad total y la pestaña
+ * "Rentabilidad" (calculatePeriodPerformance): las aportaciones y retiradas del
+ * periodo no cuentan como ganancia ni como pérdida. Cada activo se calcula por
+ * separado, así las operaciones de uno no afectan al otro.
+ */
+export function calculateAssetPeriodReturns(input: {
+  assets: PerformanceAsset[];
+  operations: PerformanceOperation[];
+  valuations: PerformanceValuation[];
+  asOf: Date;
+}): Map<number, AssetPeriodReturns> {
+  const asOfDay = startOfUtcDay(input.asOf);
+  const monthStart = new Date(Date.UTC(asOfDay.getUTCFullYear(), asOfDay.getUTCMonth(), 1));
+  const yearStart = new Date(Date.UTC(asOfDay.getUTCFullYear(), 0, 1));
+  const toExclusive = addUtcDays(asOfDay, 1);
+  const pick = (m: ReturnType<typeof calculatePeriodPerformance>): AssetPeriodReturn => ({
+    returnPct: m.returnPct,
+    profit: m.profit,
+  });
+
+  const out = new Map<number, AssetPeriodReturns>();
+  for (const asset of input.assets) {
+    const { points } = buildPortfolioPerformanceSeries({
+      assets: [asset],
+      operations: input.operations.filter((o) => o.assetId === asset.id),
+      valuations: input.valuations.filter((v) => v.assetId === asset.id),
+      asOf: input.asOf,
+    });
+    out.set(asset.id, {
+      month: pick(calculatePeriodPerformance(points, monthStart, toExclusive)),
+      ytd: pick(calculatePeriodPerformance(points, yearStart, toExclusive)),
+    });
+  }
+  return out;
+}
