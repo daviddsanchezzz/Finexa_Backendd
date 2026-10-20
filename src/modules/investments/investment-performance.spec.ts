@@ -1,5 +1,6 @@
 import {
   buildPortfolioPerformanceSeries,
+  calculateAssetPeriodReturns,
   calculatePeriodPerformance,
   externalFlowForOperation,
   type PerformanceAsset,
@@ -256,5 +257,62 @@ describe('investment performance', () => {
     const point = points.find((p) => p.date === '2025-01-05');
     expect(point?.netContributions).toBe(500);
     expect(point?.externalFlow).toBe(500);
+  });
+});
+
+describe('calculateAssetPeriodReturns', () => {
+  const ASOF = '2026-10-20T10:00:00.000Z';
+
+  it('mes y año en curso descuentan las aportaciones del periodo', () => {
+    const r = calculateAssetPeriodReturns({
+      assets: [asset(1, 1000, '2025-12-01T00:00:00.000Z')],
+      operations: [operation(1, 'buy', '2026-10-05T00:00:00.000Z', 200)],
+      valuations: [
+        valuation(1, '2025-12-31T00:00:00.000Z', 1100),
+        valuation(2, '2026-09-30T00:00:00.000Z', 1500),
+        valuation(3, '2026-10-10T00:00:00.000Z', 1760),
+      ],
+      asOf: d(ASOF),
+    }).get(1)!;
+    // Octubre: 1760 - 1500 - 200 de aportación = 60 sobre (1000 + 200) aportados.
+    expect(r.month.profit).toBeCloseTo(60, 6);
+    expect(r.month.returnPct).toBeCloseTo(60 / 1200, 6);
+    // Año: 1760 - 1100 - 200 = 460 sobre 1200.
+    expect(r.ytd.profit).toBeCloseTo(460, 6);
+    expect(r.ytd.returnPct).toBeCloseTo(460 / 1200, 6);
+  });
+
+  it('un activo sin movimientos este mes da 0 %, no un hueco', () => {
+    const r = calculateAssetPeriodReturns({
+      assets: [asset(1, 1000, '2026-01-01T00:00:00.000Z')],
+      operations: [],
+      valuations: [valuation(1, '2026-09-30T00:00:00.000Z', 1200)],
+      asOf: d(ASOF),
+    }).get(1)!;
+    expect(r.month.profit).toBe(0);
+    expect(r.month.returnPct).toBe(0);
+  });
+
+  it('sin datos ni aportaciones la rentabilidad es null (se muestra "—")', () => {
+    const r = calculateAssetPeriodReturns({ assets: [asset(1, 0)], operations: [], valuations: [], asOf: d(ASOF) }).get(1)!;
+    expect(r.month.returnPct).toBeNull();
+    expect(r.ytd.returnPct).toBeNull();
+  });
+
+  it('cada activo se calcula por separado', () => {
+    const r = calculateAssetPeriodReturns({
+      assets: [asset(1, 1000, '2026-01-01T00:00:00.000Z'), asset(2, 500, '2026-01-01T00:00:00.000Z')],
+      operations: [operation(1, 'buy', '2026-10-05T00:00:00.000Z', 1000, 1)],
+      valuations: [
+        valuation(1, '2026-09-30T00:00:00.000Z', 1000, 1),
+        valuation(2, '2026-10-15T00:00:00.000Z', 2100, 1),
+        valuation(3, '2026-09-30T00:00:00.000Z', 500, 2),
+        valuation(4, '2026-10-15T00:00:00.000Z', 550, 2),
+      ],
+      asOf: d(ASOF),
+    });
+    expect(r.get(1)!.month.profit).toBeCloseTo(100, 6); // 2100 - 1000 - 1000
+    expect(r.get(2)!.month.profit).toBeCloseTo(50, 6);
+    expect(r.get(2)!.month.returnPct).toBeCloseTo(0.1, 6); // 50 / 500
   });
 });
