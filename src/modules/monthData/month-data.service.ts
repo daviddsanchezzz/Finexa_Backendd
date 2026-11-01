@@ -230,17 +230,30 @@ async calculateFinalBalance(
   userId: number,
   end: Date,
 ): Promise<number> {
-  const res = await this.prisma.wallet.aggregate({
-    where: {
-      userId,
-      active: true,
-    },
-    _sum: {
-      balance: true,
-    },
+  const wallets = await this.prisma.wallet.aggregate({
+    where: { userId, active: true },
+    _sum: { balance: true },
   });
 
-  return res._sum.balance ?? 0;
+  // El saldo de las carteras es el de AHORA: el cron corre a las 05:00 del día 1, y todo lo que ya
+  // se ha apuntado desde las 00:00 (p. ej. una nómina a las 01:00) pertenece al mes siguiente.
+  // Se descuenta su efecto para que el cierre sea el saldo a final de mes. Las transferencias
+  // suman 0 en el total y las plantillas recurrentes no tocan saldos.
+  const afterEnd = (type: "income" | "expense") =>
+    this.prisma.transaction.aggregate({
+      where: {
+        userId,
+        active: true,
+        isRecurring: false,
+        type,
+        date: { gte: end },
+        wallet: { active: true },
+      },
+      _sum: { amount: true },
+    });
+  const [income, expense] = await Promise.all([afterEnd("income"), afterEnd("expense")]);
+
+  return (wallets._sum.balance ?? 0) - ((income._sum.amount ?? 0) - (expense._sum.amount ?? 0));
 }
 
 

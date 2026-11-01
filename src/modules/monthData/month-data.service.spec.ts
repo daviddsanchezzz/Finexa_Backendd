@@ -1,4 +1,4 @@
-import { monthRangeLocal } from './month-data.service';
+import { MonthDataService, monthRangeLocal } from './month-data.service';
 
 // Regresión real: una nómina programada para la 1 de la madrugada (hora de
 // Madrid) del día 1 de octubre quedó contabilizada como ingreso de
@@ -35,5 +35,30 @@ describe('monthRangeLocal', () => {
 
     expect(start.toISOString()).toBe('2026-12-31T23:00:00.000Z');
     expect(end.toISOString()).toBe('2027-01-31T23:00:00.000Z');
+  });
+});
+
+describe('MonthDataService.calculateFinalBalance', () => {
+  const build = (balance: number, income: number, expense: number) => {
+    const aggregate = jest.fn(({ where }: any) => ({ _sum: { amount: where.type === 'income' ? income : expense } }));
+    const prisma: any = {
+      wallet: { aggregate: jest.fn().mockResolvedValue({ _sum: { balance } }) },
+      transaction: { aggregate },
+    };
+    return { service: new MonthDataService(prisma), aggregate };
+  };
+
+  it('descuenta lo apuntado a partir del fin de mes (nómina de la 01:00 del día 1)', async () => {
+    const { service, aggregate } = build(31547.05, 1654.38, 43);
+    const { end } = monthRangeLocal(new Date(Date.UTC(2026, 9, 1)));
+
+    // 31.547,05 - (1.654,38 - 43,00) = 29.935,67
+    expect(await service.calculateFinalBalance(1, end)).toBeCloseTo(29935.67, 2);
+    expect(aggregate.mock.calls[0][0].where.date).toEqual({ gte: end });
+  });
+
+  it('sin movimientos posteriores devuelve el saldo tal cual', async () => {
+    const { service } = build(1000, 0, 0);
+    expect(await service.calculateFinalBalance(1, new Date())).toBe(1000);
   });
 });
