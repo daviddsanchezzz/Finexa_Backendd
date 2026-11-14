@@ -3,5 +3,5 @@ import { PrismaModule } from '../../common/prisma/prisma.module';
 import { GoalsController } from './goals.controller';
 import { GoalsService } from './goals.service';
 
-@Module({ imports: [PrismaModule], controllers: [GoalsController], providers: [GoalsService] })
+@Module({ imports: [PrismaModule], controllers: [GoalsController], providers: [GoalsService], exports: [GoalsService] })
 export class GoalsModule {}
