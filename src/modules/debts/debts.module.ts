@@ -7,5 +7,6 @@ import { DebtsController } from './debts.controller';
   imports: [PrismaModule],
   controllers: [DebtsController],
   providers: [DebtsService],
+  exports: [DebtsService],
 })
 export class DebtsModule {}

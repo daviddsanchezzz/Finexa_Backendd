@@ -8,5 +8,6 @@ import { CurrencyModule } from '../currency/currency.module';
   imports: [PrismaModule, CurrencyModule],
   controllers: [DashboardController],
   providers: [DashboardService],
+  exports: [DashboardService],
 })
 export class DashboardModule {}

@@ -9,6 +9,7 @@ import { CategoriesModule } from './modules/categories/categories.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { SubcategoriesModule } from './modules/categories/subcategories/subcategories.module';
 import { MonthDataModule } from './modules/monthData/month-data.module';
+import { VidaIntegrationModule } from './modules/integrations/vida/vida-integration.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DebtsModule } from './modules/debts/debts.module';
 import { TripsModule } from './modules/trips/trips.module';
@@ -26,7 +27,7 @@ import { CurrencyModule } from './modules/currency/currency.module';
 
 @Module({
   imports: [PrismaModule, HealthModule, FinancialHealthModule, UserModule, AllocationPlanModule, ReportsModule, TripsModule, InvestmentsModule, ProjectsModule, DebtsModule, AuthModule, WalletsModule, BudgetsModule,
-    DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule,
+    DashboardModule, CategoriesModule, TransactionsModule, SubcategoriesModule, MonthDataModule, VidaIntegrationModule,
     NotificationsModule, WorldModule, FriendsModule, GoalsModule, CurrencyModule, ScheduleModule.forRoot()],
 })
 export class AppModule {}

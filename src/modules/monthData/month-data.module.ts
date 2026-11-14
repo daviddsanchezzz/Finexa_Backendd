@@ -8,5 +8,6 @@ import { MonthDataCron } from './month-data.cron';
   imports: [PrismaModule],
   controllers: [MonthDataController],
   providers: [MonthDataService, MonthDataCron],
+  exports: [MonthDataService],
 })
 export class MonthDataModule {}
